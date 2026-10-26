@@ -59,6 +59,9 @@
   let realisticPropagation = localStorage.getItem('live-realistic-propagation') === 'true';
   let showOnlyFavorites = localStorage.getItem('live-favorites-only') === 'true';
   let multibyteOnly = localStorage.getItem('live-multibyte-only') === 'true';
+  // Radio filter: frequency (MHz) of a configured liveRadioFilters entry, or
+  // null for all radios. Applied only once the server lists that entry.
+  let radioOnlyFreq = parseFloat(localStorage.getItem('live-radio-only')) || null;
   let matrixMode = localStorage.getItem('live-matrix-mode') === 'true';
   let matrixRain = localStorage.getItem('live-matrix-rain') === 'true';
   let colorByHash = localStorage.getItem('meshcore-color-packets-by-hash') !== 'false';
@@ -1295,6 +1298,8 @@
             <span id="favDesc" class="sr-only">Show only favorited and claimed nodes</span>
             <label><input type="checkbox" id="liveMultibyteToggle" aria-describedby="multibyteDesc"> Multibyte only</label>
             <span id="multibyteDesc" class="sr-only">Show only multibyte (≥2-byte path-hash) packets; hide unreliable single-byte traffic</span>
+            <label id="liveRadioOnlyLabel" style="display:none">Radio <select id="liveRadioOnlySelect" aria-describedby="radioOnlyDesc"><option value="">All</option></select></label>
+            <span id="radioOnlyDesc" class="sr-only">Show only packets heard solely on the chosen radio channel</span>
             <label id="liveGeoFilterLabel" style="display:none"><input type="checkbox" id="liveGeoFilterToggle"> Mesh live area</label>
             </div>
             <div class="live-toggles">
@@ -1685,6 +1690,7 @@
     clickablePathsLayer = L.layerGroup().addTo(map);
 
     injectSVGFilters();
+    initRadioOnlyFilter();
     AreaFilter.init(document.getElementById('liveAreaFilter'));
     AreaFilter.onChange(function () { loadNodes(); });
     await loadNodes();
@@ -2968,6 +2974,7 @@
 
     for (const group of sorted) {
       if (multibyteOnly && !groupIsMultibyte(group.packets)) continue;
+      if (radioOnlyFreq != null && !packetGroupOnlyOnFreq(group.packets, radioOnlyFreq)) continue;
       const pkt = Object.assign({}, group.latestPkt, { observation_count: group.count });
       const decoded = pkt.decoded || {};
       const header = decoded.header || {};
@@ -3248,6 +3255,7 @@
   window._livePacketInvolvesFilterNode = packetInvolvesFilterNode;
   window._liveGetNodeFilterKeys = function() { return nodeFilterKeys; };
   window._livePacketMatchesRegion = packetMatchesRegion;
+  window._livePacketGroupOnlyOnFreq = packetGroupOnlyOnFreq;
   window._liveSetObserverIataMap = setObserverIataMap;
   window._liveBuildObserverIataMap = buildObserverIataMap;
   window._liveGetObserverIataMap = function() { return observerIataMap; };
@@ -3352,6 +3360,71 @@
   // All observations of one packet share the same hash size; use the first
   // observation with a resolvable raw_hex. Unresolvable => treated as single
   // (excluded when the "Multibyte only" filter is on).
+  /**
+   * Radio filter (liveRadioFilters): true when every observation in the
+   * group was heard on freqMHz. Each observation's `radio` is the observer's
+   * "MHz,kHz,SF,CR" at that moment, resolved by the server (multi-radio
+   * observers per packet via rx_radio_id). An observation on another setting,
+   * or with no known setting, means the packet also travelled elsewhere, so
+   * the group is dropped. No freqMHz → no filter.
+   * Pure helper exposed for unit tests.
+   */
+  function packetGroupOnlyOnFreq(packets, freqMHz) {
+    if (freqMHz == null || !(freqMHz > 0)) return true;
+    if (!packets || !packets.length) return false;
+    for (var i = 0; i < packets.length; i++) {
+      var radio = packets[i] && packets[i].radio;
+      if (!radio) return false;
+      var f = parseFloat(String(radio).split(',')[0]);
+      if (!(Math.abs(f - freqMHz) < 0.0005)) return false;
+    }
+    return true;
+  }
+
+  // Fill the Radio picker from /api/config/client liveRadioFilters. Hidden
+  // when none are configured; a saved or #?radioOnly= choice that the server
+  // no longer lists is dropped. The URL value may be a label or MHz.
+  function initRadioOnlyFilter() {
+    var label = document.getElementById('liveRadioOnlyLabel');
+    var select = document.getElementById('liveRadioOnlySelect');
+    if (!label || !select) return;
+    var ready = window.MeshConfigReady && typeof window.MeshConfigReady.then === 'function'
+      ? window.MeshConfigReady : Promise.resolve();
+    ready.then(function () {
+      var esc = (typeof escapeHtml === 'function') ? escapeHtml : function (s) {
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      };
+      var filters = Array.isArray(window.MC_LIVE_RADIO_FILTERS) ? window.MC_LIVE_RADIO_FILTERS : [];
+      var urlVal = getHashParams && getHashParams().get('radioOnly');
+      if (urlVal) {
+        var want = String(urlVal).trim().toLowerCase();
+        var hit = filters.find(function (f) {
+          return String(f.label).toLowerCase() === want || Math.abs(f.freqMHz - parseFloat(want)) < 0.0005;
+        });
+        if (hit) radioOnlyFreq = hit.freqMHz;
+      }
+      if (radioOnlyFreq != null && !filters.some(function (f) { return Math.abs(f.freqMHz - radioOnlyFreq) < 0.0005; })) {
+        radioOnlyFreq = null;
+      }
+      if (!filters.length) { label.style.display = 'none'; return; }
+      select.innerHTML = '<option value="">All</option>' + filters.map(function (f) {
+        var v = String(f.freqMHz);
+        var sel = radioOnlyFreq != null && Math.abs(f.freqMHz - radioOnlyFreq) < 0.0005 ? ' selected' : '';
+        return '<option value="' + esc(v) + '"' + sel + '>' + esc(f.label) + ' only</option>';
+      }).join('');
+      label.style.display = '';
+      select.addEventListener('change', function () {
+        radioOnlyFreq = parseFloat(select.value) || null;
+        try {
+          if (radioOnlyFreq) localStorage.setItem('live-radio-only', radioOnlyFreq);
+          else localStorage.removeItem('live-radio-only');
+        } catch (e) { /* storage unavailable */ }
+        rebuildFeedList();
+      });
+      if (radioOnlyFreq != null) rebuildFeedList();
+    }).catch(function () { label.style.display = 'none'; });
+  }
+
   function groupIsMultibyte(packets) {
     if (!packets || !packets.length) return false;
     for (var i = 0; i < packets.length; i++) {
@@ -3373,6 +3446,8 @@
     // entire live view (feed, map, rain, counter — live AND replay). Placed
     // above the counter so livePktCount reflects multibyte-only traffic.
     if (multibyteOnly && !groupIsMultibyte(packets)) return;
+    // Radio filter: drop packets that were not heard only on the chosen radio.
+    if (radioOnlyFreq != null && !packetGroupOnlyOnFreq(packets, radioOnlyFreq)) return;
     const first = packets[0];
     const decoded = first.decoded || {};
     const header = decoded.header || {};
