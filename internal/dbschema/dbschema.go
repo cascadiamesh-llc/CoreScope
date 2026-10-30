@@ -117,6 +117,9 @@ func Apply(rw *sql.DB, logf Logger) error {
 	if err := ensureObserverRadios(rw, logf); err != nil {
 		return fmt.Errorf("ensure observer radios: %w", err)
 	}
+	if err := ensureObserverNeighborReports(rw); err != nil {
+		return fmt.Errorf("ensure observer neighbor reports: %w", err)
+	}
 	if err := ensureMediaMesh(rw); err != nil {
 		return fmt.Errorf("ensure mediamesh: %w", err)
 	}
