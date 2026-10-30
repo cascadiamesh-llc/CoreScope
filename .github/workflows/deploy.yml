@@ -346,7 +346,10 @@ jobs:
   e2e-shard:
     name: "🎭 Playwright E2E shard ${{ matrix.shard }}/3"
     needs: [changes]
-    runs-on: ubuntu-latest
+    # Pinned: on ubuntu-26.04 runners the Playwright browser was missing
+    # after the install step and every suite died at browserType.launch.
+    # Unpin once the Playwright version in package.json installs there.
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         shard: [1, 2, 3]
@@ -403,8 +406,8 @@ jobs:
 
       - name: Install Playwright browser
         run: |
-          npx playwright install chromium 2>/dev/null || true
-          npx playwright install-deps chromium 2>/dev/null || true
+          npx playwright install chromium
+          npx playwright install-deps chromium
 
       - name: Instrument frontend JS for coverage
         run: sh scripts/instrument-frontend.sh
@@ -712,6 +715,9 @@ jobs:
           suite 3 test-packets-scope-column.js CHROMIUM_REQUIRE=1 BASE_URL=$B
           suite 3 test-path-inspector-e2e.js CHROMIUM_REQUIRE=1 BASE_URL=$B
           suite 3 test-pr-1490-live-map-gpu-animations-e2e.js CHROMIUM_REQUIRE=1 BASE_URL=$B
+          suite 3 test-live-mediamesh-rings-e2e.js CHROMIUM_REQUIRE=1 BASE_URL=$B
+          suite 2 test-map-mediamesh-e2e.js CHROMIUM_REQUIRE=1 BASE_URL=$B
+          suite 3 test-analytics-mediamesh-e2e.js CHROMIUM_REQUIRE=1 BASE_URL=$B
           suite 1 test-region-quick-picks.js
           suite 3 test-table-sort.js
           suite 1 test-touch-targets.js CHROMIUM_REQUIRE=1 BASE_URL=$B

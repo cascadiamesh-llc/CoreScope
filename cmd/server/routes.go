@@ -375,6 +375,7 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/analytics/subpath-detail", s.handleAnalyticsSubpathDetail).Methods("GET")
 	r.HandleFunc("/api/analytics/neighbor-graph", s.handleNeighborGraph).Methods("GET")
 	r.HandleFunc("/api/analytics/relay-airtime-share", s.handleAnalyticsRelayAirtimeShare).Methods("GET")
+	r.HandleFunc("/api/analytics/mediamesh", s.handleAnalyticsMediaMesh).Methods("GET")
 	r.HandleFunc("/api/analytics/retransmissions", s.handleAnalyticsRetransmissions).Methods("GET")
 
 	// Other endpoints
@@ -1648,6 +1649,7 @@ func (s *Server) buildNodesResponse(r *http.Request) (NodeListResponse, error) {
 		for _, node := range nodes {
 			if pk, ok := node["public_key"].(string); ok {
 				node["last_heard"] = lastHeardValue(node["last_seen"], heard[pk])
+				EnrichNodeWithMediaMesh(node, pk)
 				EnrichNodeWithHashSize(node, hashInfo[pk])
 				mbEntry, _ := s.store.GetMultibyteCapFor(pk)
 				EnrichNodeWithMultiByte(node, mbEntry)
@@ -1795,6 +1797,7 @@ func (s *Server) handleNodeSearch(w http.ResponseWriter, r *http.Request) {
 		for _, node := range nodes {
 			if pk, ok := node["public_key"].(string); ok {
 				node["last_heard"] = lastHeardValue(node["last_seen"], heard[pk])
+				EnrichNodeWithMediaMesh(node, pk)
 			}
 		}
 	}
@@ -1876,6 +1879,7 @@ func (s *Server) handleNodeDetail(w http.ResponseWriter, r *http.Request) {
 		node["region_placement"] = RegionPlacementFor(s.store.GetNodeRegionPlacements(), pubkey)
 		heard, _ := s.store.LastHeardMap([]string{pubkey})
 		node["last_heard"] = lastHeardValue(node["last_seen"], heard[pubkey])
+		EnrichNodeWithMediaMesh(node, pubkey)
 		if role, _ := node["role"].(string); role == "repeater" || role == "room" {
 			ht := s.cfg.GetHealthThresholds()
 			info := s.store.GetRepeaterRelayInfo(pubkey, ht.RelayActiveHours)

@@ -19,6 +19,7 @@ node tests/unit/test-a11y-axe-routes-coverage.js
 node tests/unit/test-admin-dashboard-ui.js
 node tests/unit/test-aging.js
 node tests/unit/test-analytics-channels-integration.js
+node tests/unit/test-analytics-mediamesh.js
 node tests/unit/test-anl1-tooltip-render.js
 node tests/unit/test-area-filter.js
 node tests/unit/test-channel-color-picker.js
@@ -144,6 +145,7 @@ node tests/unit/test-issue-1836-crossnav-case-normalization.js
 node tests/unit/test-issue-1843-node-qr-quiet-zone.js
 node tests/unit/test-issue-1846-observers-width.js
 node tests/unit/test-issue-1849-trace-hashbytes.js
+node tests/unit/test-hb-column-header-route.js
 node tests/unit/test-issue-1851-channel-message-scope.js
 node tests/unit/test-issue-1862-map-region-filter.js
 node tests/unit/test-issue-1868-control-decode.js
@@ -167,11 +169,13 @@ node tests/unit/test-issue-2230-account-stale-render.js
 node tests/unit/test-live-anims.js
 node tests/unit/test-live-dt-cap-1524.js
 node tests/unit/test-live-legend-helper.js
+node tests/unit/test-live-mediamesh.js
 node tests/unit/test-live-multibyte-filter.js
 node tests/unit/test-live-region-filter.js
 node tests/unit/test-live.js
 node tests/unit/test-map-clustering.js
 node tests/unit/test-map-estimated.js
+node tests/unit/test-mediamesh-nodes.js
 node tests/unit/test-mqtt-status-panel.js
 node tests/unit/test-my-repeaters-dashboard.js
 node tests/unit/test-naive-banner-tone.js
