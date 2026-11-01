@@ -6,6 +6,8 @@ name: MediaMesh release
 #
 #   ghcr.io/cascadiamesh-llc/corescope:latest              newest build (what analyzers run)
 #   ghcr.io/cascadiamesh-llc/corescope:v3.16.0-mediamesh    one per build, for pinning
+#   ghcr.io/cascadiamesh-llc/corescope:v3-mediamesh         newest 3.x build (like upstream :v3)
+#   ghcr.io/cascadiamesh-llc/corescope:v3.16-mediamesh      newest 3.16.x build
 #   git tag v3.16.0-mediamesh                              for manage.sh (build-from-source) hosts
 #
 # The version is the newest upstream release merged into master plus
@@ -103,6 +105,10 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "base=$base" >> "$GITHUB_OUTPUT"
+          # Moving tags for hosts that follow a major or minor line (like :v3 upstream).
+          minor="${base%.*}"; major="${minor%.*}"
+          echo "major_tag=${major}-mediamesh" >> "$GITHUB_OUTPUT"
+          echo "minor_tag=${minor}-mediamesh" >> "$GITHUB_OUTPUT"
           echo "new_tag=$new_tag" >> "$GITHUB_OUTPUT"
           echo "commit=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
           echo "build_time=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
@@ -124,6 +130,8 @@ jobs:
           images: ghcr.io/${{ github.repository_owner }}/corescope
           tags: |
             type=raw,value=${{ steps.ver.outputs.version }}
+            type=raw,value=${{ steps.ver.outputs.minor_tag }}
+            type=raw,value=${{ steps.ver.outputs.major_tag }}
             type=raw,value=latest
             type=sha,prefix=sha-,format=short
           labels: |

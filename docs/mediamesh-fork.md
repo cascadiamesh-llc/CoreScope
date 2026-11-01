@@ -15,8 +15,9 @@ MediaMesh change pushed to master ───────────────�
 
 - **Version:** the upstream release it is built on, plus `-mediamesh`, e.g. `v3.16.0-mediamesh`.
   Later builds on the same upstream release count up: `v3.16.0-mediamesh.2`, `.3`, …
-- **Image:** `ghcr.io/cascadiamesh-llc/corescope:latest` (newest build), or pin
-  `:v3.16.0-mediamesh`.
+- **Image:** `ghcr.io/cascadiamesh-llc/corescope:latest` (newest build). Like upstream's
+  `:v3` and `:v3.16`, `:v3-mediamesh` follows the newest 3.x build and `:v3.16-mediamesh` the
+  newest 3.16.x build. Pin one exact build with `:v3.16.0-mediamesh`.
 - **Releases:** <https://github.com/cascadiamesh-llc/CoreScope/releases>
 - **Observers:** how to connect one, with MediaMesh: [observers.md](observers.md)
 
