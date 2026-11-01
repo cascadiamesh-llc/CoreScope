@@ -18,6 +18,10 @@ name: MediaMesh release
 on:
   push:
     branches: [master]
+    # A docs-only change is not a new version: analyzers would restart for nothing.
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
   workflow_dispatch:
 
 permissions:

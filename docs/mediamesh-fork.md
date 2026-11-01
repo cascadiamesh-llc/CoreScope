@@ -18,6 +18,7 @@ MediaMesh change pushed to master ───────────────�
 - **Image:** `ghcr.io/cascadiamesh-llc/corescope:latest` (newest build), or pin
   `:v3.16.0-mediamesh`.
 - **Releases:** <https://github.com/cascadiamesh-llc/CoreScope/releases>
+- **Observers:** how to connect one, with MediaMesh: [observers.md](observers.md)
 
 ---
 
