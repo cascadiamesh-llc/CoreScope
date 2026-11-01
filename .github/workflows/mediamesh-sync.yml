@@ -1,0 +1,197 @@
+name: MediaMesh upstream sync
+
+# CascadiaMesh fork only. Keeps master current with upstream CoreScope releases
+# while keeping the MediaMesh changes.
+#
+# Every 6 hours (or on demand), if upstream has published a release (vX.Y.Z)
+# that master does not contain yet, it is merged into master. Merging, not
+# rebasing: MediaMesh history stays as it is. If the merge is clean and the
+# tests pass, master is pushed, and mediamesh-release.yml publishes
+# vX.Y.Z-mediamesh.
+#
+# If the merge conflicts or the tests fail, master is left untouched (analyzers
+# keep running the last good build) and an issue explains what to do.
+#
+# Pushing a merge that changes upstream's own workflow files needs a token with
+# the "workflows" permission, which the built-in token can never have. Add a
+# fine-grained token as the repository secret SYNC_TOKEN (see
+# docs/mediamesh-fork.md). Without it, most syncs still work, and those that
+# cannot be pushed open an issue that says so.
+#
+# This file does not exist upstream, so merging upstream never conflicts with it.
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Upstream release to merge (default: the newest, e.g. v3.17.0)'
+        required: false
+
+permissions:
+  contents: write   # push master
+  issues: write     # report conflicts
+  actions: write    # start mediamesh-release.yml when pushed with the built-in token
+
+concurrency:
+  group: mediamesh-sync
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: https://github.com/Kpa-clawbot/CoreScope.git
+  HAS_SYNC_TOKEN: ${{ secrets.SYNC_TOKEN != '' }}
+
+jobs:
+  sync:
+    name: "🔄 Merge upstream release"
+    if: github.repository != 'Kpa-clawbot/CoreScope'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: master
+          fetch-depth: 0
+          token: ${{ secrets.SYNC_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Find the upstream release to merge
+        id: up
+        env:
+          WANT: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name  "CascadiaMesh sync"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch -q --no-tags "$UPSTREAM_REPO" '+refs/tags/v*:refs/upstream-tags/v*'
+          if [ -n "${WANT:-}" ]; then
+            tag="$WANT"
+            git rev-parse -q --verify "refs/upstream-tags/$tag" >/dev/null \
+              || { echo "::error::upstream has no tag $tag"; exit 1; }
+          else
+            tag=$(git for-each-ref --sort=-version:refname --format='%(refname:lstrip=2)' refs/upstream-tags/ \
+                  | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if git merge-base --is-ancestor "refs/upstream-tags/$tag" HEAD; then
+            echo "Already contains upstream $tag. Nothing to do."
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Upstream $tag is new: merging."
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Merge
+        id: merge
+        if: steps.up.outputs.needed == 'true'
+        env:
+          TAG: ${{ steps.up.outputs.tag }}
+        run: |
+          set -uo pipefail
+          if git merge --no-ff -m "Merge upstream CoreScope $TAG" "refs/upstream-tags/$TAG"; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            d="EOF_$(openssl rand -hex 8)"
+            {
+              echo "conflicts<<$d"
+              git diff --name-only --diff-filter=U
+              echo "$d"
+            } >> "$GITHUB_OUTPUT"
+            git merge --abort
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-go@v6
+        if: steps.merge.outputs.ok == 'true'
+        with:
+          go-version: '1.27'
+          cache-dependency-path: "**/go.sum"
+
+      - name: Test the merged code
+        id: tests
+        if: steps.merge.outputs.ok == 'true'
+        run: |
+          set -o pipefail
+          ( sh test-all.sh && make test ) 2>&1 | tee /tmp/test.log
+          rc=$?
+          echo "ok=$([ $rc -eq 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          d="EOF_$(openssl rand -hex 8)"
+          { echo "tail<<$d"; tail -40 /tmp/test.log; echo "$d"; } >> "$GITHUB_OUTPUT"
+
+      - name: Push master
+        id: push
+        if: steps.tests.outputs.ok == 'true'
+        run: |
+          set -uo pipefail
+          if git push origin HEAD:master 2>&1 | tee /tmp/push.log; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            grep -qi "workflow" /tmp/push.log && echo "needs_token=true" >> "$GITHUB_OUTPUT" || true
+          fi
+
+      # A push with the built-in token does not start other workflows; a push
+      # with SYNC_TOKEN does (mediamesh-release.yml runs on its own).
+      - name: Start the release build
+        if: steps.push.outputs.ok == 'true' && env.HAS_SYNC_TOKEN != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run mediamesh-release.yml --ref master
+
+      - name: Report a problem
+        if: >-
+          steps.merge.outputs.ok == 'false' || steps.tests.outputs.ok == 'false' ||
+          steps.push.outputs.ok == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.up.outputs.tag }}
+          MERGE_OK: ${{ steps.merge.outputs.ok }}
+          TESTS_OK: ${{ steps.tests.outputs.ok }}
+          NEEDS_TOKEN: ${{ steps.push.outputs.needs_token }}
+          CONFLICTS: ${{ steps.merge.outputs.conflicts }}
+          TEST_TAIL: ${{ steps.tests.outputs.tail }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ "$MERGE_OK" = "false" ]; then
+            title="Upstream $TAG conflicts with MediaMesh: merge by hand"
+            body=$(printf '%s\n' \
+              "Upstream CoreScope **$TAG** could not be merged automatically. These files changed both upstream and in MediaMesh:" "" \
+              "$(printf '%s\n' "$CONFLICTS" | sed 's/^/- `/; s/$/`/')" "" \
+              "master was not changed, and analyzers keep running the current build." "" \
+              "**To fix** (see docs/mediamesh-fork.md, \"When a sync conflicts\"):" \
+              '```' \
+              "git fetch https://github.com/Kpa-clawbot/CoreScope.git tag $TAG --no-tags" \
+              "git checkout master && git pull" \
+              "git merge --no-ff $TAG   # resolve the files above, keep both sides" \
+              "sh test-all.sh && make test" \
+              "git push origin master   # the release builds ${TAG}-mediamesh" \
+              '```' "" "Run: $RUN_URL")
+          elif [ "$TESTS_OK" = "false" ]; then
+            title="Upstream $TAG merged cleanly but tests fail"
+            body=$(printf '%s\n' \
+              "Upstream **$TAG** merged without conflicts, but the tests failed on the result, so master was not changed." "" \
+              '```' "$TEST_TAIL" '```' "" "Full log: $RUN_URL")
+          else
+            title="Upstream $TAG ready but could not be pushed"
+            if [ "${NEEDS_TOKEN:-}" = "true" ]; then
+              why="This release changes upstream's GitHub workflow files, and the built-in token is not allowed to push those. Add the SYNC_TOKEN secret (docs/mediamesh-fork.md), then re-run **MediaMesh upstream sync**."
+            else
+              why="The merge and tests passed, but pushing master failed. See the run log."
+            fi
+            body=$(printf '%s\n' "$why" "" "Run: $RUN_URL")
+          fi
+          printf '## %s\n\n%s\n' "$title" "$body" >> "$GITHUB_STEP_SUMMARY"
+          # Issues are off by default on forks; the failed run (and its summary)
+          # still reports the problem, and GitHub emails on failed scheduled runs.
+          if existing=$(gh issue list --state open --search "in:title \"$title\"" --json number --jq '.[0].number // empty' 2>/dev/null); then
+            if [ -n "$existing" ]; then
+              gh issue comment "$existing" --body "$body" || true
+            else
+              gh issue create --title "$title" --body "$body" || true
+            fi
+          else
+            echo "::warning::Issues are turned off for this repository, so no issue was opened. See this run's summary."
+          fi
+          echo "::error::$title"
+          exit 1

@@ -1,0 +1,161 @@
+name: MediaMesh release
+
+# CascadiaMesh fork only. Every change that lands on master (a MediaMesh change,
+# or an upstream release merged by mediamesh-sync.yml) is tested, then
+# published as a container image and a git tag that analyzer hosts update from:
+#
+#   ghcr.io/cascadiamesh-llc/corescope:latest              newest build (what analyzers run)
+#   ghcr.io/cascadiamesh-llc/corescope:v3.16.0-mediamesh    one per build, for pinning
+#   git tag v3.16.0-mediamesh                              for manage.sh (build-from-source) hosts
+#
+# The version is the newest upstream release merged into master plus
+# "-mediamesh". Later builds on the same upstream release count up:
+# v3.16.0-mediamesh, v3.16.0-mediamesh.2, v3.16.0-mediamesh.3, ...
+#
+# This file does not exist upstream, so merging upstream never conflicts with it.
+# Docs: docs/mediamesh-fork.md
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # create the release tag
+  packages: write   # push to ghcr.io
+
+concurrency:
+  group: mediamesh-release
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: https://github.com/Kpa-clawbot/CoreScope.git
+
+jobs:
+  test:
+    name: "✅ Go + JS tests"
+    if: github.repository != 'Kpa-clawbot/CoreScope'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27'
+          cache-dependency-path: "**/go.sum"
+
+      - name: JS unit tests
+        run: sh test-all.sh
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l $(git ls-files '*.go'))
+          if [ -n "$unformatted" ]; then echo "::error::gofmt required on:"; echo "$unformatted"; exit 1; fi
+
+      - name: Go tests (every module)
+        run: make test
+
+  release:
+    name: "📦 Publish image + tag"
+    needs: [test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Work out the version
+        id: ver
+        run: |
+          set -euo pipefail
+          # Upstream release tags live in their own namespace so they can never
+          # be mistaken for (or pushed as) this fork's tags.
+          git fetch -q --no-tags "$UPSTREAM_REPO" '+refs/tags/v*:refs/upstream-tags/v*'
+          base=""
+          for t in $(git for-each-ref --sort=-version:refname --format='%(refname:lstrip=2)' refs/upstream-tags/ \
+                     | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$'); do
+            if git merge-base --is-ancestor "refs/upstream-tags/$t" HEAD; then base="$t"; break; fi
+          done
+          [ -n "$base" ] || { echo "::error::no upstream release tag is merged into this commit"; exit 1; }
+
+          # A re-run of a commit that already has a version keeps it.
+          existing=$(git tag --points-at HEAD -l "${base}-mediamesh*" | sort -V | tail -1)
+          if [ -n "$existing" ]; then
+            version="$existing"; new_tag=false
+          else
+            n=0
+            for t in $(git tag -l "${base}-mediamesh" "${base}-mediamesh.*"); do
+              case "$t" in
+                "${base}-mediamesh") k=1 ;;
+                *) k="${t##*.}"; case "$k" in ''|*[!0-9]*) continue ;; esac ;;
+              esac
+              [ "$k" -gt "$n" ] && n="$k"
+            done
+            if [ "$n" -eq 0 ]; then version="${base}-mediamesh"; else version="${base}-mediamesh.$((n + 1))"; fi
+            new_tag=true
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "new_tag=$new_tag" >> "$GITHUB_OUTPUT"
+          echo "commit=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "build_time=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+          echo "### Version: \`$version\` (upstream $base)" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/corescope
+          tags: |
+            type=raw,value=${{ steps.ver.outputs.version }}
+            type=raw,value=latest
+            type=sha,prefix=sha-,format=short
+          labels: |
+            org.opencontainers.image.version=${{ steps.ver.outputs.version }}
+
+      - name: Build and push (amd64 + arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APP_VERSION=${{ steps.ver.outputs.version }}
+            GIT_COMMIT=${{ steps.ver.outputs.commit }}
+            BUILD_TIME=${{ steps.ver.outputs.build_time }}
+          cache-from: type=gha,scope=mediamesh
+          cache-to: type=gha,scope=mediamesh,mode=max
+
+      # Tag only after the image exists, so manage.sh hosts never check out a
+      # version that has no published image or failed its tests.
+      - name: Create the release tag
+        if: steps.ver.outputs.new_tag == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          BASE: ${{ steps.ver.outputs.base }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/corescope"
+          gh release create "$VERSION" --target "$GITHUB_SHA" --title "$VERSION" --latest --notes "$(cat <<EOF
+          CoreScope ${BASE} with CascadiaMesh MediaMesh support.
+
+          - Image: \`${image}:${VERSION}\` (also \`:latest\`)
+          - Upstream release notes: https://github.com/Kpa-clawbot/CoreScope/releases/tag/${BASE}
+          - Commit: ${GITHUB_SHA}
+          EOF
+          )"
