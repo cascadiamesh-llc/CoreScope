@@ -147,7 +147,11 @@ sudo systemctl restart mctomqtt
 ```
 
 With MediaMesh on, the log shows a line like
-`Second radio profile (radio2): {'radio': '911.150,250.000,7,5', 'mode': 'rxtx', …}` at startup.
+`Second radio profile: {'radio': '911.150,250.000,7,5', 'mode': 'rxtx', 'temporary': False}` at startup.
+
+MCtoMQTT reads the repeater's MediaMesh setting only when it starts, because any other console
+command pauses the repeater's packet log for 5 minutes. **After changing radio2 on the repeater**
+(`set radio2 …`), restart MCtoMQTT with `sudo systemctl restart mctomqtt`.
 
 ---
 
