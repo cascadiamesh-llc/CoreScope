@@ -633,9 +633,10 @@
     const repRows = reps.map((r) => {
       const name = r.name || (r.public_key || '').slice(0, 8);
       const mode = r.mode === 'rxtx' ? 'listens and sends' : 'listens';
-      const how = { status: 'reported by the node', neighbor: 'reported by a neighbour', heard: 'heard sending on radio2' }[r.source] || esc(r.source || '');
+      const how = { status: 'reported by the node', neighbor: 'reported by a neighbour', heard: 'heard sending on radio2', relayed: 'seen relaying MediaMesh packets' }[r.source] || esc(r.source || '');
       const seen = r.last_seen && typeof timeAgo === 'function' ? timeAgo(r.last_seen) : esc(r.last_seen || '');
-      return `<tr>
+      const rowClass = r.source === 'relayed' ? ' class="mm-row--relayed"' : '';
+      return `<tr${rowClass}>
         <td><span class="mm-dot mm-dot--${r.mode === 'rxtx' ? 'rxtx' : 'rx'}" aria-hidden="true"></span><a href="#/nodes/${encodeURIComponent(r.public_key || '')}">${esc(name)}</a></td>
         <td>${esc(r.role || '—')}</td>
         <td>${mode}</td>

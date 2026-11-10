@@ -206,6 +206,8 @@ Then open the analyzer and find your observer on the **Observers** page. Once Me
 passes through your repeater:
 
 - **Live** draws MediaMesh packets as hollow rings.
-- **Map** and **Nodes** mark your repeater as a MediaMesh repeater.
+- **Map** and **Nodes** mark your repeater as a MediaMesh repeater. Repeaters earlier in a
+  MediaMesh packet's path are marked too, in a greyer pink: they were seen relaying MediaMesh
+  rather than reporting it or being heard directly.
 
 Questions? Ask on the CascadiaMesh Discord or email cascadiamesh@gmail.com.

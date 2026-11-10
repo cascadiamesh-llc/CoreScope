@@ -377,6 +377,8 @@
    * as MeshCore Open TAK and Wadamesh TAK mark them. */
   --mediamesh-path-color: #d946ef;
   --mediamesh-node-color: #d946ef;
+  /* A repeater only seen relaying MediaMesh (weaker evidence): greyer pink. */
+  --mediamesh-node-weak-color: #bd70d2;
 
   /* #1128: documented z-index scale. Use these custom props for any new
    * stacking context decision. Existing legacy z-index values that work are
@@ -462,6 +464,7 @@
     --trace-ghost-color: #94a3b8;
     --mediamesh-path-color: #e879f9;
     --mediamesh-node-color: #e879f9;
+    --mediamesh-node-weak-color: #c68cd8;
     --section-bg: #1e1e34;
   }
 }
@@ -524,6 +527,7 @@
   --trace-ghost-color: #94a3b8;
   --mediamesh-path-color: #e879f9;
   --mediamesh-node-color: #e879f9;
+  --mediamesh-node-weak-color: #c68cd8;
   --section-bg: #1e1e34;
 }
 
@@ -5949,6 +5953,13 @@ body.embed #app.app-fixed {
   vertical-align: middle;
 }
 .mm-dot--rxtx { background: var(--mediamesh-node-color); }
+/* Only seen relaying MediaMesh packets (weaker evidence than its own report
+ * or being heard sending): the same marks in a greyer pink, and its row in
+ * the MediaMesh repeater list slightly greyed. */
+.mm-node--relayed,
+.mm-row--relayed { --mediamesh-node-color: var(--mediamesh-node-weak-color); }
+.mm-row--relayed td { color: var(--text-muted); }
+.mm-row--relayed a { opacity: 0.8; }
 
 /* MediaMesh (radio2) on Analytics: the radio2 part of a payload bar, the
  * radio2 airtime ring on the relay-airtime chart, and the MediaMesh cards. */

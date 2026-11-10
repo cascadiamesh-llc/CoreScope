@@ -124,6 +124,18 @@ test('per hour, repeaters with mode/setting/last seen, observers; names escaped'
   assert.ok(h.includes('13.3%') && h.includes('5m ago'));
 });
 
+test('a repeater only seen relaying gets a greyed row; others do not', () => {
+  const withRelay = Object.assign({}, MM, { repeaters: MM.repeaters.concat([
+    { public_key: 'cc33', name: 'Hilltop', role: 'repeater', mode: 'rxtx', source: 'relayed', last_seen: '2026-10-30T15:00:00Z' },
+  ]) });
+  const h = A.renderMediaMeshTabHtml(withRelay, '');
+  assert.ok(h.includes('seen relaying MediaMesh packets'), 'relayed source label');
+  const rows = h.split('<tr').filter(r => r.includes('#/nodes/'));
+  const relayRow = rows.find(r => r.includes('Hilltop'));
+  assert.ok(relayRow && relayRow.startsWith(' class="mm-row--relayed"'), relayRow);
+  assert.ok(rows.filter(r => r.includes('mm-row--relayed')).length === 1, 'only the relayed row is greyed');
+});
+
 test('empty state explains what is needed', () => {
   const h = A.renderMediaMeshTabHtml({ mediamesh_transmissions: 0, repeaters: [], observers: [], per_hour: [] }, '');
   assert.ok(h.includes('No MediaMesh traffic or repeaters'));

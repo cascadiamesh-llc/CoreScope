@@ -37,6 +37,15 @@ test('info: only rx and rxtx marks count', () => {
   assert.strictEqual(MM.info(null), null);
 });
 
+test('markerClass: a node only seen relaying is drawn in the weaker (greyer) style', () => {
+  const RELAYED = { public_key: 'd'.repeat(64), name: 'Relay', role: 'repeater',
+    mediamesh: { mode: 'rxtx', source: 'relayed', last_seen: '2026-11-10T00:00:00Z' } };
+  assert.strictEqual(MM.markerClass(RELAYED), ' mm-node mm-node--rxtx mm-node--relayed');
+  assert.strictEqual(MM.isRelayedOnly(RELAYED.mediamesh), true);
+  assert.strictEqual(MM.isRelayedOnly(RXTX.mediamesh), false);
+  assert.ok(MM.describe(RELAYED).includes('seen relaying MediaMesh packets'), MM.describe(RELAYED));
+});
+
 test('markerClass: ring plus a filled (rxtx) or hollow (rx) badge', () => {
   assert.strictEqual(MM.markerClass(RXTX), ' mm-node mm-node--rxtx');
   assert.strictEqual(MM.markerClass(RX), ' mm-node mm-node--rx');

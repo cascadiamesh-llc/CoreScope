@@ -21,7 +21,9 @@ import (
 // node_mediamesh holds the newest evidence that a node runs MediaMesh (mode
 // rx|rxtx) or not (off): the node's own status, a neighbour's report of it,
 // or the node heard sending on radio2 (source "heard", mode rxtx). A later
-// row replaces an older one; "off" clears the mark.
+// row replaces an older one; "off" clears the mark. Weakest is "relayed" (an
+// earlier hop of a MediaMesh flood): it only adds a mark or refreshes a
+// relayed one, never replacing the others.
 //
 // Neither is required by AssertReady: a server that comes up before the
 // ingestor created them shows no MediaMesh marks and probes again on its next

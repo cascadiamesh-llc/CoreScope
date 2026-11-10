@@ -16,7 +16,8 @@
   var SOURCES = {
     status: 'reported by the node',
     neighbor: 'reported by a neighbour',
-    heard: 'heard sending on radio2'
+    heard: 'heard sending on radio2',
+    relayed: 'seen relaying MediaMesh packets'
   };
 
   // The node's MediaMesh mark, or null.
@@ -27,11 +28,18 @@
     return mm;
   }
 
+  // Weaker evidence: the node was only seen relaying MediaMesh packets.
+  function isRelayedOnly(mm) {
+    return !!mm && mm.source === 'relayed';
+  }
+
   // Extra class names for a node's map marker: a ring, and a badge filled for
-  // rxtx and hollow for rx (live.css / style.css .mm-node).
+  // rxtx and hollow for rx (live.css / style.css .mm-node), in a greyer pink
+  // when it was only seen relaying.
   function markerClass(node) {
     var mm = info(node);
-    return mm ? ' mm-node mm-node--' + mm.mode : '';
+    if (!mm) return '';
+    return ' mm-node mm-node--' + mm.mode + (isRelayedOnly(mm) ? ' mm-node--relayed' : '');
   }
 
   // "MHz,kHz,SF,CR" -> "911.15 MHz · 250 kHz SF7"; '' when not a radio.
@@ -72,6 +80,7 @@
   var api = {
     info: info,
     markerClass: markerClass,
+    isRelayedOnly: isRelayedOnly,
     describeRadio: describeRadio,
     describe: describe,
     filterAccepts: filterAccepts

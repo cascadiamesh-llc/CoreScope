@@ -42,7 +42,7 @@ const (
 type MediaMeshNode struct {
 	Mode     string `json:"mode"`            // rx | rxtx
 	Radio    string `json:"radio,omitempty"` // "MHz,kHz,SF,CR" when reported
-	Source   string `json:"source"`          // status | neighbor | heard
+	Source   string `json:"source"`          // status | neighbor | heard | relayed
 	LastSeen string `json:"last_seen"`
 }
 

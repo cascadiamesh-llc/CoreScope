@@ -300,3 +300,127 @@ func TestPruneMediaMesh(t *testing.T) {
 		t.Errorf("PruneMediaMeshNodes = %d (%v), want 1", n, err)
 	}
 }
+
+func TestMediaMeshRelayers(t *testing.T) {
+	a, b, c := strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64)
+	rx, tx := "rx", "tx"
+	// Received flood a -> b -> c: c is the forwarder heard (the sender mark);
+	// a and b relayed it before.
+	flood := &PacketData{PayloadType: 6, RouteType: 1, PathJSON: `["aa","bb","cc"]`, Direction: &rx}
+	got := mediaMeshRelayers(flood, []*string{&a, &b, &c})
+	if strings.Join(got, ",") != a+","+b {
+		t.Errorf("rx flood: relayers %v, want a,b", got)
+	}
+	// An unresolved (ambiguous) hop is skipped, the others still count.
+	if got := mediaMeshRelayers(flood, []*string{nil, &b, &c}); strings.Join(got, ",") != b {
+		t.Errorf("ambiguous hop: relayers %v, want b", got)
+	}
+	// One hop: only the heard forwarder, no earlier relayers.
+	one := &PacketData{PayloadType: 6, RouteType: 1, PathJSON: `["cc"]`, Direction: &rx}
+	if got := mediaMeshRelayers(one, []*string{&c}); len(got) != 0 {
+		t.Errorf("one hop: relayers %v, want none", got)
+	}
+	// Transport (scoped) floods count like floods: #mediamesh is a scope.
+	scoped := &PacketData{PayloadType: 6, RouteType: 0, PathJSON: `["aa","cc"]`, Direction: &rx}
+	if got := mediaMeshRelayers(scoped, []*string{&a, &c}); strings.Join(got, ",") != a {
+		t.Errorf("transport flood: relayers %v, want a", got)
+	}
+	// A direct route's path is the route still to travel: nothing.
+	direct := &PacketData{PayloadType: 6, RouteType: 2, PathJSON: `["aa","bb"]`, Direction: &rx}
+	if got := mediaMeshRelayers(direct, []*string{&a, &b}); len(got) != 0 {
+		t.Errorf("direct route: relayers %v, want none", got)
+	}
+	// Sent by the observer c: every hop but its own, appended when forwarding.
+	sent := &PacketData{PayloadType: 6, RouteType: 1, PathJSON: `["aa","bb","cc"]`, Direction: &tx, ObserverID: strings.ToUpper(c)}
+	if got := mediaMeshRelayers(sent, []*string{&a, &b, &c}); strings.Join(got, ",") != a+","+b {
+		t.Errorf("tx flood: relayers %v, want a,b", got)
+	}
+	// Path and resolution out of step: no guesses.
+	if got := mediaMeshRelayers(flood, []*string{&a, &b}); len(got) != 0 {
+		t.Errorf("mismatched resolution: relayers %v, want none", got)
+	}
+}
+
+func TestRecordMediaMeshRelayedIsWeakest(t *testing.T) {
+	s := newTestStore(t)
+	t0 := time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC)
+	fresh, own, off := strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64)
+
+	// No mark yet: relayed adds one.
+	if err := s.RecordMediaMeshRelayed(fresh, t0); err != nil {
+		t.Fatal(err)
+	}
+	if mode, radio, src, ok := nodeMediaMesh(t, s, fresh); !ok || mode != "rxtx" || radio != "" || src != "relayed" {
+		t.Fatalf("new relayed mark: %q %q %q (%v)", mode, radio, src, ok)
+	}
+	// Stronger evidence replaces a relayed mark.
+	if err := s.RecordMediaMesh(MediaMeshReport{PubKey: fresh, Mode: "rxtx", Source: "heard"}, t0.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, src, _ := nodeMediaMesh(t, s, fresh); src != "heard" {
+		t.Fatalf("heard did not replace relayed: %q", src)
+	}
+
+	// The node's own report, with its radio: a later relayed sighting keeps it.
+	if err := s.RecordMediaMesh(MediaMeshReport{PubKey: own, Mode: "rx", Radio: "911.15,250,7,5", Source: "status"}, t0); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordMediaMeshRelayed(own, t0.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if mode, radio, src, _ := nodeMediaMesh(t, s, own); mode != "rx" || radio != "911.15,250,7,5" || src != "status" {
+		t.Fatalf("relayed overwrote the node's own report: %q %q %q", mode, radio, src)
+	}
+
+	// A report that radio2 is off is not turned back on by a relayed sighting.
+	if err := s.RecordMediaMesh(MediaMeshReport{PubKey: off, Mode: "off", Source: "neighbor"}, t0); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordMediaMeshRelayed(off, t0.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if mode, _, src, _ := nodeMediaMesh(t, s, off); mode != "off" || src != "neighbor" {
+		t.Fatalf("relayed overrode an off report: %q %q", mode, src)
+	}
+
+	// A relayed mark is refreshed by later sightings, never moved back.
+	later := t0.Add(2 * time.Hour)
+	other := strings.Repeat("d", 64)
+	for _, at := range []time.Time{t0, later, t0.Add(time.Hour)} {
+		if err := s.RecordMediaMeshRelayed(other, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var seen string
+	if err := s.db.QueryRow(`SELECT last_seen FROM node_mediamesh WHERE public_key = ?`, other).Scan(&seen); err != nil {
+		t.Fatal(err)
+	}
+	if seen != later.Format(time.RFC3339) {
+		t.Fatalf("relayed last_seen = %s, want %s", seen, later.Format(time.RFC3339))
+	}
+}
+
+func TestNoteMediaMeshObservationMarksWholePath(t *testing.T) {
+	s := newTestStore(t)
+	a, b, c := strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64)
+	rx := "rx"
+	data := &PacketData{
+		PayloadType: 6, RouteType: 1, PathJSON: `["aa","bb","cc"]`, Direction: &rx,
+		ObserverID: strings.Repeat("e", 64), MediaMesh: true,
+	}
+	s.noteMediaMeshObservation(1, data, []*string{&a, &b, &c})
+
+	for pk, want := range map[string]string{a: "relayed", b: "relayed", c: "heard"} {
+		if mode, _, src, ok := nodeMediaMesh(t, s, pk); !ok || mode != "rxtx" || src != want {
+			t.Errorf("%s…: %q %q (%v), want rxtx/%s", pk[:4], mode, src, ok, want)
+		}
+	}
+	// Not MediaMesh: nothing at all.
+	plain := *data
+	plain.MediaMesh = false
+	s2 := newTestStore(t)
+	s2.noteMediaMeshObservation(1, &plain, []*string{&a, &b, &c})
+	if n := mmCountRows(t, s2, `SELECT COUNT(*) FROM node_mediamesh`); n != 0 {
+		t.Fatalf("non-MediaMesh packet wrote %d marks", n)
+	}
+}
