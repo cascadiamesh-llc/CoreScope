@@ -39,8 +39,8 @@ packet, so there's nothing for the capture software to pass on. For MediaMesh, u
 
 *For options A and B.*
 
-1. Flash **Keymind Cascade newer than v1.18.0.1** (built on or after Oct 29, 2026). v1.18.0.1 can
-   run MediaMesh, but it doesn't yet tell observers which packets were MediaMesh. Use the
+1. Flash **Keymind Cascade v1.18.0.2 or newer**. v1.18.0.1 and older can run MediaMesh, but they
+   don't tell observers which packets were MediaMesh. Use the
    [MediaMesh Flasher](https://cascadiamesh.org/mediamesh-flasher/) (Keymind Cascade tab).
 2. In the repeater's CLI (USB console or remote admin login):
    ```
@@ -90,6 +90,25 @@ commands above.
 MediaMesh needs the **CascadiaMesh version of MCtoMQTT**. It's the regular
 [meshcoretomqtt](https://github.com/Cisien/meshcoretomqtt) plus MediaMesh support. On a repeater
 without MediaMesh it behaves exactly like the regular one.
+
+### Repeater settings
+
+MCtoMQTT reads the repeater's USB packet log, so that log has to be on. In the repeater's CLI
+(remote admin login from the app is easiest, since MCtoMQTT keeps the USB port busy):
+
+```
+get usb.logging
+set usb.logging on
+set usb.logging.always on
+```
+
+- `usb.logging` turns the packet log on. If `get usb.logging` answers with an error, this firmware
+  build has no packet logging: flash the standard repeater build for your board.
+- `usb.logging.always` keeps the log running when MCtoMQTT sends the repeater a command. Without it,
+  every command (MCtoMQTT sends a few each time it starts) pauses the log for 5 minutes, so no
+  packets reach the analyzer for 5 minutes after every restart.
+
+Both settings are saved and survive reboots.
 
 ### New install
 
@@ -149,9 +168,10 @@ sudo systemctl restart mctomqtt
 With MediaMesh on, the log shows a line like
 `Second radio profile: {'radio': '911.150,250.000,7,5', 'mode': 'rxtx', 'temporary': False}` at startup.
 
-MCtoMQTT reads the repeater's MediaMesh setting only when it starts, because any other console
-command pauses the repeater's packet log for 5 minutes. **After changing radio2 on the repeater**
-(`set radio2 …`), restart MCtoMQTT with `sudo systemctl restart mctomqtt`.
+MCtoMQTT reads the repeater's MediaMesh setting only when it starts, because without
+`usb.logging.always` any other console command pauses the repeater's packet log for 5 minutes.
+**After changing radio2 on the repeater** (`set radio2 …`), restart MCtoMQTT with
+`sudo systemctl restart mctomqtt`.
 
 ---
 
