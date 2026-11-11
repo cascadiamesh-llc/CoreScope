@@ -304,9 +304,9 @@ func TestPruneMediaMesh(t *testing.T) {
 func TestMediaMeshRelayers(t *testing.T) {
 	a, b, c := strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64)
 	rx, tx := "rx", "tx"
-	// Received flood a -> b -> c: c is the forwarder heard (the sender mark);
-	// a and b relayed it before.
-	flood := &PacketData{PayloadType: 6, RouteType: 1, PathJSON: `["aa","bb","cc"]`, Direction: &rx}
+	// Received flood a -> b -> c (2-byte hashes): c is the forwarder heard
+	// (the sender mark); a and b relayed it before.
+	flood := &PacketData{PayloadType: 6, RouteType: 1, PathJSON: `["aaaa","bbbb","cccc"]`, Direction: &rx}
 	got := mediaMeshRelayers(flood, []*string{&a, &b, &c})
 	if strings.Join(got, ",") != a+","+b {
 		t.Errorf("rx flood: relayers %v, want a,b", got)
@@ -315,29 +315,63 @@ func TestMediaMeshRelayers(t *testing.T) {
 	if got := mediaMeshRelayers(flood, []*string{nil, &b, &c}); strings.Join(got, ",") != b {
 		t.Errorf("ambiguous hop: relayers %v, want b", got)
 	}
+	// 1-byte hashes are shared by too many repeaters: never relayed evidence.
+	oneByte := &PacketData{PayloadType: 6, RouteType: 1, PathJSON: `["aa","bb","cc"]`, Direction: &rx}
+	if got := mediaMeshRelayers(oneByte, []*string{&a, &b, &c}); len(got) != 0 {
+		t.Errorf("1-byte hops: relayers %v, want none", got)
+	}
+	// 3-byte hashes count.
+	threeByte := &PacketData{PayloadType: 6, RouteType: 1, PathJSON: `["aaaaaa","cccccc"]`, Direction: &rx}
+	if got := mediaMeshRelayers(threeByte, []*string{&a, &c}); strings.Join(got, ",") != a {
+		t.Errorf("3-byte hops: relayers %v, want a", got)
+	}
 	// One hop: only the heard forwarder, no earlier relayers.
-	one := &PacketData{PayloadType: 6, RouteType: 1, PathJSON: `["cc"]`, Direction: &rx}
+	one := &PacketData{PayloadType: 6, RouteType: 1, PathJSON: `["cccc"]`, Direction: &rx}
 	if got := mediaMeshRelayers(one, []*string{&c}); len(got) != 0 {
 		t.Errorf("one hop: relayers %v, want none", got)
 	}
 	// Transport (scoped) floods count like floods: #mediamesh is a scope.
-	scoped := &PacketData{PayloadType: 6, RouteType: 0, PathJSON: `["aa","cc"]`, Direction: &rx}
+	scoped := &PacketData{PayloadType: 6, RouteType: 0, PathJSON: `["aaaa","cccc"]`, Direction: &rx}
 	if got := mediaMeshRelayers(scoped, []*string{&a, &c}); strings.Join(got, ",") != a {
 		t.Errorf("transport flood: relayers %v, want a", got)
 	}
 	// A direct route's path is the route still to travel: nothing.
-	direct := &PacketData{PayloadType: 6, RouteType: 2, PathJSON: `["aa","bb"]`, Direction: &rx}
+	direct := &PacketData{PayloadType: 6, RouteType: 2, PathJSON: `["aaaa","bbbb"]`, Direction: &rx}
 	if got := mediaMeshRelayers(direct, []*string{&a, &b}); len(got) != 0 {
 		t.Errorf("direct route: relayers %v, want none", got)
 	}
 	// Sent by the observer c: every hop but its own, appended when forwarding.
-	sent := &PacketData{PayloadType: 6, RouteType: 1, PathJSON: `["aa","bb","cc"]`, Direction: &tx, ObserverID: strings.ToUpper(c)}
+	sent := &PacketData{PayloadType: 6, RouteType: 1, PathJSON: `["aaaa","bbbb","cccc"]`, Direction: &tx, ObserverID: strings.ToUpper(c)}
 	if got := mediaMeshRelayers(sent, []*string{&a, &b, &c}); strings.Join(got, ",") != a+","+b {
 		t.Errorf("tx flood: relayers %v, want a,b", got)
 	}
 	// Path and resolution out of step: no guesses.
 	if got := mediaMeshRelayers(flood, []*string{&a, &b}); len(got) != 0 {
 		t.Errorf("mismatched resolution: relayers %v, want none", got)
+	}
+}
+
+func TestMediaMeshRelaySightingsNeedTwoPackets(t *testing.T) {
+	var m mediaMeshRelaySightings
+	t0 := time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC)
+	if m.confirmed("a", "pkt1", t0) {
+		t.Fatal("first sighting confirmed a mark")
+	}
+	if m.confirmed("a", "pkt1", t0.Add(time.Minute)) {
+		t.Fatal("the same packet again (another observation of it) confirmed a mark")
+	}
+	if !m.confirmed("a", "pkt2", t0.Add(time.Hour)) {
+		t.Fatal("a second, different packet within 2 days did not confirm")
+	}
+	if m.confirmed("b", "", t0) || m.confirmed("b", "", t0.Add(time.Hour)) {
+		t.Fatal("packets without a hash confirmed a mark")
+	}
+	// Sightings more than 2 days apart start over.
+	if m.confirmed("c", "pkt1", t0) || m.confirmed("c", "pkt2", t0.Add(49*time.Hour)) {
+		t.Fatal("sightings more than 2 days apart confirmed a mark")
+	}
+	if !m.confirmed("c", "pkt3", t0.Add(50*time.Hour)) {
+		t.Fatal("a fresh pair within 2 days did not confirm")
 	}
 }
 
@@ -404,23 +438,66 @@ func TestNoteMediaMeshObservationMarksWholePath(t *testing.T) {
 	s := newTestStore(t)
 	a, b, c := strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64)
 	rx := "rx"
-	data := &PacketData{
-		PayloadType: 6, RouteType: 1, PathJSON: `["aa","bb","cc"]`, Direction: &rx,
-		ObserverID: strings.Repeat("e", 64), MediaMesh: true,
+	packet := func(hash string) *PacketData {
+		return &PacketData{
+			PayloadType: 6, RouteType: 1, PathJSON: `["aaaa","bbbb","cccc"]`, Direction: &rx,
+			ObserverID: strings.Repeat("e", 64), MediaMesh: true, Hash: hash,
+		}
 	}
-	s.noteMediaMeshObservation(1, data, []*string{&a, &b, &c})
+	resolved := []*string{&a, &b, &c}
 
-	for pk, want := range map[string]string{a: "relayed", b: "relayed", c: "heard"} {
-		if mode, _, src, ok := nodeMediaMesh(t, s, pk); !ok || mode != "rxtx" || src != want {
-			t.Errorf("%s…: %q %q (%v), want rxtx/%s", pk[:4], mode, src, ok, want)
+	// First packet: the heard forwarder is marked, the earlier hops are not yet.
+	s.noteMediaMeshObservation(1, packet("pkt1"), resolved)
+	if _, _, src, ok := nodeMediaMesh(t, s, c); !ok || src != "heard" {
+		t.Fatalf("heard forwarder: %q (%v), want heard", src, ok)
+	}
+	for _, pk := range []string{a, b} {
+		if _, _, _, ok := nodeMediaMesh(t, s, pk); ok {
+			t.Fatalf("%s… marked after a single packet", pk[:4])
+		}
+	}
+	// A second, different packet over the same path confirms them.
+	s.noteMediaMeshObservation(2, packet("pkt2"), resolved)
+	for _, pk := range []string{a, b} {
+		if mode, _, src, ok := nodeMediaMesh(t, s, pk); !ok || mode != "rxtx" || src != "relayed" {
+			t.Errorf("%s…: %q %q (%v), want rxtx/relayed", pk[:4], mode, src, ok)
 		}
 	}
 	// Not MediaMesh: nothing at all.
-	plain := *data
-	plain.MediaMesh = false
 	s2 := newTestStore(t)
-	s2.noteMediaMeshObservation(1, &plain, []*string{&a, &b, &c})
+	for i, h := range []string{"pkt1", "pkt2"} {
+		plain := packet(h)
+		plain.MediaMesh = false
+		s2.noteMediaMeshObservation(int64(i+1), plain, resolved)
+	}
 	if n := mmCountRows(t, s2, `SELECT COUNT(*) FROM node_mediamesh`); n != 0 {
-		t.Fatalf("non-MediaMesh packet wrote %d marks", n)
+		t.Fatalf("non-MediaMesh packets wrote %d marks", n)
+	}
+}
+
+func TestPruneRelayedMarksAfterTwoDays(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC)
+	relayedOld, relayedFresh, heardOld := strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64)
+	if err := s.RecordMediaMeshRelayed(relayedOld, now.Add(-49*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordMediaMeshRelayed(relayedFresh, now.Add(-47*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordMediaMesh(MediaMeshReport{PubKey: heardOld, Mode: "rxtx", Source: "heard"}, now.Add(-49*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.PruneMediaMeshNodes(now); err != nil || n != 1 {
+		t.Fatalf("PruneMediaMeshNodes = %d (%v), want 1 (the old relayed mark)", n, err)
+	}
+	if _, _, _, ok := nodeMediaMesh(t, s, relayedOld); ok {
+		t.Error("relayed mark older than 2 days survived")
+	}
+	if _, _, _, ok := nodeMediaMesh(t, s, relayedFresh); !ok {
+		t.Error("relayed mark under 2 days old was pruned")
+	}
+	if _, _, _, ok := nodeMediaMesh(t, s, heardOld); !ok {
+		t.Error("a heard mark was pruned at 2 days; it keeps 30")
 	}
 }

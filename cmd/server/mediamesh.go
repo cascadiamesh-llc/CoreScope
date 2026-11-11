@@ -35,6 +35,8 @@ const (
 	mediaMeshFullReload = 10 * time.Minute
 	// A node's MediaMesh mark counts while its newest evidence is this recent.
 	mediaMeshEvidenceWindow = 7 * 24 * time.Hour
+	// A mark only from relaying MediaMesh (weaker evidence) fades sooner.
+	mediaMeshRelayedWindow = 2 * 24 * time.Hour
 )
 
 // MediaMeshNode is what /api/nodes and node detail report for a node that
@@ -104,7 +106,11 @@ func nodeMediaMeshAt(pubkey string, now time.Time) *MediaMeshNode {
 	if !ok || n.Mode == "off" {
 		return nil
 	}
-	if t, err := time.Parse(time.RFC3339, n.LastSeen); err == nil && now.Sub(t) > mediaMeshEvidenceWindow {
+	window := mediaMeshEvidenceWindow
+	if n.Source == "relayed" {
+		window = mediaMeshRelayedWindow
+	}
+	if t, err := time.Parse(time.RFC3339, n.LastSeen); err == nil && now.Sub(t) > window {
 		return nil
 	}
 	return &n

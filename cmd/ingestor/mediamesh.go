@@ -45,6 +45,12 @@ const (
 	mediaMeshHeardMapMax = 8192
 	// node_mediamesh rows not refreshed for this long are pruned.
 	mediaMeshNodeRetention = 30 * 24 * time.Hour
+	// Relayed marks (weaker evidence) are pruned sooner, and need two
+	// different MediaMesh packets within this long before they are made.
+	mediaMeshRelayedRetention = 2 * 24 * time.Hour
+	// Relayed marks only count hops whose path hash is at least this many
+	// bytes: a 1-byte hash is shared by too many repeaters to trust.
+	mediaMeshRelayedMinHashBytes = 2
 )
 
 // mediaMeshFlag reads the packet's `mediamesh` key: a JSON boolean, with the
@@ -220,8 +226,8 @@ func mediaMeshRelayers(data *PacketData, resolved []*string) []string {
 	}
 	self := strings.ToLower(data.ObserverID)
 	var out []string
-	for _, r := range candidates {
-		if r == nil {
+	for i, r := range candidates {
+		if r == nil || len(hops[i]) < 2*mediaMeshRelayedMinHashBytes {
 			continue
 		}
 		if pk := strings.ToLower(*r); targetPubkeyRe.MatchString(pk) && pk != self {
@@ -229,6 +235,36 @@ func mediaMeshRelayers(data *PacketData, resolved []*string) []string {
 		}
 	}
 	return out
+}
+
+// mediaMeshRelaySightings holds, per repeater, the first MediaMesh packet it
+// was seen relaying. A relayed mark is made only once a second, different
+// packet confirms it within mediaMeshRelayedRetention, so one bad hop match
+// does not mark a repeater. Kept in memory: a restart only delays marks.
+type mediaMeshRelaySightings struct {
+	mu    sync.Mutex
+	first map[string]relaySighting
+}
+
+type relaySighting struct {
+	packet string
+	at     time.Time
+}
+
+// confirmed records a sighting of pubkey relaying packet and reports whether
+// it has now been seen relaying two different packets within the window.
+func (m *mediaMeshRelaySightings) confirmed(pubkey, packet string, now time.Time) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.first == nil || len(m.first) >= mediaMeshHeardMapMax {
+		m.first = make(map[string]relaySighting)
+	}
+	s, ok := m.first[pubkey]
+	if !ok || now.Sub(s.at) > mediaMeshRelayedRetention {
+		m.first[pubkey] = relaySighting{packet: packet, at: now}
+		return false
+	}
+	return packet != "" && packet != s.packet
 }
 
 // mediaMeshHeard debounces "heard sending on radio2" writes per node.
@@ -327,6 +363,9 @@ func (s *Store) noteMediaMeshObservation(obsID int64, data *PacketData, resolved
 		}
 	}
 	for _, relayer := range mediaMeshRelayers(data, resolved) {
+		if !s.mediaMeshRelaySightings.confirmed(relayer, data.Hash, now) {
+			continue
+		}
 		if !s.mediaMeshRelayed.due(relayer, now) {
 			continue
 		}
@@ -336,10 +375,14 @@ func (s *Store) noteMediaMeshObservation(obsID int64, data *PacketData, resolved
 	}
 }
 
-// PruneMediaMeshNodes drops node_mediamesh rows not refreshed for 30 days.
+// PruneMediaMeshNodes drops node_mediamesh rows not refreshed for 30 days,
+// and relayed marks not refreshed for 2 days.
 func (s *Store) PruneMediaMeshNodes(now time.Time) (int64, error) {
 	cutoff := now.Add(-mediaMeshNodeRetention).UTC().Format(time.RFC3339)
-	res, err := s.db.Exec(`DELETE FROM node_mediamesh WHERE last_seen < ?`, cutoff)
+	relayedCutoff := now.Add(-mediaMeshRelayedRetention).UTC().Format(time.RFC3339)
+	res, err := s.db.Exec(`DELETE FROM node_mediamesh
+		WHERE last_seen < ? OR (source = ? AND last_seen < ?)`,
+		cutoff, mediaMeshSourceRelayed, relayedCutoff)
 	if err != nil {
 		return 0, err
 	}

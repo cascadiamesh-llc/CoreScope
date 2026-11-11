@@ -86,9 +86,10 @@ type Store struct {
 	stmtUpdateTxFirstSeen      *sql.Stmt
 	stmtBumpTxLastSeen         *sql.Stmt
 	stmtInsertObservation      *sql.Stmt
-	stmtInsertObservationRadio *sql.Stmt      // #1869, sparse rx_radio_id
-	mediaMeshHeard             mediaMeshHeard // debounces "heard sending on radio2" (mediamesh.go)
-	mediaMeshRelayed           mediaMeshHeard // debounces "relayed on radio2" (mediamesh.go)
+	stmtInsertObservationRadio *sql.Stmt               // #1869, sparse rx_radio_id
+	mediaMeshHeard             mediaMeshHeard          // debounces "heard sending on radio2" (mediamesh.go)
+	mediaMeshRelayed           mediaMeshHeard          // debounces "relayed on radio2" (mediamesh.go)
+	mediaMeshRelaySightings    mediaMeshRelaySightings // two packets before a relayed mark (mediamesh.go)
 	stmtInsertAdvertEvidence   *sql.Stmt
 	hopBackfillCancel          context.CancelFunc // stops the observation_hops backfill on Close
 	hopIndexDays               int                // retention.hopIndexDays; 0 = no hop index (see ConfigureObservationHops)

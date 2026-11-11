@@ -197,3 +197,35 @@ func BenchmarkTxMediaMesh(b *testing.B) {
 		_ = txMediaMesh(tx)
 	}
 }
+
+// A mark only from relaying MediaMesh fades after 2 days; other marks keep
+// the 7-day window.
+func TestRelayedMediaMeshMarkFadesAfterTwoDays(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	seedMediaMesh(t, srv)
+	now := time.Now().UTC()
+	rows := []struct {
+		pk, source string
+		age        time.Duration
+	}{
+		{"a1a1a1a1a1a1a1a1", "relayed", 47 * time.Hour},
+		{"b2b2b2b2b2b2b2b2", "relayed", 49 * time.Hour},
+		{"c3c3c3c3c3c3c3c3", "heard", 72 * time.Hour},
+	}
+	for _, r := range rows {
+		if _, err := srv.db.conn.Exec(`INSERT INTO node_mediamesh VALUES (?, 'rxtx', NULL, ?, ?)`,
+			r.pk, r.source, now.Add(-r.age).Format(time.RFC3339)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	refreshMediaMesh(srv.db.conn, true)
+	if n := nodeMediaMeshAt("a1a1a1a1a1a1a1a1", now); n == nil || n.Source != "relayed" {
+		t.Errorf("relayed mark under 2 days old: %+v, want shown", n)
+	}
+	if n := nodeMediaMeshAt("b2b2b2b2b2b2b2b2", now); n != nil {
+		t.Errorf("relayed mark over 2 days old: %+v, want hidden", n)
+	}
+	if n := nodeMediaMeshAt("c3c3c3c3c3c3c3c3", now); n == nil {
+		t.Error("heard mark 3 days old hidden; it keeps the 7-day window")
+	}
+}
