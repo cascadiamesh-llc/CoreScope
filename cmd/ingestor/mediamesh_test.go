@@ -538,7 +538,7 @@ func TestRelayedMarksSkipHopsHeardOnMainMesh(t *testing.T) {
 	for _, h := range []string{"pkt1", "pkt2"} {
 		// The main mesh heard the packet through aaaa and bbbb.
 		if _, err := s.InsertTransmission(&PacketData{
-			Hash: h, RawHex: "1500", RouteType: 1, PayloadType: 5,
+			Hash: h, RawHex: "1500", RouteType: 1, PayloadType: 6,
 			PathJSON: `["aaaa","bbbb"]`, Direction: &rx, Timestamp: now.UTC().Format(time.RFC3339),
 		}); err != nil {
 			t.Fatal(err)
@@ -550,7 +550,7 @@ func TestRelayedMarksSkipHopsHeardOnMainMesh(t *testing.T) {
 		// Then a repeater after bbbb put it on radio2: cccc relayed it there
 		// and dddd is the forwarder the observer heard.
 		s.noteMediaMeshObservation(0, txID, &PacketData{
-			PayloadType: 5, RouteType: 1, PathJSON: `["aaaa","bbbb","cccc","dddd"]`, Direction: &rx,
+			PayloadType: 6, RouteType: 1, PathJSON: `["aaaa","bbbb","cccc","dddd"]`, Direction: &rx,
 			ObserverID: strings.Repeat("e", 64), MediaMesh: true, Hash: h,
 		}, []*string{&a, &b, &c, &d})
 	}
@@ -592,5 +592,35 @@ func TestResetMediaMeshRelayedOnce(t *testing.T) {
 	s.ResetMediaMeshRelayedOnce()
 	if _, _, _, ok := nodeMediaMesh(t, s, relayed); !ok {
 		t.Error("second reset removed a new relayed mark")
+	}
+}
+
+func TestRelayedMarksOnlyFromMediaPackets(t *testing.T) {
+	a, c := strings.Repeat("a", 64), strings.Repeat("c", 64)
+	rx := "rx"
+	flood := func(pt int, decoded string) *PacketData {
+		return &PacketData{PayloadType: pt, RouteType: 1, PathJSON: `["aaaa","cccc"]`, Direction: &rx, DecodedJSON: decoded}
+	}
+	cases := []struct {
+		name string
+		data *PacketData
+		want bool
+	}{
+		{"GRP_DATA, channel key unknown", flood(6, `{"type":"GRP_DATA","decryptionStatus":"no_key"}`), true},
+		{"GRP_DATA, Open TAK media", flood(6, `{"type":"GRP_DATA","dataType":22083}`), true},
+		{"GRP_DATA, other application", flood(6, `{"type":"GRP_DATA","dataType":21331}`), false},
+		{"RAW_CUSTOM voice clip", flood(15, `{"type":"RAW_CUSTOM","raw":"56010203040506"}`), true},
+		{"RAW_CUSTOM other app", flood(15, `{"type":"RAW_CUSTOM","raw":"4142434445"}`), false},
+		{"REQ", flood(0, `{"type":"REQ"}`), false},
+		{"GRP_TXT", flood(5, `{"type":"GRP_TXT"}`), false},
+		{"TXT_MSG", flood(2, `{"type":"TXT_MSG"}`), false},
+		{"ADVERT", flood(4, `{"type":"ADVERT"}`), false},
+		{"PATH", flood(8, `{"type":"PATH"}`), false},
+	}
+	for _, tc := range cases {
+		got := len(mediaMeshRelayers(tc.data, []*string{&a, &c})) == 1
+		if got != tc.want {
+			t.Errorf("%s: relayed evidence %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }

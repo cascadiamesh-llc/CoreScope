@@ -51,6 +51,13 @@ packet, so there's nothing for the capture software to pass on. For MediaMesh, u
    get radio2
    ```
    You should see `911.150,250.000,7,5,rxtx,…`.
+4. Make sure the repeater isn't copying main-mesh traffic onto MediaMesh:
+   ```
+   get radio2.cross
+   set radio2.cross off
+   ```
+   Repeaters that turned on MediaMesh with firmware from before October 19, 2026 saved
+   `auto` here, and `auto` copies all main-mesh traffic onto MediaMesh, using up its airtime.
 
 The repeater keeps repeating the main mesh exactly as before. It shares one radio between the two
 channels, so it spends a little time listening to MediaMesh instead of the main mesh.
@@ -229,6 +236,8 @@ passes through your repeater:
 - **Map** and **Nodes** mark your repeater as a MediaMesh repeater. Repeaters earlier in a
   MediaMesh packet's path are marked too, in a greyer pink: they were seen relaying MediaMesh
   rather than reporting it or being heard directly. To keep these marks reliable:
+  - Only packets that carry photos, voice or video count (channel data and Open TAK media clips).
+    Ordinary traffic on MediaMesh, like requests, chat and adverts, doesn't.
   - Hops where the main mesh also heard the packet don't count. A repeater with `radio2.cross`
     on or `auto` forwards main-mesh traffic onto MediaMesh, so those packets arrive on MediaMesh
     with their whole main-mesh path in front.

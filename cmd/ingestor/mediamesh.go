@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/hex"
+	"encoding/json"
 	"log"
 	"strings"
 	"sync"
@@ -235,8 +237,9 @@ type relayCandidate struct {
 }
 
 // mediaMeshRelayerHops is mediaMeshRelayers with each hop's path position.
+// Only packets that carry media count (mediaMeshCarriesMedia).
 func mediaMeshRelayerHops(data *PacketData, resolved []*string) []relayCandidate {
-	if !pathHopsTransmitted(data) {
+	if !pathHopsTransmitted(data) || !mediaMeshCarriesMedia(data) {
 		return nil
 	}
 	hops := parsePathArray(data.PathJSON)
@@ -259,6 +262,73 @@ func mediaMeshRelayerHops(data *PacketData, resolved []*string) []relayCandidate
 		}
 	}
 	return out
+}
+
+// Media packets, as Keymind Cascade's tx.media rule picks them for radio2
+// (src/helpers/CompanionTrafficRouting.h): photos, voice and video from
+// MeshCore Open TAK and Wadamesh TAK.
+const (
+	payloadGrpData       = 0x06
+	payloadRawCustom     = 0x0F
+	mediaChannelDataType = 0x5643 // Open TAK 'VC'
+)
+
+// mediaMeshCarriesMedia reports whether a packet is the kind that carries
+// photos, voice or video. Ordinary traffic on radio2 (requests, chat,
+// adverts) usually got there through a repeater with radio2.cross on, so it
+// says nothing about the repeaters earlier in its path.
+//
+//   - GRP_DATA: channel data. The data type is encrypted; when the analyzer
+//     holds the channel key and the type is not Open TAK media, it is not
+//     media. Otherwise it counts.
+//   - RAW_CUSTOM: Open TAK's binary clip packets, recognised by their
+//     leading bytes as the firmware does.
+func mediaMeshCarriesMedia(data *PacketData) bool {
+	switch data.PayloadType {
+	case payloadGrpData:
+		var p struct {
+			DataType *int `json:"dataType"`
+		}
+		if data.DecodedJSON != "" && json.Unmarshal([]byte(data.DecodedJSON), &p) == nil &&
+			p.DataType != nil && *p.DataType != mediaChannelDataType {
+			return false
+		}
+		return true
+	case payloadRawCustom:
+		var p struct {
+			Raw string `json:"raw"`
+		}
+		if json.Unmarshal([]byte(data.DecodedJSON), &p) != nil {
+			return false
+		}
+		b, err := hex.DecodeString(p.Raw)
+		return err == nil && rawMediaPayload(b)
+	}
+	return false
+}
+
+// rawMediaPayload mirrors the firmware's rawTrafficKind media test.
+func rawMediaPayload(data []byte) bool {
+	n := len(data)
+	if n == 0 {
+		return false
+	}
+	if (data[0] == 0x56 && n >= 7) || (data[0] == 0x57 && n >= 8) {
+		return true
+	}
+	if data[0] == 0x72 && n >= 13 {
+		flags := data[5]
+		count := int(data[12])
+		if flags&^7 != 0 || (flags&1 == 0 && count != 0) || count > n-13 {
+			return false
+		}
+		end := 13 + count
+		if flags&4 == 0 {
+			return n == end
+		}
+		return n > end && data[end] <= 63 && n-end-1 == int(data[end])
+	}
+	return false
 }
 
 // sameHop reports whether two path entries name the same hop. Entries of one
