@@ -42,6 +42,9 @@ type MediaMeshObserver struct {
 	LastHeard    string  `json:"last_heard"`
 	// RunsMediaMesh: the observer's own status reports radio2 on.
 	RunsMediaMesh bool `json:"runs_mediamesh,omitempty"`
+	// Near: the closest town or neighbourhood to the observer's node
+	// (places.go), when it has a position.
+	Near string `json:"near,omitempty"`
 }
 
 // MediaMeshRepeater is a node that runs radio2, with its last report.
@@ -49,6 +52,7 @@ type MediaMeshRepeater struct {
 	PublicKey string `json:"public_key"`
 	Name      string `json:"name,omitempty"`
 	Role      string `json:"role,omitempty"`
+	Near      string `json:"near,omitempty"` // closest town or neighbourhood (places.go)
 	MediaMeshNode
 }
 
@@ -224,13 +228,14 @@ func (s *PacketStore) computeMediaMeshAnalytics(region string, window TimeWindow
 	}
 	sort.Slice(out.PerHour, func(i, j int) bool { return out.PerHour[i].Hour < out.PerHour[j].Hour })
 	now := time.Now()
+	nodes := s.mediaMeshNodeInfo()
 	for id, a := range observers {
 		runs := observerRunsMediaMesh(id, now)
 		if a.mm == 0 && !runs {
 			continue
 		}
 		o := MediaMeshObserver{ID: id, Name: a.name, IATA: a.iata, MediaMeshObs: a.mm, TotalObs: a.total,
-			LastHeard: a.last, RunsMediaMesh: runs}
+			LastHeard: a.last, RunsMediaMesh: runs, Near: nodeNear(nodes, id)}
 		if a.total > 0 {
 			o.SharePct = float64(a.mm) / float64(a.total) * 100
 		}
@@ -242,8 +247,27 @@ func (s *PacketStore) computeMediaMeshAnalytics(region string, window TimeWindow
 		}
 		return out.Observers[i].ID < out.Observers[j].ID
 	})
-	out.Repeaters = s.mediaMeshRepeaters(now)
+	out.Repeaters = s.mediaMeshRepeaters(now, nodes)
 	return out
+}
+
+// mediaMeshNodeInfo is the node list by lower-case public key.
+func (s *PacketStore) mediaMeshNodeInfo() map[string]nodeInfo {
+	names := map[string]nodeInfo{}
+	nodes, _ := s.getCachedNodesAndPM()
+	for _, n := range nodes {
+		names[strings.ToLower(n.PublicKey)] = n
+	}
+	return names
+}
+
+// nodeNear is "Near" for a node, empty without a position.
+func nodeNear(nodes map[string]nodeInfo, pubkey string) string {
+	n, ok := nodes[strings.ToLower(pubkey)]
+	if !ok || (n.Lat == 0 && n.Lon == 0) {
+		return ""
+	}
+	return nearPlace(n.Lat, n.Lon)
 }
 
 // observerRunsMediaMesh reports whether an observer's own status says its
@@ -256,16 +280,11 @@ func observerRunsMediaMesh(id string, now time.Time) bool {
 // mediaMeshRepeaters lists the nodes with a current MediaMesh mark (the same
 // rule as the node API: not off, evidence under 7 days), newest first, with
 // the node's name and role when known.
-func (s *PacketStore) mediaMeshRepeaters(now time.Time) []MediaMeshRepeater {
+func (s *PacketStore) mediaMeshRepeaters(now time.Time, names map[string]nodeInfo) []MediaMeshRepeater {
 	p := mediaMeshNodes.Load()
 	out := []MediaMeshRepeater{}
 	if p == nil || len(*p) == 0 {
 		return out
-	}
-	names := map[string]nodeInfo{}
-	nodes, _ := s.getCachedNodesAndPM()
-	for _, n := range nodes {
-		names[strings.ToLower(n.PublicKey)] = n
 	}
 	for pk := range *p {
 		n := nodeMediaMeshAt(pk, now)
@@ -276,6 +295,7 @@ func (s *PacketStore) mediaMeshRepeaters(now time.Time) []MediaMeshRepeater {
 		if info, ok := names[pk]; ok {
 			rep.Name, rep.Role = info.Name, info.Role
 		}
+		rep.Near = nodeNear(names, pk)
 		out = append(out, rep)
 	}
 	sort.Slice(out, func(i, j int) bool {

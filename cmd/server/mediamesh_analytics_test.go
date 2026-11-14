@@ -48,6 +48,9 @@ func TestMediaMeshAnalytics(t *testing.T) {
 		got.Repeaters[0].Name != "TestRepeater" || got.Repeaters[0].Mode != "rxtx" || got.Repeaters[0].Radio != "911.15,250,7,5" {
 		t.Errorf("repeaters = %+v", got.Repeaters)
 	}
+	if got.Repeaters[0].Near != "Newark, CA" {
+		t.Errorf("repeater near = %q, want the closest town to its position", got.Repeaters[0].Near)
+	}
 }
 
 // A packet an observer sent on radio2 is MediaMesh traffic, but the observer

@@ -618,6 +618,25 @@
     }
     if (_currentTab !== 'mediamesh') return;
     el.innerHTML = renderMediaMeshTabHtml(mm, twVal);
+    initMediaMeshTableSort(el);
+  }
+
+  // A sortable value for a time: the ISO string, empty when unknown (sorts last).
+  function mediaMeshTime(t) {
+    return t && !isNaN(new Date(t).getTime()) ? new Date(t).toISOString() : '';
+  }
+
+  // Click a column header to sort the MediaMesh repeater and observer lists
+  // (TableSort, table-sort.js); the choice is remembered per table.
+  let _mmSortCtls = [];
+  function initMediaMeshTableSort(el) {
+    _mmSortCtls.forEach((c) => { try { c && c.destroy && c.destroy(); } catch (_) { /* ignore */ } });
+    _mmSortCtls = [];
+    if (!window.TableSort) return;
+    const rep = el.querySelector('#mmRepeaterTable');
+    if (rep) _mmSortCtls.push(TableSort.init(rep, { storageKey: 'meshcore-mediamesh-repeaters-sort' }));
+    const obs = el.querySelector('#mmObserverTable');
+    if (obs) _mmSortCtls.push(TableSort.init(obs, { storageKey: 'meshcore-mediamesh-observers-sort' }));
   }
 
   function renderMediaMeshTabHtml(mm, windowVal) {
@@ -637,23 +656,26 @@
       const seen = r.last_seen && typeof timeAgo === 'function' ? timeAgo(r.last_seen) : esc(r.last_seen || '');
       const rowClass = r.source === 'relayed' ? ' class="mm-row--relayed"' : '';
       return `<tr${rowClass}>
-        <td><span class="mm-dot mm-dot--${r.mode === 'rxtx' ? 'rxtx' : 'rx'}" aria-hidden="true"></span><a href="#/nodes/${encodeURIComponent(r.public_key || '')}">${esc(name)}</a></td>
+        <td data-value="${esc(name.toLowerCase())}"><span class="mm-dot mm-dot--${r.mode === 'rxtx' ? 'rxtx' : 'rx'}" aria-hidden="true"></span><a href="#/nodes/${encodeURIComponent(r.public_key || '')}">${esc(name)}</a></td>
+        <td>${esc(r.near || '—')}</td>
         <td>${esc(r.role || '—')}</td>
         <td>${mode}</td>
         <td>${esc(mediaMeshRadioText(r.radio))}</td>
         <td>${how}</td>
-        <td>${seen}</td>
+        <td data-value="${esc(mediaMeshTime(r.last_seen))}">${seen}</td>
       </tr>`;
     }).join('');
     const obsRows = obs.map((o) => {
       const seen = o.last_heard && typeof timeAgo === 'function' ? timeAgo(o.last_heard)
         : (o.last_heard ? esc(o.last_heard) : (o.runs_mediamesh ? 'MediaMesh on, nothing heard yet' : ''));
+      const oname = o.name || o.id || '?';
       return `<tr>
-        <td><a href="#/observers/${encodeURIComponent(o.id || '')}">${esc(o.name || o.id || '?')}</a></td>
+        <td data-value="${esc(String(oname).toLowerCase())}"><a href="#/observers/${encodeURIComponent(o.id || '')}">${esc(oname)}</a></td>
+        <td>${esc(o.near || '—')}</td>
         <td>${esc(o.iata || '—')}</td>
-        <td>${Number(o.mediamesh_observations || 0).toLocaleString()}</td>
-        <td>${sf(o.share_pct || 0, 1)}%</td>
-        <td>${seen}</td>
+        <td data-value="${Number(o.mediamesh_observations || 0)}">${Number(o.mediamesh_observations || 0).toLocaleString()}</td>
+        <td data-value="${Number(o.share_pct || 0)}">${sf(o.share_pct || 0, 1)}%</td>
+        <td data-value="${esc(mediaMeshTime(o.last_heard))}">${seen}</td>
       </tr>`;
     }).join('');
     const pph = hours.map((h) => ({ hour: h.hour, count: h.count }));
@@ -668,13 +690,13 @@
       <div class="analytics-row">
         <div class="analytics-card flex-1">
           <h3>MediaMesh repeaters</h3>
-          ${reps.length ? `<table class="analytics-table"><thead><tr><th>Node</th><th>Role</th><th>Mode</th><th>radio2 setting</th><th>Known from</th><th>Last seen</th></tr></thead><tbody>${repRows}</tbody></table>` : '<p class="text-muted">None known yet.</p>'}
+          ${reps.length ? `<table class="analytics-table" id="mmRepeaterTable"><thead><tr><th scope="col" data-sort-key="name">Node</th><th scope="col" data-sort-key="near">Near</th><th scope="col" data-sort-key="role">Role</th><th scope="col" data-sort-key="mode">Mode</th><th scope="col" data-sort-key="radio">radio2 setting</th><th scope="col" data-sort-key="source">Known from</th><th scope="col" data-sort-key="last_seen" data-type="date">Last seen</th></tr></thead><tbody>${repRows}</tbody></table>` : '<p class="text-muted">None known yet.</p>'}
         </div>
       </div>
       <div class="analytics-row">
         <div class="analytics-card flex-1">
           <h3>MediaMesh observers</h3>
-          ${obs.length ? `<table class="analytics-table"><thead><tr><th>Observer</th><th>Region</th><th>radio2 observations</th><th>Share of its observations</th><th>Last heard</th></tr></thead><tbody>${obsRows}</tbody></table>` : '<p class="text-muted">None in this period.</p>'}
+          ${obs.length ? `<table class="analytics-table" id="mmObserverTable"><thead><tr><th scope="col" data-sort-key="name">Observer</th><th scope="col" data-sort-key="near">Near</th><th scope="col" data-sort-key="region">Region</th><th scope="col" data-sort-key="mm" data-type="numeric">radio2 observations</th><th scope="col" data-sort-key="share" data-type="numeric">Share of its observations</th><th scope="col" data-sort-key="last_heard" data-type="date">Last heard</th></tr></thead><tbody>${obsRows}</tbody></table>` : '<p class="text-muted">None in this period.</p>'}
         </div>
       </div>`;
   }

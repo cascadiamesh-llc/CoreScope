@@ -44,7 +44,7 @@ const ctx = {
 ctx.escapeHtml = ctx.esc;
 vm.createContext(ctx);
 vm.runInContext(extract(analytics, ['renderPayloadPie', 'mediaMeshTypeShares', 'mediaMeshStatCard',
-  'mediaMeshRadioText', 'renderMediaMeshTabHtml', 'renderRelayAirtimeDumbbell']) +
+  'mediaMeshRadioText', 'mediaMeshTime', 'renderMediaMeshTabHtml', 'renderRelayAirtimeDumbbell']) +
   '\nthis.api = { renderPayloadPie, mediaMeshTypeShares, mediaMeshStatCard, renderMediaMeshTabHtml, renderRelayAirtimeDumbbell };', ctx);
 const A = ctx.api;
 
@@ -144,6 +144,21 @@ test('an observer running MediaMesh that has heard nothing yet is listed', () =>
   assert.ok(h.includes('MediaMesh observers'), 'section title');
   assert.ok(h.includes('d1-rptr') && h.includes('MediaMesh on, nothing heard yet'), 'idle observer row');
   assert.ok(h.includes('1 heard radio2'), 'stat detail counts only observers that heard radio2');
+});
+
+test('both lists have a Near column and sortable headers', () => {
+  const withNear = Object.assign({}, MM, {
+    repeaters: MM.repeaters.map((r, i) => Object.assign({}, r, i === 0 ? { near: 'First Hill, Seattle' } : {})),
+    observers: MM.observers.map((o) => Object.assign({}, o, { near: 'Woodinville, WA' })),
+  });
+  const h = A.renderMediaMeshTabHtml(withNear, '');
+  assert.ok(h.includes('id="mmRepeaterTable"') && h.includes('id="mmObserverTable"'), 'table ids for TableSort');
+  assert.ok((h.match(/<th scope="col" data-sort-key="near">Near<\/th>/g) || []).length === 2, 'Near column in both');
+  assert.ok(h.includes('First Hill, Seattle') && h.includes('Woodinville, WA'), 'near values shown');
+  assert.ok(h.includes('data-sort-key="last_seen" data-type="date"') && h.includes('data-sort-key="mm" data-type="numeric"'));
+  assert.ok(h.includes('data-value="2026-10-30T15:00:00.000Z"'), 'times sort by their ISO value');
+  // A repeater without a position shows a dash.
+  assert.ok(h.split('<tr').some((r) => r.includes('#/nodes/') && r.includes('<td>—</td>')));
 });
 
 test('empty state explains what is needed', () => {
