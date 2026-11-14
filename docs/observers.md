@@ -56,8 +56,8 @@ packet, so there's nothing for the capture software to pass on. For MediaMesh, u
    get radio2.cross
    set radio2.cross off
    ```
-   `on` and `auto` copy main-mesh traffic onto MediaMesh, using up its airtime. `off` is the
-   default on current firmware.
+   Repeaters that turned on MediaMesh with firmware from before October 19, 2026 saved
+   `auto` here, and `auto` copies all main-mesh traffic onto MediaMesh, using up its airtime.
 
 The repeater keeps repeating the main mesh exactly as before. It shares one radio between the two
 channels, so it spends a little time listening to MediaMesh instead of the main mesh.
