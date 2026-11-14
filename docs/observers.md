@@ -228,9 +228,12 @@ passes through your repeater:
 - **Live** draws MediaMesh packets as hollow rings.
 - **Map** and **Nodes** mark your repeater as a MediaMesh repeater. Repeaters earlier in a
   MediaMesh packet's path are marked too, in a greyer pink: they were seen relaying MediaMesh
-  rather than reporting it or being heard directly. To keep these marks reliable, a repeater only
-  gets one when it shows up in the paths of two different MediaMesh packets, and only from 2- or
-  3-byte path hashes (1-byte hashes match too many repeaters). The mark fades after 2 days without
-  being seen relaying again.
+  rather than reporting it or being heard directly. To keep these marks reliable:
+  - Hops where the main mesh also heard the packet don't count. A repeater with `radio2.cross`
+    on or `auto` forwards main-mesh traffic onto MediaMesh, so those packets arrive on MediaMesh
+    with their whole main-mesh path in front.
+  - A repeater only gets a mark when it shows up in the paths of two different MediaMesh packets,
+    and only from 2- or 3-byte path hashes (1-byte hashes match too many repeaters).
+  - The mark fades after 2 days without being seen relaying again.
 
 Questions? Ask on the CascadiaMesh Discord or email cascadiamesh@gmail.com.

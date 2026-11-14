@@ -319,9 +319,18 @@ func main() {
 	metricsDays := cfg.MetricsRetentionDays()
 	store.PruneOldMetrics(metricsDays)
 	store.PruneDroppedPackets(metricsDays)
+	store.ResetMediaMeshRelayedOnce()
 	if _, err := store.PruneMediaMeshNodes(time.Now()); err != nil {
 		log.Printf("[prune] mediamesh nodes: %v", err)
 	}
+	// MediaMesh relayed marks: judge queued floods once the main-mesh
+	// observations of the same packet are in (mediamesh.go).
+	mediaMeshRelayTicker := time.NewTicker(30 * time.Second)
+	go func() {
+		for range mediaMeshRelayTicker.C {
+			store.ProcessMediaMeshRelays(time.Now())
+		}
+	}()
 
 	// Packet (transmissions) retention: previously lived in cmd/server,
 	// moved to ingestor in #1283 to eliminate cross-process write

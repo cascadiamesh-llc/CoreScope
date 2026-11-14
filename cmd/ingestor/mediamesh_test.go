@@ -447,7 +447,8 @@ func TestNoteMediaMeshObservationMarksWholePath(t *testing.T) {
 	resolved := []*string{&a, &b, &c}
 
 	// First packet: the heard forwarder is marked, the earlier hops are not yet.
-	s.noteMediaMeshObservation(1, packet("pkt1"), resolved)
+	s.noteMediaMeshObservation(1, 1, packet("pkt1"), resolved)
+	s.ProcessMediaMeshRelays(time.Now().Add(mediaMeshRelayDelay + time.Second))
 	if _, _, src, ok := nodeMediaMesh(t, s, c); !ok || src != "heard" {
 		t.Fatalf("heard forwarder: %q (%v), want heard", src, ok)
 	}
@@ -457,7 +458,11 @@ func TestNoteMediaMeshObservationMarksWholePath(t *testing.T) {
 		}
 	}
 	// A second, different packet over the same path confirms them.
-	s.noteMediaMeshObservation(2, packet("pkt2"), resolved)
+	s.noteMediaMeshObservation(2, 2, packet("pkt2"), resolved)
+	if n := mmCountRows(t, s, `SELECT COUNT(*) FROM node_mediamesh WHERE source = 'relayed'`); n != 0 {
+		t.Fatalf("%d relayed marks before the main-mesh check ran", n)
+	}
+	s.ProcessMediaMeshRelays(time.Now().Add(mediaMeshRelayDelay + time.Second))
 	for _, pk := range []string{a, b} {
 		if mode, _, src, ok := nodeMediaMesh(t, s, pk); !ok || mode != "rxtx" || src != "relayed" {
 			t.Errorf("%s…: %q %q (%v), want rxtx/relayed", pk[:4], mode, src, ok)
@@ -468,7 +473,8 @@ func TestNoteMediaMeshObservationMarksWholePath(t *testing.T) {
 	for i, h := range []string{"pkt1", "pkt2"} {
 		plain := packet(h)
 		plain.MediaMesh = false
-		s2.noteMediaMeshObservation(int64(i+1), plain, resolved)
+		s2.noteMediaMeshObservation(int64(i+1), int64(i+1), plain, resolved)
+		s2.ProcessMediaMeshRelays(time.Now().Add(mediaMeshRelayDelay + time.Second))
 	}
 	if n := mmCountRows(t, s2, `SELECT COUNT(*) FROM node_mediamesh`); n != 0 {
 		t.Fatalf("non-MediaMesh packets wrote %d marks", n)
@@ -499,5 +505,92 @@ func TestPruneRelayedMarksAfterTwoDays(t *testing.T) {
 	}
 	if _, _, _, ok := nodeMediaMesh(t, s, heardOld); !ok {
 		t.Error("a heard mark was pruned at 2 days; it keeps 30")
+	}
+}
+
+// The false positives of v3.16.0-mediamesh.5: a repeater with radio2.cross on
+// forwarded a main-mesh flood onto radio2, and every main-mesh hop before it
+// was marked. Path from packet fde901b6ff4b7c9e, heard by Rainier View on
+// both radios a second apart.
+func TestMainMeshPathPrefixCrossedFlood(t *testing.T) {
+	radio2 := []string{"99DBE4", "CE9A20", "C4C2A7", "149BBA", "D3C496", "FBA9FE", "5CBBEE", "5E12EE", "1C0D4D", "3D43BD", "5CBBEE", "62CCBF"}
+	mains := [][]string{
+		{"99DBE4", "CE9A20", "C4C2A7", "149BBA", "D3C496", "FBA9FE", "5CBBEE", "5E12EE", "1C0D4D", "3D43BD"},
+		{"99DBE4", "CE9A20", "C4C2A7", "149BBA", "D3C496", "FBA9FE", "5CBBEE", "5E12EE", "1C0D4D", "3D43BD", "5CBBEE"},
+		{"99DBE4", "CE9A20", "C4C2A7", "149BBA", "D3C496", "FBA9FE", "5CBBEE", "5E12EE", "1C0D4D", "3D43BD", "7D95D3", "705221"},
+	}
+	if got := mainMeshPathPrefix(radio2, mains); got != 11 {
+		t.Fatalf("mainMeshPathPrefix = %d, want 11 (every hop before the crossing repeater)", got)
+	}
+	if got := mainMeshPathPrefix(radio2, nil); got != 0 {
+		t.Fatalf("no main-mesh observations: %d, want 0", got)
+	}
+	if got := mainMeshPathPrefix([]string{"aaaa", "bbbb"}, [][]string{{"AAAA", "cccc"}}); got != 1 {
+		t.Fatalf("case-insensitive prefix = %d, want 1", got)
+	}
+}
+
+func TestRelayedMarksSkipHopsHeardOnMainMesh(t *testing.T) {
+	s := newTestStore(t)
+	a, b, c, d := strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64), strings.Repeat("d", 64)
+	rx := "rx"
+	now := time.Now()
+	for _, h := range []string{"pkt1", "pkt2"} {
+		// The main mesh heard the packet through aaaa and bbbb.
+		if _, err := s.InsertTransmission(&PacketData{
+			Hash: h, RawHex: "1500", RouteType: 1, PayloadType: 5,
+			PathJSON: `["aaaa","bbbb"]`, Direction: &rx, Timestamp: now.UTC().Format(time.RFC3339),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		var txID int64
+		if err := s.db.QueryRow(`SELECT id FROM transmissions WHERE hash = ?`, h).Scan(&txID); err != nil {
+			t.Fatal(err)
+		}
+		// Then a repeater after bbbb put it on radio2: cccc relayed it there
+		// and dddd is the forwarder the observer heard.
+		s.noteMediaMeshObservation(0, txID, &PacketData{
+			PayloadType: 5, RouteType: 1, PathJSON: `["aaaa","bbbb","cccc","dddd"]`, Direction: &rx,
+			ObserverID: strings.Repeat("e", 64), MediaMesh: true, Hash: h,
+		}, []*string{&a, &b, &c, &d})
+	}
+	s.ProcessMediaMeshRelays(now.Add(mediaMeshRelayDelay + time.Second))
+	for _, pk := range []string{a, b} {
+		if _, _, src, ok := nodeMediaMesh(t, s, pk); ok {
+			t.Errorf("%s… marked %q, but it carried the packet on the main mesh", pk[:4], src)
+		}
+	}
+	if _, _, src, ok := nodeMediaMesh(t, s, c); !ok || src != "relayed" {
+		t.Errorf("cccc: %q (%v), want relayed", src, ok)
+	}
+	if _, _, src, ok := nodeMediaMesh(t, s, d); !ok || src != "heard" {
+		t.Errorf("dddd: %q (%v), want heard", src, ok)
+	}
+}
+
+func TestResetMediaMeshRelayedOnce(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Now()
+	relayed, heard := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	if err := s.RecordMediaMeshRelayed(relayed, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordMediaMesh(MediaMeshReport{PubKey: heard, Mode: "rxtx", Source: "heard"}, now); err != nil {
+		t.Fatal(err)
+	}
+	s.ResetMediaMeshRelayedOnce()
+	if _, _, _, ok := nodeMediaMesh(t, s, relayed); ok {
+		t.Error("old relayed mark survived the reset")
+	}
+	if _, _, _, ok := nodeMediaMesh(t, s, heard); !ok {
+		t.Error("reset removed a heard mark")
+	}
+	// Runs once: marks made after it stay.
+	if err := s.RecordMediaMeshRelayed(relayed, now); err != nil {
+		t.Fatal(err)
+	}
+	s.ResetMediaMeshRelayedOnce()
+	if _, _, _, ok := nodeMediaMesh(t, s, relayed); !ok {
+		t.Error("second reset removed a new relayed mark")
 	}
 }

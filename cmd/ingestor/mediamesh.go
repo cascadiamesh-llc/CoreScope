@@ -34,7 +34,9 @@ const (
 	// An earlier hop of a MediaMesh flood the observer heard: it forwarded the
 	// packet on radio2 too. Weaker than the others (a repeater with
 	// radio2.cross on can move a packet onto radio2 mid-path, after hops that
-	// carried it on the main radio), so it never replaces them.
+	// carried it on the main radio), so it never replaces them, and hops the
+	// main mesh also heard the packet through are left out (see
+	// mainMeshPathPrefix).
 	mediaMeshSourceRelayed = "relayed"
 
 	// A node heard sending on radio2 is re-stamped at most this often: a
@@ -51,6 +53,12 @@ const (
 	// Relayed marks only count hops whose path hash is at least this many
 	// bytes: a 1-byte hash is shared by too many repeaters to trust.
 	mediaMeshRelayedMinHashBytes = 2
+	// Relayed marks wait this long after the MediaMesh observation, so the
+	// main-mesh observations of the same packet (from every other observer)
+	// are in before the path is judged.
+	mediaMeshRelayDelay = 3 * time.Minute
+	// Bounds the queue of MediaMesh floods waiting to be judged.
+	mediaMeshRelayQueueMax = 20000
 )
 
 // mediaMeshFlag reads the packet's `mediamesh` key: a JSON boolean, with the
@@ -212,6 +220,22 @@ func mediaMeshSender(data *PacketData, resolved []*string) string {
 // forwarded it there. Only hops resolved to one node count; a direct-route
 // path is the route still to travel and says nothing.
 func mediaMeshRelayers(data *PacketData, resolved []*string) []string {
+	var out []string
+	for _, c := range mediaMeshRelayerHops(data, resolved) {
+		out = append(out, c.pubkey)
+	}
+	return out
+}
+
+// relayCandidate is one hop of a MediaMesh flood that may get a relayed mark:
+// its position in the path and the node it resolved to.
+type relayCandidate struct {
+	index  int
+	pubkey string
+}
+
+// mediaMeshRelayerHops is mediaMeshRelayers with each hop's path position.
+func mediaMeshRelayerHops(data *PacketData, resolved []*string) []relayCandidate {
 	if !pathHopsTransmitted(data) {
 		return nil
 	}
@@ -225,16 +249,174 @@ func mediaMeshRelayers(data *PacketData, resolved []*string) []string {
 		candidates = resolved[:len(resolved)-1]
 	}
 	self := strings.ToLower(data.ObserverID)
-	var out []string
+	var out []relayCandidate
 	for i, r := range candidates {
 		if r == nil || len(hops[i]) < 2*mediaMeshRelayedMinHashBytes {
 			continue
 		}
 		if pk := strings.ToLower(*r); targetPubkeyRe.MatchString(pk) && pk != self {
-			out = append(out, pk)
+			out = append(out, relayCandidate{index: i, pubkey: pk})
 		}
 	}
 	return out
+}
+
+// sameHop reports whether two path entries name the same hop. Entries of one
+// packet have one hash size; a prefix match tolerates a mixed record.
+func sameHop(a, b string) bool {
+	a, b = strings.ToLower(a), strings.ToLower(b)
+	if a == "" || b == "" {
+		return false
+	}
+	return strings.HasPrefix(a, b) || strings.HasPrefix(b, a)
+}
+
+// mainMeshPathPrefix is how many leading hops of a MediaMesh observation's
+// path the packet is known to have travelled on the main mesh: the longest
+// prefix it shares with any main-radio observation of the same packet.
+//
+// A repeater with radio2.cross on or auto forwards main-mesh floods onto
+// radio2 as well. Such a packet is heard on radio2 with its whole main-mesh
+// path in front of the crossing repeater, and the same packet, with the same
+// leading hops, is heard on the main radio by the observers around it. Those
+// leading hops carried it on the main mesh and say nothing about MediaMesh.
+func mainMeshPathPrefix(mediaMeshPath []string, mainPaths [][]string) int {
+	best := 0
+	for _, m := range mainPaths {
+		n := 0
+		for n < len(m) && n < len(mediaMeshPath) && sameHop(m[n], mediaMeshPath[n]) {
+			n++
+		}
+		if n > best {
+			best = n
+		}
+	}
+	return best
+}
+
+// pendingRelay is a MediaMesh flood waiting mediaMeshRelayDelay before its
+// earlier hops are judged.
+type pendingRelay struct {
+	txID   int64
+	packet string
+	path   []string
+	cands  []relayCandidate
+	at     time.Time
+}
+
+type mediaMeshRelayQueue struct {
+	mu    sync.Mutex
+	items []pendingRelay
+}
+
+func (q *mediaMeshRelayQueue) push(p pendingRelay) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.items) >= mediaMeshRelayQueueMax {
+		q.items = q.items[1:]
+	}
+	q.items = append(q.items, p)
+}
+
+// due removes and returns the items queued at or before cutoff.
+func (q *mediaMeshRelayQueue) due(cutoff time.Time) []pendingRelay {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	n := 0
+	for n < len(q.items) && !q.items[n].at.After(cutoff) {
+		n++
+	}
+	out := append([]pendingRelay(nil), q.items[:n]...)
+	q.items = append(q.items[:0], q.items[n:]...)
+	return out
+}
+
+// mainMeshPaths returns the paths of the packet's observations that were not
+// on radio2.
+func (s *Store) mainMeshPaths(txID int64) ([][]string, error) {
+	rows, err := s.db.Query(`SELECT o.path_json FROM observations o
+		LEFT JOIN observation_mediamesh m ON m.observation_id = o.id
+		WHERE o.transmission_id = ? AND m.observation_id IS NULL
+		  AND o.path_json IS NOT NULL AND o.path_json != '[]'`, txID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out [][]string
+	for rows.Next() {
+		var pj string
+		if err := rows.Scan(&pj); err != nil {
+			return nil, err
+		}
+		if hops := parsePathArray(pj); len(hops) > 0 {
+			out = append(out, hops)
+		}
+	}
+	return out, rows.Err()
+}
+
+// ProcessMediaMeshRelays judges the MediaMesh floods queued at least
+// mediaMeshRelayDelay ago: hops the main mesh also heard the packet through
+// are dropped, and each remaining hop counts as one sighting towards a
+// relayed mark (two different packets make the mark). Returns the number of
+// marks written.
+func (s *Store) ProcessMediaMeshRelays(now time.Time) int {
+	marked := 0
+	for _, p := range s.mediaMeshRelayQueue.due(now.Add(-mediaMeshRelayDelay)) {
+		mainPaths, err := s.mainMeshPaths(p.txID)
+		if err != nil {
+			log.Printf("[db] mediamesh relay main paths (non-fatal): %v", err)
+			continue
+		}
+		onMain := mainMeshPathPrefix(p.path, mainPaths)
+		var write []string
+		for _, c := range p.cands {
+			if c.index < onMain {
+				continue
+			}
+			if !s.mediaMeshRelaySightings.confirmed(c.pubkey, p.packet, now) {
+				continue
+			}
+			if !s.mediaMeshRelayed.due(c.pubkey, now) {
+				continue
+			}
+			write = append(write, c.pubkey)
+		}
+		if len(write) == 0 {
+			continue
+		}
+		writerMu.Lock()
+		for _, pk := range write {
+			if err := s.RecordMediaMeshRelayed(pk, now); err != nil {
+				log.Printf("[db] node mediamesh relayed (non-fatal): %v", err)
+				continue
+			}
+			marked++
+		}
+		writerMu.Unlock()
+	}
+	return marked
+}
+
+// ResetMediaMeshRelayedOnce deletes every relayed mark made before relayed
+// marks checked the main mesh (v3.16.0-mediamesh.6): most came from
+// main-mesh floods a cross-enabled repeater forwarded onto radio2.
+func (s *Store) ResetMediaMeshRelayedOnce() {
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY)`); err != nil {
+		return
+	}
+	var done int
+	if s.db.QueryRow(`SELECT 1 FROM _migrations WHERE name = 'mediamesh_relayed_reset_v1'`).Scan(&done) == nil {
+		return
+	}
+	res, err := s.db.Exec(`DELETE FROM node_mediamesh WHERE source = ?`, mediaMeshSourceRelayed)
+	if err != nil {
+		log.Printf("[migration] mediamesh relayed reset: %v", err)
+		return
+	}
+	n, _ := res.RowsAffected()
+	s.db.Exec(`INSERT OR IGNORE INTO _migrations (name) VALUES ('mediamesh_relayed_reset_v1')`)
+	log.Printf("[migration] removed %d MediaMesh relayed marks made without the main-mesh check", n)
 }
 
 // mediaMeshRelaySightings holds, per repeater, the first MediaMesh packet it
@@ -347,9 +529,9 @@ func (s *Store) RecordMediaMeshRelayed(pubkey string, now time.Time) error {
 
 // noteMediaMeshObservation runs for every stored observation (the caller
 // holds writerMu): nothing for a non-MediaMesh one, else the sparse row, a
-// debounced "heard" mark for the sender when it resolves, and debounced
-// "relayed" marks for the earlier hops of a flood.
-func (s *Store) noteMediaMeshObservation(obsID int64, data *PacketData, resolved []*string) {
+// debounced "heard" mark for the sender when it resolves, and the earlier hops
+// of a flood queued for ProcessMediaMeshRelays.
+func (s *Store) noteMediaMeshObservation(obsID, txID int64, data *PacketData, resolved []*string) {
 	if !data.MediaMesh {
 		return
 	}
@@ -362,16 +544,14 @@ func (s *Store) noteMediaMeshObservation(obsID int64, data *PacketData, resolved
 			log.Printf("[db] node mediamesh heard (non-fatal): %v", err)
 		}
 	}
-	for _, relayer := range mediaMeshRelayers(data, resolved) {
-		if !s.mediaMeshRelaySightings.confirmed(relayer, data.Hash, now) {
-			continue
-		}
-		if !s.mediaMeshRelayed.due(relayer, now) {
-			continue
-		}
-		if err := s.RecordMediaMeshRelayed(relayer, now); err != nil {
-			log.Printf("[db] node mediamesh relayed (non-fatal): %v", err)
-		}
+	if cands := mediaMeshRelayerHops(data, resolved); len(cands) > 0 {
+		s.mediaMeshRelayQueue.push(pendingRelay{
+			txID:   txID,
+			packet: data.Hash,
+			path:   parsePathArray(data.PathJSON),
+			cands:  cands,
+			at:     now,
+		})
 	}
 }
 

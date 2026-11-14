@@ -90,6 +90,7 @@ type Store struct {
 	mediaMeshHeard             mediaMeshHeard          // debounces "heard sending on radio2" (mediamesh.go)
 	mediaMeshRelayed           mediaMeshHeard          // debounces "relayed on radio2" (mediamesh.go)
 	mediaMeshRelaySightings    mediaMeshRelaySightings // two packets before a relayed mark (mediamesh.go)
+	mediaMeshRelayQueue        mediaMeshRelayQueue     // floods waiting for the main-mesh check (mediamesh.go)
 	stmtInsertAdvertEvidence   *sql.Stmt
 	hopBackfillCancel          context.CancelFunc // stops the observation_hops backfill on Close
 	hopIndexDays               int                // retention.hopIndexDays; 0 = no hop index (see ConfigureObservationHops)
@@ -1252,7 +1253,7 @@ func (s *Store) InsertTransmission(data *PacketData) (bool, error) {
 			radioID = data.TxRadioID
 		}
 		s.recordObservationRadio(obsID, radioID)
-		s.noteMediaMeshObservation(obsID, data, resolved)
+		s.noteMediaMeshObservation(obsID, txID, data, resolved)
 		// #1598: refresh last_seen from flood relay activity, not just ADVERTs.
 		// #2329: adjacency can resolve a path for display but cannot prove
 		// which colliding node transmitted. Use only unique prefixes for
