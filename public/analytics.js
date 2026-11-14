@@ -646,7 +646,8 @@
       </tr>`;
     }).join('');
     const obsRows = obs.map((o) => {
-      const seen = o.last_heard && typeof timeAgo === 'function' ? timeAgo(o.last_heard) : esc(o.last_heard || '');
+      const seen = o.last_heard && typeof timeAgo === 'function' ? timeAgo(o.last_heard)
+        : (o.last_heard ? esc(o.last_heard) : (o.runs_mediamesh ? 'MediaMesh on, nothing heard yet' : ''));
       return `<tr>
         <td><a href="#/observers/${encodeURIComponent(o.id || '')}">${esc(o.name || o.id || '?')}</a></td>
         <td>${esc(o.iata || '—')}</td>
@@ -661,7 +662,7 @@
       <div class="stats-grid">
         <div class="stat-card stat-card-mediamesh"><div class="stat-value">${n.toLocaleString()}</div><div class="stat-label">radio2 transmissions</div><div class="stat-detail">${sf(mm.share_pct || 0, 1)}% of ${Number(mm.total_transmissions || 0).toLocaleString()}</div></div>
         <div class="stat-card stat-card-mediamesh"><div class="stat-value">${reps.length}</div><div class="stat-label">MediaMesh repeaters</div><div class="stat-detail">${reps.filter((r) => r.mode === 'rxtx').length} send, ${reps.filter((r) => r.mode !== 'rxtx').length} listen only</div></div>
-        <div class="stat-card stat-card-mediamesh"><div class="stat-value">${obs.length}</div><div class="stat-label">Observers hearing radio2</div></div>
+        <div class="stat-card stat-card-mediamesh"><div class="stat-value">${obs.length}</div><div class="stat-label">MediaMesh observers</div><div class="stat-detail">${obs.filter((o) => Number(o.mediamesh_observations || 0) > 0).length} heard radio2</div></div>
       </div>
       <div class="analytics-row"><div class="analytics-card flex-1 mm-chart">${chart.html.replace('Packets /', 'radio2 packets /')}</div></div>
       <div class="analytics-row">
@@ -672,7 +673,7 @@
       </div>
       <div class="analytics-row">
         <div class="analytics-card flex-1">
-          <h3>Observers hearing radio2</h3>
+          <h3>MediaMesh observers</h3>
           ${obs.length ? `<table class="analytics-table"><thead><tr><th>Observer</th><th>Region</th><th>radio2 observations</th><th>Share of its observations</th><th>Last heard</th></tr></thead><tbody>${obsRows}</tbody></table>` : '<p class="text-muted">None in this period.</p>'}
         </div>
       </div>`;

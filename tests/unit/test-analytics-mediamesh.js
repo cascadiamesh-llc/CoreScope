@@ -136,6 +136,16 @@ test('a repeater only seen relaying gets a greyed row; others do not', () => {
   assert.ok(rows.filter(r => r.includes('mm-row--relayed')).length === 1, 'only the relayed row is greyed');
 });
 
+test('an observer running MediaMesh that has heard nothing yet is listed', () => {
+  const withIdle = Object.assign({}, MM, { observers: MM.observers.concat([
+    { id: 'd177', name: 'd1-rptr', iata: 'SEA', mediamesh_observations: 0, total_observations: 500, share_pct: 0, last_heard: '', runs_mediamesh: true },
+  ]) });
+  const h = A.renderMediaMeshTabHtml(withIdle, '');
+  assert.ok(h.includes('MediaMesh observers'), 'section title');
+  assert.ok(h.includes('d1-rptr') && h.includes('MediaMesh on, nothing heard yet'), 'idle observer row');
+  assert.ok(h.includes('1 heard radio2'), 'stat detail counts only observers that heard radio2');
+});
+
 test('empty state explains what is needed', () => {
   const h = A.renderMediaMeshTabHtml({ mediamesh_transmissions: 0, repeaters: [], observers: [], per_hour: [] }, '');
   assert.ok(h.includes('No MediaMesh traffic or repeaters'));

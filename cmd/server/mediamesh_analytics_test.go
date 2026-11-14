@@ -147,3 +147,38 @@ func BenchmarkComputeMediaMeshAnalytics(b *testing.B) {
 		_ = store.computeMediaMeshAnalytics("", TimeWindow{})
 	}
 }
+
+// An observer whose own status says MediaMesh is on is listed even before it
+// hears any radio2 traffic (one out of range of the MediaMesh repeaters).
+func TestMediaMeshAnalyticsObserverRunningMediaMesh(t *testing.T) {
+	srv, router := setupTestServer(t)
+	seedMediaMesh(t, srv,
+		`INSERT INTO observation_mediamesh (observation_id) VALUES (2)`,
+		`INSERT INTO node_mediamesh VALUES ('obs1', 'rxtx', '911.15,250,7,5', 'status', '`+mmRecentTS()+`')`,
+	)
+	var got MediaMeshAnalytics
+	getJSON(t, router, "/api/analytics/mediamesh", &got)
+	if len(got.Observers) != 2 {
+		t.Fatalf("observers = %+v, want obs2 (heard radio2) and obs1 (runs MediaMesh)", got.Observers)
+	}
+	if o := got.Observers[0]; o.ID != "obs2" || o.MediaMeshObs != 1 || o.RunsMediaMesh {
+		t.Errorf("first row = %+v, want obs2 with 1 radio2 observation", o)
+	}
+	if o := got.Observers[1]; o.ID != "obs1" || o.MediaMeshObs != 0 || !o.RunsMediaMesh || o.LastHeard != "" {
+		t.Errorf("second row = %+v, want obs1 running MediaMesh, nothing heard yet", o)
+	}
+}
+
+// A mark heard from others, or one saying radio2 is off, doesn't list it.
+func TestMediaMeshAnalyticsObserverNotRunning(t *testing.T) {
+	srv, router := setupTestServer(t)
+	seedMediaMesh(t, srv,
+		`INSERT INTO node_mediamesh VALUES ('obs1', 'rxtx', NULL, 'heard', '`+mmRecentTS()+`')`,
+		`INSERT INTO node_mediamesh VALUES ('obs2', 'off', NULL, 'status', '`+mmRecentTS()+`')`,
+	)
+	var got MediaMeshAnalytics
+	getJSON(t, router, "/api/analytics/mediamesh", &got)
+	if len(got.Observers) != 0 {
+		t.Errorf("observers = %+v, want none", got.Observers)
+	}
+}

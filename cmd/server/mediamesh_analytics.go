@@ -29,7 +29,9 @@ type MediaMeshHour struct {
 	Count int    `json:"count"`
 }
 
-// MediaMeshObserver is an observer that heard radio2 traffic.
+// MediaMeshObserver is an observer that heard radio2 traffic, or that runs
+// MediaMesh itself (its own status says radio2 is on) and hasn't heard any
+// yet: one out of range of the MediaMesh repeaters still belongs in the list.
 type MediaMeshObserver struct {
 	ID           string  `json:"id"`
 	Name         string  `json:"name"`
@@ -38,6 +40,8 @@ type MediaMeshObserver struct {
 	TotalObs     int     `json:"total_observations"`
 	SharePct     float64 `json:"share_pct"`
 	LastHeard    string  `json:"last_heard"`
+	// RunsMediaMesh: the observer's own status reports radio2 on.
+	RunsMediaMesh bool `json:"runs_mediamesh,omitempty"`
 }
 
 // MediaMeshRepeater is a node that runs radio2, with its last report.
@@ -219,11 +223,14 @@ func (s *PacketStore) computeMediaMeshAnalytics(region string, window TimeWindow
 		out.PerHour = append(out.PerHour, MediaMeshHour{Hour: strings.Replace(h, " ", "T", 1), Count: c})
 	}
 	sort.Slice(out.PerHour, func(i, j int) bool { return out.PerHour[i].Hour < out.PerHour[j].Hour })
+	now := time.Now()
 	for id, a := range observers {
-		if a.mm == 0 {
+		runs := observerRunsMediaMesh(id, now)
+		if a.mm == 0 && !runs {
 			continue
 		}
-		o := MediaMeshObserver{ID: id, Name: a.name, IATA: a.iata, MediaMeshObs: a.mm, TotalObs: a.total, LastHeard: a.last}
+		o := MediaMeshObserver{ID: id, Name: a.name, IATA: a.iata, MediaMeshObs: a.mm, TotalObs: a.total,
+			LastHeard: a.last, RunsMediaMesh: runs}
 		if a.total > 0 {
 			o.SharePct = float64(a.mm) / float64(a.total) * 100
 		}
@@ -235,8 +242,15 @@ func (s *PacketStore) computeMediaMeshAnalytics(region string, window TimeWindow
 		}
 		return out.Observers[i].ID < out.Observers[j].ID
 	})
-	out.Repeaters = s.mediaMeshRepeaters(time.Now())
+	out.Repeaters = s.mediaMeshRepeaters(now)
 	return out
+}
+
+// observerRunsMediaMesh reports whether an observer's own status says its
+// radio2 is on (a current "status" mark, not off).
+func observerRunsMediaMesh(id string, now time.Time) bool {
+	n := nodeMediaMeshAt(strings.ToLower(id), now)
+	return n != nil && n.Source == "status"
 }
 
 // mediaMeshRepeaters lists the nodes with a current MediaMesh mark (the same
