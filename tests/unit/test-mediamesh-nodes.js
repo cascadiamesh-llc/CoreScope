@@ -143,9 +143,9 @@ console.log('\n=== map.js ===');
   });
 
   test('dot markers carry the ring and badge classes', () => {
-    assert.ok(m.makeMarkerIcon('repeater', false, false, null, MM.markerClass(RXTX)).className.includes('mm-node mm-node--rxtx'));
-    assert.ok(m.makeMarkerIcon('repeater', false, false, null, MM.markerClass(RX)).className.includes('mm-node--rx'));
-    assert.ok(!m.makeMarkerIcon('repeater', false, false, null, '').className.includes('mm-node'));
+    assert.ok(m.makeMarkerIcon('repeater', false, false, null, false, MM.markerClass(RXTX)).className.includes('mm-node mm-node--rxtx'));
+    assert.ok(m.makeMarkerIcon('repeater', false, false, null, false, MM.markerClass(RX)).className.includes('mm-node--rx'));
+    assert.ok(!m.makeMarkerIcon('repeater', false, false, null, false, '').className.includes('mm-node'));
     assert.ok(!m.makeMarkerIcon('repeater', false, false).className.includes('mm-node'), 'callers without the argument are unchanged');
   });
 

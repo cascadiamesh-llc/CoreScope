@@ -561,6 +561,7 @@ func (s *Server) handleConfigClient(w http.ResponseWriter, r *http.Request) {
 		ClientRxCoverage:               s.cfg.ClientRxCoverageEnabled(),
 		ClientRfSamples:                s.cfg.ClientRfSamplesEnabled(),
 		ClientRxRequireLinkedCompanion: s.auth != nil && s.cfg.ClientRxRequireLinkedCompanionSet(),
+		ClientRxAppURL:                 s.cfg.ClientRxAppURL(),
 		PathTrust:                      &pathTrust,
 		UserManagement:                 s.clientUserManagement(),
 	})
@@ -3186,6 +3187,16 @@ func (s *Server) handleObserverDetail(w http.ResponseWriter, r *http.Request) {
 			CanRelay:        obs.CanRelay,
 		}
 		if rep, err := s.db.GetObserverNeighborReport(obs.ID); err == nil && rep != nil {
+			// Names are already batch-loaded. Filter the displayed identities,
+			// keeping the observer's reported totals and other metadata intact.
+			visible := rep.Neighbors[:0]
+			for _, n := range rep.Neighbors {
+				if s.cfg.IsBlacklisted(n.Pubkey) || (n.Name != nil && s.cfg.IsNameHidden(*n.Name)) {
+					continue
+				}
+				visible = append(visible, n)
+			}
+			rep.Neighbors = visible
 			at, count := rep.ReceivedAt, rep.NeighborCount
 			resp.NeighborsReportAt, resp.NeighborsCount, resp.NeighborReport = &at, &count, rep
 		}
