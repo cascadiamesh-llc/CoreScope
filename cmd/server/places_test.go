@@ -13,6 +13,7 @@ func TestNearPlace(t *testing.T) {
 	}{
 		{"d1-rptr", 47.770496, -122.163162, "Woodinville, WA"},
 		{"First Hill", 47.6088, -122.3236, "First Hill, Seattle"},
+		{"Kremwerk (1809 Minor Ave)", 47.616889, -122.331108, "Denny Triangle, Seattle"},
 		{"Rainier View", 47.5035, -122.2655, "Rainier View, Seattle"},
 		{"Portland", 45.5152, -122.6784, "Portland, OR"},
 		{"no position", 0, 0, ""},

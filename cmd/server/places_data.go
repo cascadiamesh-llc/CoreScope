@@ -2160,6 +2160,7 @@ var placeList = []place{
 	{"Chico", "WA", 47.6115, -122.7104},
 	{"Madrona", "Seattle", 47.6130, -122.2900},
 	{"Belltown", "Seattle", 47.6150, -122.3480},
+	{"Denny Triangle", "Seattle", 47.6160, -122.3340},
 	{"Fairchild Air Force Base", "WA", 47.6188, -117.6483},
 	{"Medina", "WA", 47.6209, -122.2276},
 	{"Capitol Hill", "Seattle", 47.6231, -122.3121},
