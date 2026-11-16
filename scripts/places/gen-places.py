@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
 """Generate cmd/server/places_data.go: the place names the analyzer uses for
-"Near" (nearest town or neighbourhood to a node).
+"Near" (the neighbourhood or town a node is in or closest to).
 
-Towns: GeoNames cities1000 (CC BY 4.0, https://www.geonames.org), via the npm
-package cities.json, limited to the western US and BC (box below). Seattle
-neighbourhoods: seattle_neighbourhoods.csv beside this script, approximate
-centres (GeoNames' town list has almost none of them).
+Neighbourhoods (exact: the node is inside the boundary):
+  - Seattle: the City Clerk's Neighborhood Map Atlas (L_HOOD/S_HOOD), as
+    published by the City of Seattle; copy used: raceconditionrunning/
+    raceconditionrunning.github.io routes/neighborhoods.geojson.
+  - Portland: the City of Portland's neighborhood association boundaries;
+    copy used: BrandonSokSan/RxAccess data/portland_neighborhoods.geojson.
+Towns (closest): GeoNames cities1000 (CC BY 4.0, https://www.geonames.org),
+via the npm package cities.json, limited to the western US and BC.
 
     npm pack cities.json && tar xzf cities.json-*.tgz
-    python3 scripts/places/gen-places.py package/cities.json > cmd/server/places_data.go
+    python3 scripts/places/gen-places.py package/cities.json seattle.geojson portland.geojson \\
+        > cmd/server/places_data.go
 """
-import csv, json, os, sys
+import json, sys
 
 LAT = (32.0, 50.6)
 LON = (-125.8, -110.0)
@@ -18,34 +23,120 @@ REGIONS = {('US', 'WA'): 'WA', ('US', 'OR'): 'OR', ('US', 'ID'): 'ID', ('US', 'C
            ('US', 'NV'): 'NV', ('US', 'MT'): 'MT', ('US', 'UT'): 'UT', ('US', 'AZ'): 'AZ',
            ('CA', '02'): 'BC', ('CA', '01'): 'AB'}
 
-def main():
-    cities = json.load(open(sys.argv[1]))
+# The atlas' districts inside Seattle (its other L_HOODs are whole nearby
+# cities, which the town list names).
+SEATTLE_DISTRICTS = {
+    'Ballard', 'Beacon Hill', 'Capitol Hill', 'Cascade', 'Central Area', 'Delridge', 'Downtown',
+    'Greater Duwamish', 'Interbay', 'Lake City', 'Magnolia', 'North Central', 'Northeast',
+    'Northgate', 'Northwest', 'Queen Anne', 'Rainier Valley', 'Seward Park', 'University District',
+    'West Seattle',
+}
+# Atlas sub-areas better known by another name.
+SEATTLE_RENAME = {
+    'Broadway': 'Capitol Hill',      # Pike/Pine and Broadway
+    'Stevens': 'Capitol Hill',       # north Capitol Hill, Miller Park
+    'Mann': 'Central District',
+    'Minor': 'Central District',     # Squire Park
+    'Atlantic': 'Judkins Park',
+    'North Beach/Blue Ridge': 'North Beach',
+}
+
+TOLERANCE = 0.00003  # degrees, ~3 m: boundaries stay accurate to well within a block
+
+
+def simplify(pts, tol):
+    """Ramer-Douglas-Peucker on (lon, lat) points."""
+    if len(pts) < 4:
+        return pts
+    keep = [False] * len(pts)
+    keep[0] = keep[-1] = True
+    stack = [(0, len(pts) - 1)]
+    while stack:
+        a, b = stack.pop()
+        ax, ay = pts[a]
+        bx, by = pts[b]
+        dx, dy = bx - ax, by - ay
+        n = (dx * dx + dy * dy) ** 0.5
+        best, idx = -1.0, -1
+        for i in range(a + 1, b):
+            px, py = pts[i]
+            d = ((px - ax) ** 2 + (py - ay) ** 2) ** 0.5 if n == 0 else abs(dy * px - dx * py + bx * ay - by * ax) / n
+            if d > best:
+                best, idx = d, i
+        if best > tol:
+            keep[idx] = True
+            stack += [(a, idx), (idx, b)]
+    return [p for p, k in zip(pts, keep) if k]
+
+
+def polygons(geom):
+    if geom['type'] == 'Polygon':
+        return [geom['coordinates']]
+    if geom['type'] == 'MultiPolygon':
+        return geom['coordinates']
+    return []
+
+
+def title(name):
+    words = []
+    for w in name.lower().split(' '):
+        words.append('-'.join(p[:1].upper() + p[1:] for p in w.split('-')))
+    return ' '.join(words)
+
+
+def hoods(seattle, portland):
     out = []
-    for c in cities:
+    for f in json.load(open(seattle))['features']:
+        p = f['properties']
+        if p.get('L_HOOD') not in SEATTLE_DISTRICTS:
+            continue
+        name = SEATTLE_RENAME.get(p['S_HOOD'], p['S_HOOD'])
+        for poly in polygons(f['geometry']):
+            out.append((name, 'Seattle', poly))
+    for f in json.load(open(portland))['features']:
+        raw = f['properties']['name']
+        if raw.startswith('MC UNCLAIMED'):
+            continue
+        name = 'Downtown' if raw == 'PORTLAND DOWNTOWN' else title(raw)
+        for poly in polygons(f['geometry']):
+            out.append((name, 'Portland', poly))
+    return out
+
+
+def main():
+    cities_path, seattle, portland = sys.argv[1:4]
+    towns = []
+    for c in json.load(open(cities_path)):
         reg = REGIONS.get((c.get('country'), c.get('admin1')))
         if not reg:
             continue
         lat, lon = float(c['lat']), float(c['lng'])
-        if not (LAT[0] <= lat <= LAT[1] and LON[0] <= lon <= LON[1]):
-            continue
-        if c['name'] == 'Seattle' and reg == 'WA':
-            continue  # the neighbourhoods below cover the city
-        out.append((c['name'], reg, lat, lon))
-    here = os.path.dirname(os.path.abspath(__file__))
-    with open(os.path.join(here, 'seattle_neighbourhoods.csv')) as f:
-        for row in csv.DictReader(f):
-            out.append((row['name'], 'Seattle', float(row['lat']), float(row['lon'])))
-    out.sort(key=lambda p: (p[2], p[3]))
+        if LAT[0] <= lat <= LAT[1] and LON[0] <= lon <= LON[1]:
+            towns.append((c['name'], reg, lat, lon))
+    towns.sort(key=lambda p: (p[2], p[3]))
+
     print('// Code generated by scripts/places/gen-places.py; DO NOT EDIT.')
     print('//')
-    print('// Towns: GeoNames cities1000 (CC BY 4.0, https://www.geonames.org).')
-    print('// Seattle neighbourhoods: approximate centres, scripts/places/seattle_neighbourhoods.csv.')
+    print('// Neighbourhoods: City of Seattle Neighborhood Map Atlas; City of Portland')
+    print('// neighborhood boundaries. Towns: GeoNames cities1000 (CC BY 4.0,')
+    print('// https://www.geonames.org).')
     print()
     print('package main')
     print()
     print('var placeList = []place{')
-    for name, reg, lat, lon in out:
+    for name, reg, lat, lon in towns:
         print('\t{%s, %s, %.4f, %.4f},' % (json.dumps(name, ensure_ascii=False), json.dumps(reg), lat, lon))
     print('}')
+    print()
+    print('// Rings are flat lat, lon pairs; the first is the outline, any others holes.')
+    print('var hoodList = []hood{')
+    for name, city, poly in hoods(seattle, portland):
+        rings = []
+        for ring in poly:
+            r = simplify([(float(pt[0]), float(pt[1])) for pt in ring], TOLERANCE)
+            rings.append('{' + ', '.join('%.5f, %.5f' % (y, x) for x, y in r) + '}')
+        print('\t{name: %s, city: %s, rings: [][]float64{%s}},' % (json.dumps(name), json.dumps(city), ', '.join(rings)))
+    print('}')
+
 
 main()
