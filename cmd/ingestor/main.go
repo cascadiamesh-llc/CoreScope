@@ -325,6 +325,9 @@ func main() {
 	}
 	// MediaMesh relayed marks: judge queued floods once the main-mesh
 	// observations of the same packet are in (mediamesh.go).
+	if n := store.BackfillMediaMeshRelays(time.Now()); n > 0 {
+		log.Printf("[mediamesh] re-queued %d recent MediaMesh floods for relayed marks", n)
+	}
 	mediaMeshRelayTicker := time.NewTicker(30 * time.Second)
 	go func() {
 		for range mediaMeshRelayTicker.C {

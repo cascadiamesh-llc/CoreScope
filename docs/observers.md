@@ -241,8 +241,9 @@ passes through your repeater:
   - Hops where the main mesh also heard the packet don't count. A repeater with `radio2.cross`
     on or `auto` forwards main-mesh traffic onto MediaMesh, so those packets arrive on MediaMesh
     with their whole main-mesh path in front.
-  - A repeater only gets a mark when it shows up in the paths of two different MediaMesh packets,
-    and only from 2- or 3-byte path hashes (1-byte hashes match too many repeaters).
+  - Only 2- or 3-byte path hashes count (1-byte hashes match too many repeaters).
+  - A packet no observer heard on the main mesh travelled on MediaMesh the whole way, so one is
+    enough. A packet the main mesh also heard needs a second packet to confirm the repeater.
   - The mark fades after 2 days without being seen relaying again.
 
 Questions? Ask on the CascadiaMesh Discord or email cascadiamesh@gmail.com.

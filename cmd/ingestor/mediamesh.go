@@ -427,9 +427,10 @@ func (s *Store) mainMeshPaths(txID int64) ([][]string, error) {
 
 // ProcessMediaMeshRelays judges the MediaMesh floods queued at least
 // mediaMeshRelayDelay ago: hops the main mesh also heard the packet through
-// are dropped, and each remaining hop counts as one sighting towards a
-// relayed mark (two different packets make the mark). Returns the number of
-// marks written.
+// are dropped, and each remaining hop counts as a sighting. A packet no
+// observer heard on the main mesh at all travelled on MediaMesh the whole
+// way, so one sighting in it makes the mark; otherwise it takes two
+// different packets. Returns the number of marks written.
 func (s *Store) ProcessMediaMeshRelays(now time.Time) int {
 	marked := 0
 	for _, p := range s.mediaMeshRelayQueue.due(now.Add(-mediaMeshRelayDelay)) {
@@ -439,12 +440,15 @@ func (s *Store) ProcessMediaMeshRelays(now time.Time) int {
 			continue
 		}
 		onMain := mainMeshPathPrefix(p.path, mainPaths)
+		mediaMeshOnly := len(mainPaths) == 0
 		var write []string
 		for _, c := range p.cands {
 			if c.index < onMain {
 				continue
 			}
-			if !s.mediaMeshRelaySightings.confirmed(c.pubkey, p.packet, now) {
+			// Always noted, so a later packet can confirm it.
+			twice := s.mediaMeshRelaySightings.confirmed(c.pubkey, p.packet, now)
+			if !twice && !mediaMeshOnly {
 				continue
 			}
 			if !s.mediaMeshRelayed.due(c.pubkey, now) {
@@ -466,6 +470,52 @@ func (s *Store) ProcessMediaMeshRelays(now time.Time) int {
 		writerMu.Unlock()
 	}
 	return marked
+}
+
+// BackfillMediaMeshRelays queues the MediaMesh floods stored in the last
+// mediaMeshRelayedRetention for judging, as if just heard: the relay queue
+// and sightings live in memory, so without this a restart would forget them
+// and a repeater could wait days for its mark. Returns the number queued.
+func (s *Store) BackfillMediaMeshRelays(now time.Time) int {
+	since := now.Add(-mediaMeshRelayedRetention).Unix()
+	rows, err := s.db.Query(`SELECT t.id, t.hash, t.payload_type, t.route_type,
+			COALESCE(t.decoded_json, ''), COALESCE(o.path_json, ''),
+			COALESCE(o.resolved_path, ''), COALESCE(o.direction, ''), COALESCE(obs.id, '')
+		FROM observation_mediamesh m
+		JOIN observations o ON o.id = m.observation_id
+		JOIN transmissions t ON t.id = o.transmission_id
+		LEFT JOIN observers obs ON obs.rowid = o.observer_idx
+		WHERE o.timestamp >= ? AND t.payload_type IN (?, ?)
+		ORDER BY o.timestamp`, since, payloadGrpData, payloadRawCustom)
+	if err != nil {
+		log.Printf("[mediamesh] relay backfill: %v", err)
+		return 0
+	}
+	defer rows.Close()
+	queued := 0
+	at := now.Add(-mediaMeshRelayDelay)
+	for rows.Next() {
+		var txID int64
+		var d PacketData
+		var resolvedJSON, dir string
+		if err := rows.Scan(&txID, &d.Hash, &d.PayloadType, &d.RouteType, &d.DecodedJSON,
+			&d.PathJSON, &resolvedJSON, &dir, &d.ObserverID); err != nil {
+			continue
+		}
+		if dir != "" {
+			d.Direction = &dir
+		}
+		var resolved []*string
+		if resolvedJSON == "" || json.Unmarshal([]byte(resolvedJSON), &resolved) != nil {
+			continue
+		}
+		if cands := mediaMeshRelayerHops(&d, resolved); len(cands) > 0 {
+			s.mediaMeshRelayQueue.push(pendingRelay{txID: txID, packet: d.Hash,
+				path: parsePathArray(d.PathJSON), cands: cands, at: at})
+			queued++
+		}
+	}
+	return queued
 }
 
 // ResetMediaMeshRelayedOnce deletes every relayed mark made before relayed

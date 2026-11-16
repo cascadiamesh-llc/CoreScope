@@ -446,26 +446,19 @@ func TestNoteMediaMeshObservationMarksWholePath(t *testing.T) {
 	}
 	resolved := []*string{&a, &b, &c}
 
-	// First packet: the heard forwarder is marked, the earlier hops are not yet.
+	// No observer heard it on the main mesh: it travelled on MediaMesh the
+	// whole way, so one packet marks the heard forwarder and the relayers.
 	s.noteMediaMeshObservation(1, 1, packet("pkt1"), resolved)
+	if n := mmCountRows(t, s, `SELECT COUNT(*) FROM node_mediamesh WHERE source = 'relayed'`); n != 0 {
+		t.Fatalf("%d relayed marks before the main-mesh check ran", n)
+	}
 	s.ProcessMediaMeshRelays(time.Now().Add(mediaMeshRelayDelay + time.Second))
 	if _, _, src, ok := nodeMediaMesh(t, s, c); !ok || src != "heard" {
 		t.Fatalf("heard forwarder: %q (%v), want heard", src, ok)
 	}
 	for _, pk := range []string{a, b} {
-		if _, _, _, ok := nodeMediaMesh(t, s, pk); ok {
-			t.Fatalf("%s… marked after a single packet", pk[:4])
-		}
-	}
-	// A second, different packet over the same path confirms them.
-	s.noteMediaMeshObservation(2, 2, packet("pkt2"), resolved)
-	if n := mmCountRows(t, s, `SELECT COUNT(*) FROM node_mediamesh WHERE source = 'relayed'`); n != 0 {
-		t.Fatalf("%d relayed marks before the main-mesh check ran", n)
-	}
-	s.ProcessMediaMeshRelays(time.Now().Add(mediaMeshRelayDelay + time.Second))
-	for _, pk := range []string{a, b} {
 		if mode, _, src, ok := nodeMediaMesh(t, s, pk); !ok || mode != "rxtx" || src != "relayed" {
-			t.Errorf("%s…: %q %q (%v), want rxtx/relayed", pk[:4], mode, src, ok)
+			t.Errorf("%s…: %q %q (%v), want rxtx/relayed after one MediaMesh-only packet", pk[:4], mode, src, ok)
 		}
 	}
 	// Not MediaMesh: nothing at all.
@@ -622,5 +615,80 @@ func TestRelayedMarksOnlyFromMediaPackets(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("%s: relayed evidence %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+// A packet the main mesh also heard (only through its first hop here) needs
+// a second packet before the hops after that get a relayed mark.
+func TestRelayedNeedsTwoPacketsWhenMainMeshHeardIt(t *testing.T) {
+	s := newTestStore(t)
+	a, b, c, d := strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64), strings.Repeat("d", 64)
+	rx := "rx"
+	now := time.Now()
+	note := func(h string) {
+		if _, err := s.InsertTransmission(&PacketData{
+			Hash: h, RawHex: "1900", RouteType: 1, PayloadType: 6,
+			PathJSON: `["aaaa"]`, Direction: &rx, Timestamp: now.UTC().Format(time.RFC3339),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		var txID int64
+		if err := s.db.QueryRow(`SELECT id FROM transmissions WHERE hash = ?`, h).Scan(&txID); err != nil {
+			t.Fatal(err)
+		}
+		s.noteMediaMeshObservation(0, txID, &PacketData{
+			PayloadType: 6, RouteType: 1, PathJSON: `["aaaa","bbbb","cccc","dddd"]`, Direction: &rx,
+			ObserverID: strings.Repeat("e", 64), MediaMesh: true, Hash: h,
+		}, []*string{&a, &b, &c, &d})
+		s.ProcessMediaMeshRelays(now.Add(mediaMeshRelayDelay + time.Second))
+	}
+	note("pkt1")
+	for _, pk := range []string{a, b, c} {
+		if _, _, src, ok := nodeMediaMesh(t, s, pk); ok {
+			t.Errorf("%s… marked %q after one packet the main mesh also heard", pk[:4], src)
+		}
+	}
+	note("pkt2")
+	if _, _, _, ok := nodeMediaMesh(t, s, a); ok {
+		t.Error("aaaa carried it on the main mesh but was marked")
+	}
+	for _, pk := range []string{b, c} {
+		if _, _, src, ok := nodeMediaMesh(t, s, pk); !ok || src != "relayed" {
+			t.Errorf("%s…: %q (%v), want relayed after a second packet", pk[:4], src, ok)
+		}
+	}
+}
+
+// After a restart, MediaMesh floods stored in the last two days are judged
+// again, so a relayer seen just before the restart still gets its mark.
+func TestBackfillMediaMeshRelays(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Now()
+	a, c := strings.Repeat("a", 64), strings.Repeat("c", 64)
+	if _, err := s.InsertTransmission(&PacketData{
+		Hash: "photo1", RawHex: "1900", RouteType: 1, PayloadType: 6, PathJSON: `[]`,
+		Timestamp: now.UTC().Format(time.RFC3339),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var txID int64
+	if err := s.db.QueryRow(`SELECT id FROM transmissions WHERE hash = 'photo1'`).Scan(&txID); err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.db.Exec(`INSERT INTO observations (transmission_id, direction, path_json, timestamp, resolved_path)
+		VALUES (?, 'rx', '["aaaa","cccc"]', ?, ?)`, txID, now.Add(-time.Hour).Unix(), `["`+a+`","`+c+`"]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	obsID, _ := res.LastInsertId()
+	if _, err := s.db.Exec(`INSERT INTO observation_mediamesh (observation_id) VALUES (?)`, obsID); err != nil {
+		t.Fatal(err)
+	}
+	if n := s.BackfillMediaMeshRelays(now); n != 1 {
+		t.Fatalf("BackfillMediaMeshRelays queued %d, want 1", n)
+	}
+	s.ProcessMediaMeshRelays(now)
+	if _, _, src, ok := nodeMediaMesh(t, s, a); !ok || src != "relayed" {
+		t.Errorf("aaaa: %q (%v), want relayed from the backfilled photo", src, ok)
 	}
 }
