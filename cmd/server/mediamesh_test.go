@@ -14,6 +14,7 @@ func withMediaMesh(t testing.TB) {
 	reset := func() {
 		mediaMeshMu.Lock()
 		mediaMeshObs = map[int]struct{}{}
+		mediaMeshMainObs = map[int]struct{}{}
 		mediaMeshMaxObsID = 0
 		mediaMeshNodesTS = ""
 		mediaMeshMu.Unlock()
@@ -27,6 +28,7 @@ func seedMediaMesh(t *testing.T, srv *Server, stmts ...string) {
 	t.Helper()
 	base := []string{
 		`CREATE TABLE IF NOT EXISTS observation_mediamesh (observation_id INTEGER PRIMARY KEY)`,
+		`CREATE TABLE IF NOT EXISTS observation_mainmesh (observation_id INTEGER PRIMARY KEY)`,
 		`CREATE TABLE IF NOT EXISTS node_mediamesh (public_key TEXT PRIMARY KEY, mode TEXT NOT NULL,
 			radio TEXT, source TEXT NOT NULL, last_seen TEXT NOT NULL)`,
 	}
@@ -227,5 +229,38 @@ func TestRelayedMediaMeshMarkFadesAfterTwoDays(t *testing.T) {
 	}
 	if n := nodeMediaMeshAt("c3c3c3c3c3c3c3c3", now); n == nil {
 		t.Error("heard mark 3 days old hidden; it keeps the 7-day window")
+	}
+}
+
+// An observer that heard the same path on both radios: the shared row says
+// MediaMesh and main mesh.
+func TestObservationHeardOnBothRadios(t *testing.T) {
+	srv, router := setupTestServer(t)
+	seedMediaMesh(t, srv,
+		`INSERT INTO observation_mediamesh (observation_id) VALUES (1), (2)`,
+		`INSERT INTO observation_mainmesh (observation_id) VALUES (2)`,
+	)
+	var body packetsBody
+	getJSON(t, router, "/api/packets?expand=observations", &body)
+	seen := 0
+	for _, p := range body.Packets {
+		obs, _ := p["observations"].([]interface{})
+		for _, o := range obs {
+			m := o.(map[string]interface{})
+			id, _ := m["id"].(float64)
+			_, both := m["main_mesh"]
+			if both != (id == 2) {
+				t.Errorf("observation %v main_mesh present = %v, want %v", id, both, id == 2)
+			}
+			if id == 2 {
+				seen++
+				if m["mediamesh"] != true {
+					t.Errorf("observation 2 lost its MediaMesh flag: %v", m)
+				}
+			}
+		}
+	}
+	if seen == 0 {
+		t.Fatal("observation 2 not returned")
 	}
 }

@@ -4317,7 +4317,7 @@ func enrichObsFields(obs *StoreObs, tx *StoreTx) map[string]interface{} {
 		"path_json":     strOrNil(obs.PathJSON),
 		"radio":         strOrNil(observationRadio(obs.ID, obs.ObserverID, obs.Timestamp)),
 	}
-	markMediaMesh(m, observationMediaMesh(obs.ID))
+	markObservationRadios(m, obs.ID)
 
 	if tx != nil {
 		m["hash"] = strOrNil(tx.Hash)
@@ -4380,7 +4380,7 @@ func txToMap(tx *StoreTx, includeObservations ...bool) map[string]interface{} {
 				"direction":     strOrNil(o.Direction),
 				"radio":         strOrNil(observationRadio(o.ID, o.ObserverID, o.Timestamp)),
 			}
-			markMediaMesh(om, observationMediaMesh(o.ID))
+			markObservationRadios(om, o.ID)
 			obs = append(obs, om)
 		}
 		m["observations"] = obs

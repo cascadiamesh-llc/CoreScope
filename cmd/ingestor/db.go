@@ -1234,6 +1234,9 @@ func (s *Store) InsertTransmission(data *PacketData) (bool, error) {
 	)
 	resolvedJSON := marshalResolvedPath(resolved)
 
+	// A MediaMesh copy merging into an existing main-radio row: noted below.
+	mainFirst := data.MediaMesh && s.mediaMeshExistingMainRow(txID, observerIdx, data.PathJSON)
+
 	// RETURNING id: the upsert's DO UPDATE runs on every conflict, so the row
 	// id comes back for a new and for an existing observation alike (#1869).
 	var obsID int64
@@ -1254,6 +1257,7 @@ func (s *Store) InsertTransmission(data *PacketData) (bool, error) {
 		}
 		s.recordObservationRadio(obsID, radioID)
 		s.noteMediaMeshObservation(obsID, txID, data, resolved)
+		s.noteMainMeshCopy(obsID, data.MediaMesh, mainFirst)
 		// #1598: refresh last_seen from flood relay activity, not just ADVERTs.
 		// #2329: adjacency can resolve a path for display but cannot prove
 		// which colliding node transmitted. Use only unique prefixes for

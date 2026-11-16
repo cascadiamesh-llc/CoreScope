@@ -51,6 +51,7 @@ type MediaMeshNode struct {
 var (
 	mediaMeshMu       sync.RWMutex
 	mediaMeshObs      = map[int]struct{}{}
+	mediaMeshMainObs  = map[int]struct{}{} // MediaMesh rows also heard on the main radio
 	mediaMeshMaxObsID int64
 	mediaMeshNodes    atomic.Pointer[map[string]MediaMeshNode]
 	mediaMeshNodesTS  string     // newest last_seen loaded (incremental watermark)
@@ -63,6 +64,22 @@ func observationMediaMesh(obsID int) bool {
 	_, ok := mediaMeshObs[obsID]
 	mediaMeshMu.RUnlock()
 	return ok
+}
+
+// markObservationRadios marks an observation's JSON as MediaMesh, and as also
+// heard on the main radio ("main_mesh") when the observer heard the same path
+// on both: the two copies share one observation row.
+func markObservationRadios(m map[string]interface{}, obsID int) {
+	if !observationMediaMesh(obsID) {
+		return
+	}
+	m["mediamesh"] = true
+	mediaMeshMu.RLock()
+	_, both := mediaMeshMainObs[obsID]
+	mediaMeshMu.RUnlock()
+	if both {
+		m["main_mesh"] = true
+	}
 }
 
 // txMediaMesh reports whether any observation of tx was carried on radio2.
@@ -148,6 +165,28 @@ func loadMediaMeshObservations(conn *sql.DB, sinceID int64) (map[int]struct{}, i
 	return out, maxID, rows.Err()
 }
 
+// loadObservationIDs reads a sparse observation_id table above sinceID
+// (empty when the table doesn't exist yet).
+func loadObservationIDs(conn *sql.DB, table string, sinceID int64) (map[int]struct{}, error) {
+	out := map[int]struct{}{}
+	if !tableExists(conn, table) {
+		return out, nil
+	}
+	rows, err := conn.Query(`SELECT observation_id FROM `+table+` WHERE observation_id > ?`, sinceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[int(id)] = struct{}{}
+	}
+	return out, rows.Err()
+}
+
 func loadMediaMeshNodes(conn *sql.DB, since string) (map[string]MediaMeshNode, string, error) {
 	out := map[string]MediaMeshNode{}
 	newest := since
@@ -197,6 +236,11 @@ func refreshMediaMesh(conn *sql.DB, full bool) {
 		log.Printf("[mediamesh] observations: %v", err)
 		return
 	}
+	mainIDs, err := loadObservationIDs(conn, "observation_mainmesh", sinceObs)
+	if err != nil {
+		log.Printf("[mediamesh] main-radio copies: %v", err)
+		return
+	}
 	nodes, newest, err := loadMediaMeshNodes(conn, sinceTS)
 	if err != nil {
 		log.Printf("[mediamesh] nodes: %v", err)
@@ -206,9 +250,13 @@ func refreshMediaMesh(conn *sql.DB, full bool) {
 	mediaMeshMu.Lock()
 	if full {
 		mediaMeshObs = ids
+		mediaMeshMainObs = mainIDs
 	} else {
 		for id := range ids {
 			mediaMeshObs[id] = struct{}{}
+		}
+		for id := range mainIDs {
+			mediaMeshMainObs[id] = struct{}{}
 		}
 	}
 	mediaMeshMaxObsID = maxID

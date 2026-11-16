@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -690,5 +691,66 @@ func TestBackfillMediaMeshRelays(t *testing.T) {
 	s.ProcessMediaMeshRelays(now)
 	if _, _, src, ok := nodeMediaMesh(t, s, a); !ok || src != "relayed" {
 		t.Errorf("aaaa: %q (%v), want relayed from the backfilled photo", src, ok)
+	}
+}
+
+// One observer hearing a packet with the same path on both radios: the two
+// copies share an observation row (the dedup key has no radio), and
+// observation_mainmesh records the main-radio copy, whichever came first.
+func TestMainMeshCopyOfMediaMeshObservation(t *testing.T) {
+	for _, mediaMeshFirst := range []bool{true, false} {
+		s := newTestStore(t)
+		obsKey := strings.Repeat("e", 64)
+		if err := s.UpsertObserver(obsKey, "Observer", "SEA", nil); err != nil {
+			t.Fatal(err)
+		}
+		rx := "rx"
+		ts := time.Now().UTC().Format(time.RFC3339)
+		copyOf := func(mm bool) *PacketData {
+			return &PacketData{Hash: "photo", RawHex: "1900", RouteType: 1, PayloadType: 6,
+				PathJSON: `["aaaa"]`, Direction: &rx, ObserverID: obsKey, Timestamp: ts, MediaMesh: mm}
+		}
+		order := []bool{true, false}
+		if !mediaMeshFirst {
+			order = []bool{false, true}
+		}
+		for _, mm := range order {
+			if _, err := s.InsertTransmission(copyOf(mm)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if n := mmCountRows(t, s, `SELECT COUNT(*) FROM observations`); n != 1 {
+			t.Fatalf("mediaMeshFirst=%v: %d observation rows, want 1 (merged)", mediaMeshFirst, n)
+		}
+		if n := mmCountRows(t, s, `SELECT COUNT(*) FROM observation_mediamesh`); n != 1 {
+			t.Errorf("mediaMeshFirst=%v: MediaMesh flag missing", mediaMeshFirst)
+		}
+		if n := mmCountRows(t, s, `SELECT COUNT(*) FROM observation_mainmesh`); n != 1 {
+			t.Errorf("mediaMeshFirst=%v: main-radio copy not recorded", mediaMeshFirst)
+		}
+		var txID int64
+		if err := s.db.QueryRow(`SELECT id FROM transmissions WHERE hash = 'photo'`).Scan(&txID); err != nil {
+			t.Fatal(err)
+		}
+		if paths, err := s.mainMeshPaths(txID); err != nil || len(paths) != 1 {
+			t.Errorf("mediaMeshFirst=%v: main-mesh paths %v (%v), want the merged row's", mediaMeshFirst, paths, err)
+		}
+	}
+	// A MediaMesh copy alone, or a main copy alone, records nothing extra.
+	s := newTestStore(t)
+	obsKey := strings.Repeat("f", 64)
+	if err := s.UpsertObserver(obsKey, "Observer", "SEA", nil); err != nil {
+		t.Fatal(err)
+	}
+	rx := "rx"
+	for i, mm := range []bool{true, false} {
+		if _, err := s.InsertTransmission(&PacketData{Hash: fmt.Sprintf("p%d", i), RawHex: "1900", RouteType: 1,
+			PayloadType: 6, PathJSON: `["aaaa"]`, Direction: &rx, ObserverID: obsKey,
+			Timestamp: time.Now().UTC().Format(time.RFC3339), MediaMesh: mm}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := mmCountRows(t, s, `SELECT COUNT(*) FROM observation_mainmesh`); n != 0 {
+		t.Errorf("single copies recorded %d main-radio copies, want 0", n)
 	}
 }

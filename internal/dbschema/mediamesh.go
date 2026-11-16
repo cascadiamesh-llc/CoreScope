@@ -35,6 +35,12 @@ func ensureMediaMesh(rw *sql.DB) error {
 		CREATE TABLE IF NOT EXISTS observation_mediamesh (
 			observation_id INTEGER PRIMARY KEY
 		);
+		-- A MediaMesh observation whose observer also heard the packet with
+		-- the same path on the main radio: the two copies share one row (the
+		-- dedup key has no radio), so this records the main-mesh copy.
+		CREATE TABLE IF NOT EXISTS observation_mainmesh (
+			observation_id INTEGER PRIMARY KEY
+		);
 		CREATE TABLE IF NOT EXISTS node_mediamesh (
 			public_key TEXT PRIMARY KEY,
 			mode       TEXT NOT NULL,

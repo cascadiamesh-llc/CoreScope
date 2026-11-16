@@ -401,12 +401,14 @@ func (q *mediaMeshRelayQueue) due(cutoff time.Time) []pendingRelay {
 	return out
 }
 
-// mainMeshPaths returns the paths of the packet's observations that were not
-// on radio2.
+// mainMeshPaths returns the paths of the packet's observations heard on the
+// main radio: rows not on radio2, and MediaMesh rows that also had a
+// main-radio copy (observation_mainmesh).
 func (s *Store) mainMeshPaths(txID int64) ([][]string, error) {
 	rows, err := s.db.Query(`SELECT o.path_json FROM observations o
 		LEFT JOIN observation_mediamesh m ON m.observation_id = o.id
-		WHERE o.transmission_id = ? AND m.observation_id IS NULL
+		LEFT JOIN observation_mainmesh mm ON mm.observation_id = o.id
+		WHERE o.transmission_id = ? AND (m.observation_id IS NULL OR mm.observation_id IS NOT NULL)
 		  AND o.path_json IS NOT NULL AND o.path_json != '[]'`, txID)
 	if err != nil {
 		return nil, err
@@ -586,6 +588,48 @@ func (h *mediaMeshHeard) due(pubkey string, now time.Time) bool {
 	}
 	h.last[pubkey] = now
 	return true
+}
+
+// mediaMeshExistingMainRow reports whether the observation this MediaMesh
+// copy will merge into (same packet, observer and path) already exists as a
+// main-radio row: the main-mesh copy came first. Checked before the insert,
+// only for MediaMesh copies (a small share of traffic), with the dedup index.
+func (s *Store) mediaMeshExistingMainRow(txID int64, observerIdx *int64, pathJSON string) bool {
+	if observerIdx == nil {
+		return false // NULL observers never merge (the unique index treats NULLs as distinct)
+	}
+	var id int64
+	if s.db.QueryRow(`SELECT id FROM observations
+		WHERE transmission_id = ? AND observer_idx = ? AND COALESCE(path_json, '') = ?`,
+		txID, *observerIdx, pathJSON).Scan(&id) != nil {
+		return false
+	}
+	var mm int
+	return s.db.QueryRow(`SELECT 1 FROM observation_mediamesh WHERE observation_id = ?`, id).Scan(&mm) != nil
+}
+
+// noteMainMeshCopy records that a MediaMesh observation row was also heard on
+// the main radio: a main-radio copy merged into a MediaMesh row (mainCopy
+// false, row already MediaMesh), or a MediaMesh copy merged into an earlier
+// main-radio row (mainFirst).
+func (s *Store) noteMainMeshCopy(obsID int64, mediaMesh, mainFirst bool) {
+	if obsID == 0 {
+		return
+	}
+	if mediaMesh {
+		if !mainFirst {
+			return
+		}
+	} else {
+		var mm int
+		if s.db.QueryRow(`SELECT 1 FROM observation_mediamesh WHERE observation_id = ?`, obsID).Scan(&mm) != nil {
+			return
+		}
+	}
+	if _, err := s.db.Exec(`INSERT OR IGNORE INTO observation_mainmesh (observation_id) VALUES (?)`, obsID); err != nil {
+		s.Stats.WriteErrors.Add(1)
+		log.Printf("[db] observation mainmesh (non-fatal): %v", err)
+	}
 }
 
 // recordObservationMediaMesh marks one observation as MediaMesh.
