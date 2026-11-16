@@ -81,6 +81,127 @@ func TestMediaMeshAnalyticsOwnTransmission(t *testing.T) {
 	}
 }
 
+// Observation 2 (observer obs2, path ["aa"], SNR 8, RSSI -95) was heard on
+// radio2 from the one node whose key starts with aa: that is a link, with
+// the sender's position and radio2 setting, and the observer's position
+// once the observer has a node of its own.
+func TestMediaMeshAnalyticsLinks(t *testing.T) {
+	srv, router := setupTestServer(t)
+	if _, err := srv.db.conn.Exec(`INSERT INTO nodes (public_key, name, role, lat, lon, last_seen, first_seen, advert_count)
+		VALUES ('obs2', 'Observer Two Node', 'repeater', 37.7, -122.2, ?, '2026-01-01T00:00:00Z', 1)`, mmRecentTS()); err != nil {
+		t.Fatal(err)
+	}
+	srv.store.InvalidateNodeCache()
+	seedMediaMesh(t, srv,
+		`INSERT INTO observation_mediamesh (observation_id) VALUES (2)`,
+		`INSERT INTO node_mediamesh VALUES ('aabbccdd11223344', 'rxtx', '911.15,250,7,5', 'status', '`+mmRecentTS()+`')`,
+	)
+
+	var got MediaMeshAnalytics
+	getJSON(t, router, "/api/analytics/mediamesh", &got)
+	if len(got.Links) != 1 {
+		t.Fatalf("links = %+v, want one", got.Links)
+	}
+	l := got.Links[0]
+	if l.From != "aabbccdd11223344" || l.FromName != "TestRepeater" || l.FromRole != "repeater" || l.Radio != "911.15,250,7,5" {
+		t.Errorf("sender = %+v", l)
+	}
+	if l.ObserverID != "obs2" || l.ObserverName != "Observer Two" || l.Count != 1 || l.LastHeard == "" {
+		t.Errorf("observer side = %+v", l)
+	}
+	if l.AvgSNR == nil || *l.AvgSNR != 8 || l.AvgRSSI == nil || *l.AvgRSSI != -95 {
+		t.Errorf("signal = %v, %v; want 8, -95", l.AvgSNR, l.AvgRSSI)
+	}
+	if l.FromLat == nil || l.FromLon == nil || *l.FromLat != 37.5 || *l.FromLon != -122.0 {
+		t.Errorf("sender position = %v, %v", l.FromLat, l.FromLon)
+	}
+	if l.ToLat == nil || l.ToLon == nil || *l.ToLat != 37.7 || *l.ToLon != -122.2 {
+		t.Errorf("observer position = %v, %v", l.ToLat, l.ToLon)
+	}
+}
+
+// A row the observer heard on both radios has one SNR and RSSI for the two
+// copies, so it is not a radio2 measurement and makes no link. Nor does the
+// observer's own transmission.
+func TestMediaMeshAnalyticsLinksOnlyRadio2Measurements(t *testing.T) {
+	t.Run("heard on both radios", func(t *testing.T) {
+		srv, router := setupTestServer(t)
+		seedMediaMesh(t, srv,
+			`INSERT INTO observation_mediamesh (observation_id) VALUES (2)`,
+			`INSERT INTO observation_mainmesh (observation_id) VALUES (2)`,
+		)
+		var got MediaMeshAnalytics
+		getJSON(t, router, "/api/analytics/mediamesh", &got)
+		if len(got.Links) != 0 {
+			t.Errorf("links = %+v, want none", got.Links)
+		}
+		if got.MediaMeshTransmissions != 1 {
+			t.Errorf("mediamesh transmissions = %d, want 1: only the link is dropped", got.MediaMeshTransmissions)
+		}
+	})
+	t.Run("own transmission", func(t *testing.T) {
+		srv, router := setupTestServer(t)
+		srv.store.mu.Lock()
+		for _, tx := range srv.store.packets {
+			for _, o := range tx.Observations {
+				if o.ID == 2 {
+					o.Direction = "tx"
+				}
+			}
+		}
+		srv.store.mu.Unlock()
+		seedMediaMesh(t, srv, `INSERT INTO observation_mediamesh (observation_id) VALUES (2)`)
+		var got MediaMeshAnalytics
+		getJSON(t, router, "/api/analytics/mediamesh", &got)
+		if len(got.Links) != 0 {
+			t.Errorf("links = %+v, want none", got.Links)
+		}
+	})
+}
+
+// mediaMeshLinks: averages only over the samples there are, busiest pair
+// first, capped, and no position for a node at 0,0 or one never seen.
+func TestMediaMeshLinksList(t *testing.T) {
+	withMediaMesh(t)
+	f := func(v float64) *float64 { return &v }
+	quiet := &mediaMeshLinkAgg{from: "aa", observerID: "o1"}
+	quiet.add(&StoreObs{SNR: f(4), RSSI: f(-100), Timestamp: "2026-11-01T10:00:00Z"})
+	quiet.add(&StoreObs{SNR: f(6), Timestamp: "2026-11-01T12:00:00Z"})
+	quiet.add(&StoreObs{Timestamp: "2026-11-01T11:00:00Z"})
+	busy := &mediaMeshLinkAgg{from: "bb", observerID: "o1"}
+	for i := 0; i < 5; i++ {
+		busy.add(&StoreObs{})
+	}
+	nodes := map[string]nodeInfo{
+		"aa": {PublicKey: "aa", Name: "A", Role: "repeater", Lat: 47.6, Lon: -122.3},
+		"bb": {PublicKey: "bb", Name: "B", Role: "companion"},
+	}
+	got := mediaMeshLinks(map[string]*mediaMeshLinkAgg{"aa|o1": quiet, "bb|o1": busy}, nodes, time.Now())
+	if len(got) != 2 || got[0].From != "bb" || got[1].From != "aa" {
+		t.Fatalf("order = %+v, want bb (5 packets) then aa (3)", got)
+	}
+	a := got[1]
+	if a.Count != 3 || a.AvgSNR == nil || *a.AvgSNR != 5 || a.AvgRSSI == nil || *a.AvgRSSI != -100 || a.LastHeard != "2026-11-01T12:00:00Z" {
+		t.Errorf("aa = %+v (snr %v, rssi %v)", a, a.AvgSNR, a.AvgRSSI)
+	}
+	if a.FromName != "A" || a.FromLat == nil || *a.FromLat != 47.6 || a.ToLat != nil {
+		t.Errorf("aa names and positions = %+v", a)
+	}
+	b := got[0]
+	if b.AvgSNR != nil || b.AvgRSSI != nil || b.FromLat != nil || b.FromRole != "companion" {
+		t.Errorf("bb = %+v, want no signal figures and no position", b)
+	}
+
+	many := map[string]*mediaMeshLinkAgg{}
+	for i := 0; i < mediaMeshMaxLinks+10; i++ {
+		k := "n" + time.Duration(i).String()
+		many[k] = &mediaMeshLinkAgg{from: k, observerID: "o1", count: i}
+	}
+	if capped := mediaMeshLinks(many, nil, time.Now()); len(capped) != mediaMeshMaxLinks || capped[0].Count != mediaMeshMaxLinks+9 {
+		t.Errorf("capped list: %d rows, busiest %d", len(capped), capped[0].Count)
+	}
+}
+
 // A mesh without MediaMesh gets zeros and empty lists, never nulls.
 func TestMediaMeshAnalyticsEmpty(t *testing.T) {
 	srv, router := setupTestServer(t)
@@ -91,7 +212,7 @@ func TestMediaMeshAnalyticsEmpty(t *testing.T) {
 	if raw["mediamesh_transmissions"].(float64) != 0 || raw["total_transmissions"].(float64) != 3 {
 		t.Errorf("counts = %v", raw)
 	}
-	for _, k := range []string{"by_type", "per_hour", "observers", "repeaters"} {
+	for _, k := range []string{"by_type", "per_hour", "observers", "repeaters", "unknown_repeaters", "links"} {
 		if _, ok := raw[k].([]interface{}); !ok {
 			t.Errorf("%s = %v, want a list", k, raw[k])
 		}

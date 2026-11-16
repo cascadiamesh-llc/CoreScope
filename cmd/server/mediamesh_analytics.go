@@ -59,6 +59,103 @@ type MediaMeshRepeater struct {
 	MediaMeshNode
 }
 
+// MediaMeshLink is one node an observer received straight off the air on
+// radio2, with the signal it arrived at: what the coverage estimate on the
+// MediaMesh tab is compared against. The sender is worked out by
+// directHeardNode (direct_heard.go), which names nobody rather than guess.
+type MediaMeshLink struct {
+	From     string   `json:"from"` // sender's public key
+	FromName string   `json:"from_name,omitempty"`
+	FromRole string   `json:"from_role,omitempty"`
+	FromLat  *float64 `json:"from_lat,omitempty"`
+	FromLon  *float64 `json:"from_lon,omitempty"`
+	// Radio: the sender's radio2 setting, when it has reported one.
+	Radio        string   `json:"radio,omitempty"`
+	ObserverID   string   `json:"observer_id"`
+	ObserverName string   `json:"observer_name,omitempty"`
+	ToLat        *float64 `json:"to_lat,omitempty"` // the observer's own node
+	ToLon        *float64 `json:"to_lon,omitempty"`
+	Count        int      `json:"count"`
+	AvgSNR       *float64 `json:"avg_snr,omitempty"`
+	AvgRSSI      *float64 `json:"avg_rssi,omitempty"`
+	LastHeard    string   `json:"last_heard"`
+}
+
+// mediaMeshMaxLinks caps the links list (busiest first).
+const mediaMeshMaxLinks = 200
+
+// mediaMeshLinkAgg accumulates one sender-observer pair.
+type mediaMeshLinkAgg struct {
+	from, observerID, observerName string
+	count, snrN, rssiN             int
+	snrSum, rssiSum                float64
+	last                           string
+}
+
+// add folds one radio2 reception into the pair's totals.
+func (a *mediaMeshLinkAgg) add(o *StoreObs) {
+	a.count++
+	if o.SNR != nil {
+		a.snrSum += *o.SNR
+		a.snrN++
+	}
+	if o.RSSI != nil {
+		a.rssiSum += *o.RSSI
+		a.rssiN++
+	}
+	if o.Timestamp > a.last {
+		a.last = o.Timestamp
+	}
+}
+
+// mediaMeshLinks turns the pairs into the API list: busiest first, with
+// names, roles and positions from the node list where known.
+func mediaMeshLinks(aggs map[string]*mediaMeshLinkAgg, nodes map[string]nodeInfo, now time.Time) []MediaMeshLink {
+	out := make([]MediaMeshLink, 0, len(aggs))
+	pos := func(pk string) (*float64, *float64) {
+		n, ok := nodes[strings.ToLower(pk)]
+		if !ok || (n.Lat == 0 && n.Lon == 0) {
+			return nil, nil
+		}
+		lat, lon := n.Lat, n.Lon
+		return &lat, &lon
+	}
+	for _, a := range aggs {
+		l := MediaMeshLink{From: a.from, ObserverID: a.observerID, ObserverName: a.observerName,
+			Count: a.count, LastHeard: a.last}
+		if info, ok := nodes[a.from]; ok {
+			l.FromName, l.FromRole = info.Name, info.Role
+		}
+		l.FromLat, l.FromLon = pos(a.from)
+		l.ToLat, l.ToLon = pos(a.observerID)
+		if n := nodeMediaMeshAt(a.from, now); n != nil {
+			l.Radio = n.Radio
+		}
+		if a.snrN > 0 {
+			v := a.snrSum / float64(a.snrN)
+			l.AvgSNR = &v
+		}
+		if a.rssiN > 0 {
+			v := a.rssiSum / float64(a.rssiN)
+			l.AvgRSSI = &v
+		}
+		out = append(out, l)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		if out[i].From != out[j].From {
+			return out[i].From < out[j].From
+		}
+		return out[i].ObserverID < out[j].ObserverID
+	})
+	if len(out) > mediaMeshMaxLinks {
+		out = out[:mediaMeshMaxLinks]
+	}
+	return out
+}
+
 // MediaMeshAnalytics is the /api/analytics/mediamesh response.
 type MediaMeshAnalytics struct {
 	TotalTransmissions     int                  `json:"total_transmissions"`
@@ -71,7 +168,9 @@ type MediaMeshAnalytics struct {
 	// UnknownRepeaters: MediaMesh repeaters known only by their path hash
 	// (no advert heard yet), so no name or position.
 	UnknownRepeaters []MediaMeshUnknown `json:"unknown_repeaters"`
-	Window           string             `json:"window,omitempty"`
+	// Links: who was heard directly on radio2 by which observer, in scope.
+	Links  []MediaMeshLink `json:"links"`
+	Window string          `json:"window,omitempty"`
 }
 
 func (s *Server) handleAnalyticsMediaMesh(w http.ResponseWriter, r *http.Request) {
@@ -88,7 +187,7 @@ func emptyMediaMeshAnalytics() *MediaMeshAnalytics {
 	return &MediaMeshAnalytics{
 		ByType: []MediaMeshTypeCount{}, PerHour: []MediaMeshHour{},
 		Observers: []MediaMeshObserver{}, Repeaters: []MediaMeshRepeater{},
-		UnknownRepeaters: []MediaMeshUnknown{},
+		UnknownRepeaters: []MediaMeshUnknown{}, Links: []MediaMeshLink{},
 	}
 }
 
@@ -135,6 +234,8 @@ func (s *PacketStore) computeMediaMeshAnalytics(region string, window TimeWindow
 	types := map[string]*MediaMeshTypeCount{}
 	hours := map[string]int{}
 	observers := map[string]*obsAgg{}
+	links := map[string]*mediaMeshLinkAgg{}
+	_, pm := s.getCachedNodesAndPM()
 
 	s.mu.RLock()
 	mediaMeshMu.RLock()
@@ -182,6 +283,19 @@ func (s *PacketStore) computeMediaMeshAnalytics(region string, window TimeWindow
 				a.mm++
 				if o.Timestamp > a.last {
 					a.last = o.Timestamp
+				}
+				// A row the observer heard on both radios carries one SNR
+				// and RSSI, of whichever copy: not a radio2 measurement.
+				if _, both := mediaMeshMainObs[o.ID]; !both && o.ObserverID != "" {
+					if from := directHeardNode(tx, o, pm); from != "" && from != strings.ToLower(o.ObserverID) {
+						key := from + "|" + o.ObserverID
+						l := links[key]
+						if l == nil {
+							l = &mediaMeshLinkAgg{from: from, observerID: o.ObserverID, observerName: o.ObserverName}
+							links[key] = l
+						}
+						l.add(o)
+					}
 				}
 			}
 			if firstMM == "" || (o.Timestamp != "" && o.Timestamp < firstMM) {
@@ -256,6 +370,7 @@ func (s *PacketStore) computeMediaMeshAnalytics(region string, window TimeWindow
 	})
 	out.Repeaters = s.mediaMeshRepeaters(now, nodes)
 	out.UnknownRepeaters = mediaMeshUnknownAt(now)
+	out.Links = mediaMeshLinks(links, nodes, now)
 	return out
 }
 
