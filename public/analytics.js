@@ -647,7 +647,7 @@
           <button type="button" class="tab-btn" data-mm-cov="repeater">Repeater to repeater</button>
         </div>
       </div>
-      <div class="mm-cov-reps" id="mmCovReps"></div>
+      <div class="mm-cov-reps" id="mmCovReps"><div id="mmCovRepSummary"></div><div class="mm-cov-rep-panel" id="mmCovRepPanel" hidden></div></div>
       <div id="mmCovMap" class="mm-cov-map"></div>
       <div class="mm-cov-legend">
         <span class="mm-cov-scale">

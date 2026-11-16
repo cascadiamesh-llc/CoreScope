@@ -182,12 +182,13 @@ test('empty state explains what is needed', () => {
 
 test('the coverage card has everything the map script fills in, and gets the heard links', () => {
   const html = A.renderMediaMeshTabHtml(MM, '');
-  for (const id of ['mmCoverageCard', 'mmCovMap', 'mmCovReps', 'mmCovGradient', 'mmCovOpacity', 'mmCovReadout', 'mmCovStatus',
+  for (const id of ['mmCoverageCard', 'mmCovMap', 'mmCovReps', 'mmCovRepSummary', 'mmCovRepPanel', 'mmCovGradient', 'mmCovOpacity', 'mmCovReadout', 'mmCovStatus',
     'mmCovProfile', 'mmCovMode', 'mmCovLinksKey', 'mmCovLinksToggle', 'mmCovLinksWrap', 'mmCovLinks', 'mmCovHow']) {
     assert.strictEqual(html.split('id="' + id + '"').length, 2, id);
   }
   assert.ok(html.includes('data-mm-cov="ground"') && html.includes('data-mm-cov="repeater"'));
   assert.ok(/<div class="mm-cov-profile" id="mmCovProfile" hidden>/.test(html), 'no profile until a point is clicked');
+  assert.ok(/id="mmCovRepPanel" hidden>/.test(html), 'the repeater picker starts closed');
   assert.ok(/id="mmCovLinksKey" hidden/.test(html) && /id="mmCovLinksWrap" hidden/.test(html), 'nothing about heard links until there are some');
   assert.ok(html.includes('Estimate, not a measurement'));
   assert.ok(html.includes('Repeaters without a saved position (Peak, Valley)'));

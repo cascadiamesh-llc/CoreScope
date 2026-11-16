@@ -377,20 +377,42 @@ function cellAt(cov, lat, lon) {
     assert.ok(M.profileHtml(ok, rep[0]).includes('R to an antenna at 10 m, 1.0 km'));
   });
 
-  await test('repeater chips: one per repeater, pressed when counted, with what sets it apart', () => {
+  await test('repeater picker: a summary line, groups by area, and a box per repeater', () => {
     const reps = [
-      { name: 'A & B', lat: 1, lon: 1, radio: '911.15,250,7,5', mode: 'rxtx' },
-      { name: 'Slow', lat: 1, lon: 1, radio: '911.15,125,9,5', mode: 'rx' },
+      { name: 'A & B', lat: 1, lon: 1, radio: '911.15,250,7,5', mode: 'rxtx', near: 'First Hill, Seattle', source: 'status' },
+      { name: 'Slow', lat: 1, lon: 1, radio: '911.15,125,9,5', mode: 'rx', near: 'Woodinville, WA', source: 'heard' },
       { public_key: 'aabbccddeeff', lat: 1, lon: 1, source: 'relayed' },
+      { name: 'Alpha', lat: 1, lon: 1, near: 'First Hill, Seattle', source: 'heard' },
     ];
-    const html = M.repChipsHtml(reps, [true, false, true]);
-    assert.ok(html.includes('Repeaters counted (2 of 3)'));
-    assert.ok(html.includes('data-mm-cov-rep="all"') && html.includes('data-mm-cov-rep="none"'));
-    assert.ok(/class="mm-cov-chip active" data-mm-cov-rep="0" aria-pressed="true">A &amp; B<\/button>/.test(html), html);
-    assert.ok(/class="mm-cov-chip" data-mm-cov-rep="1" aria-pressed="false">Slow <span class="mm-cov-chip-note">listens only · 911\.15 MHz, 125 kHz SF9<\/span>/.test(html), html);
-    assert.ok(/mm-cov-chip--relayed" data-mm-cov-rep="2" aria-pressed="true">aabbccdd <span class="mm-cov-chip-note">relayed<\/span>/.test(html), html);
-    assert.ok(M.repChipsHtml(reps).includes('(3 of 3)'));
-    assert.strictEqual(M.repChipsHtml([]), '');
+    assert.strictEqual(M.repArea(reps[0]), 'First Hill');
+    assert.strictEqual(M.repArea(reps[2]), 'No area');
+    assert.deepStrictEqual(M.repNotes(reps[1]), ['listens only', '911.15 MHz, 125 kHz SF9']);
+    assert.deepStrictEqual(M.repNotes(reps[2]), ['relayed']);
+    // biggest area first, names sorted inside it, "No area" last
+    assert.deepStrictEqual(M.repGroups(reps), [
+      { area: 'First Hill', idx: [0, 3] }, { area: 'Woodinville', idx: [1] }, { area: 'No area', idx: [2] },
+    ]);
+    assert.ok(M.repSummaryHtml(reps, [true, false, true, true], false).includes('Counting 3 of 4 repeaters'));
+    assert.ok(M.repSummaryHtml(reps, null, true).includes('Counting all 4 repeaters'));
+    assert.ok(M.repSummaryHtml(reps, null, true).includes('aria-expanded="true"'));
+    assert.strictEqual(M.repSummaryHtml([]), '');
+    const html = M.repPanelHtml(reps);
+    assert.ok(html.includes('data-mm-cov-area="0,3"') && html.includes('Count every repeater in First Hill'));
+    assert.ok(/data-mm-cov-search="a &amp; b first hill, seattle "><input type="checkbox" data-mm-cov-rep="0" checked>/.test(html), html);
+    assert.ok(html.includes('<span class="mm-cov-rep-note">listens only · 911.15 MHz, 125 kHz SF9</span>'));
+    assert.ok(html.includes('mm-cov-rep mm-cov-rep--relayed'));
+    for (const act of ['all', 'none', 'view', 'reported', 'norelayed']) assert.ok(html.includes(`data-mm-cov-act="${act}"`), act);
+    assert.strictEqual(M.repPanelHtml([]), '');
+  });
+
+  await test('repeater picker quick actions', () => {
+    const reps = [{ source: 'status', lat: 1 }, { source: 'heard', lat: 2 }, { source: 'relayed', lat: 3 }];
+    assert.deepStrictEqual(M.repAction('all', reps), [true, true, true]);
+    assert.deepStrictEqual(M.repAction('none', reps), [false, false, false]);
+    assert.deepStrictEqual(M.repAction('reported', reps), [true, false, false]);
+    assert.deepStrictEqual(M.repAction('norelayed', reps), [true, true, false]);
+    assert.deepStrictEqual(M.repAction('view', reps, (r) => r.lat > 1), [false, true, true]);
+    assert.strictEqual(M.repAction('bogus', reps), null);
   });
 
   await test('the assumptions list states the numbers in use, and the limits', () => {

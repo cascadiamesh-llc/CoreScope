@@ -991,26 +991,98 @@
     return `≈ ${Math.round(cell.margin)} dB to spare (${band(cell.margin)})` + (from ? ', ' + from : '');
   }
 
-  /** The repeater toggles: one chip per placed repeater. */
-  function repChipsHtml(reps, enabled) {
+  /** What sets a repeater apart, for its row in the picker. */
+  function repNotes(r) {
+    const radio = parseRadio(r.radio);
+    const bits = [];
+    if (r.mode === 'rx') bits.push('listens only');
+    if (r.source === 'relayed') bits.push('relayed');
+    if (radio && (radio.bwKHz !== CONFIG.bwKHz || radio.sf !== CONFIG.sf || Math.abs(radio.freqMHz - CONFIG.freqMHz) > 0.0005)) {
+      bits.push(`${radio.freqMHz} MHz, ${radio.bwKHz} kHz SF${radio.sf}`);
+    }
+    return bits;
+  }
+
+  /** The area a repeater is grouped under: the first part of its Near label. */
+  function repArea(r) {
+    const near = String((r && r.near) || '').trim();
+    return near ? near.split(',')[0].trim() : 'No area';
+  }
+
+  /**
+   * Repeaters grouped by area: the busiest areas first, then by name, with
+   * "No area" last. Each group holds indexes into reps.
+   */
+  function repGroups(reps) {
+    const by = new Map();
+    reps.forEach((r, i) => {
+      const a = repArea(r);
+      if (!by.has(a)) by.set(a, []);
+      by.get(a).push(i);
+    });
+    const name = (i) => repName(reps[i]).toLowerCase();
+    return [...by.entries()]
+      .map(([area, idx]) => ({ area, idx: idx.sort((x, y) => name(x).localeCompare(name(y))) }))
+      .sort((x, y) => (x.area === 'No area') - (y.area === 'No area') || y.idx.length - x.idx.length || x.area.localeCompare(y.area));
+  }
+
+  /** The line that opens the repeater picker. */
+  function repSummaryHtml(reps, enabled, open) {
     if (!reps.length) return '';
-    const chips = reps.map((r, i) => {
-      const on = !enabled || enabled[i];
-      const radio = parseRadio(r.radio);
-      const bits = [];
-      if (r.mode === 'rx') bits.push('listens only');
-      if (r.source === 'relayed') bits.push('relayed');
-      if (radio && (radio.bwKHz !== CONFIG.bwKHz || radio.sf !== CONFIG.sf || Math.abs(radio.freqMHz - CONFIG.freqMHz) > 0.0005)) {
-        bits.push(`${radio.freqMHz} MHz, ${radio.bwKHz} kHz SF${radio.sf}`);
-      }
-      return `<button type="button" class="mm-cov-chip${on ? ' active' : ''}${r.source === 'relayed' ? ' mm-cov-chip--relayed' : ''}" data-mm-cov-rep="${i}" aria-pressed="${on ? 'true' : 'false'}">`
-        + `${esc(repName(r))}${bits.length ? ` <span class="mm-cov-chip-note">${esc(bits.join(' · '))}</span>` : ''}</button>`;
-    }).join('');
     const count = enabled ? enabled.filter(Boolean).length : reps.length;
-    return `<span class="mm-cov-reps-label">Repeaters counted (${count} of ${reps.length})</span>`
-      + '<button type="button" class="mm-cov-chip mm-cov-chip--all" data-mm-cov-rep="all">All</button>'
-      + '<button type="button" class="mm-cov-chip mm-cov-chip--all" data-mm-cov-rep="none">None</button>'
-      + chips;
+    const what = count === reps.length ? `all ${reps.length} repeaters` : `${count} of ${reps.length} repeaters`;
+    return `<button type="button" class="mm-cov-reps-toggle" data-mm-cov-panel aria-expanded="${open ? 'true' : 'false'}" aria-controls="mmCovRepPanel">`
+      + `Counting ${what} <span class="mm-cov-caret" aria-hidden="true">${open ? '▴' : '▾'}</span></button>`;
+  }
+
+  /**
+   * The repeater picker: a search box, quick actions, and the repeaters
+   * grouped by area, each group with a box that counts or drops it whole.
+   * Small groups start open; searching opens the groups that match.
+   */
+  function repPanelHtml(reps) {
+    if (!reps.length) return '';
+    const groups = repGroups(reps).map((g, gi) => {
+      const rows = g.idx.map((i) => {
+        const r = reps[i];
+        const notes = repNotes(r);
+        const search = [repName(r), r.near || '', r.public_key || ''].join(' ').toLowerCase();
+        return `<label class="mm-cov-rep${r.source === 'relayed' ? ' mm-cov-rep--relayed' : ''}" data-mm-cov-search="${esc(search)}">`
+          + `<input type="checkbox" data-mm-cov-rep="${i}" checked> <span class="mm-cov-rep-name">${esc(repName(r))}</span>`
+          + (notes.length ? ` <span class="mm-cov-rep-note">${esc(notes.join(' · '))}</span>` : '') + '</label>';
+      }).join('');
+      const open = g.idx.length <= 3;
+      return `<div class="mm-cov-group" data-mm-cov-group="${gi}">`
+        + '<div class="mm-cov-group-head">'
+        + `<input type="checkbox" data-mm-cov-area="${esc(g.idx.join(','))}" aria-label="Count every repeater in ${esc(g.area)}" checked>`
+        + `<button type="button" class="mm-cov-group-toggle" data-mm-cov-fold aria-expanded="${open}">`
+        + `<span class="mm-cov-group-name">${esc(g.area)}</span> <span class="mm-cov-group-count" data-mm-cov-group-count></span>`
+        + ` <span class="mm-cov-caret" aria-hidden="true">${open ? '▴' : '▾'}</span></button></div>`
+        + `<div class="mm-cov-group-body"${open ? '' : ' hidden'}>${rows}</div></div>`;
+    }).join('');
+    return '<div class="mm-cov-panel-tools">'
+      + '<input type="search" class="mm-cov-search" data-mm-cov-search-box placeholder="Find a repeater or area" aria-label="Find a repeater or area">'
+      + '<span class="mm-cov-actions">'
+      + '<button type="button" class="mm-cov-chip mm-cov-chip--all" data-mm-cov-act="all">All</button>'
+      + '<button type="button" class="mm-cov-chip mm-cov-chip--all" data-mm-cov-act="none">None</button>'
+      + '<button type="button" class="mm-cov-chip mm-cov-chip--all" data-mm-cov-act="view" title="Count only the repeaters on the map as it is now">Only those in view</button>'
+      + '<button type="button" class="mm-cov-chip mm-cov-chip--all" data-mm-cov-act="reported" title="Count only repeaters that reported their MediaMesh setting themselves">Only self-reported</button>'
+      + '<button type="button" class="mm-cov-chip mm-cov-chip--all" data-mm-cov-act="norelayed" title="Leave out repeaters known only from relaying">Leave out relayed-only</button>'
+      + '</span></div>'
+      + `<div class="mm-cov-groups">${groups}</div>`
+      + '<p class="text-muted mm-cov-empty" data-mm-cov-empty hidden>No repeater or area matches.</p>';
+  }
+
+  /** Which repeaters a quick action counts; null for an unknown action. */
+  function repAction(act, reps, inView) {
+    switch (act) {
+      case 'all': return reps.map(() => true);
+      case 'none': return reps.map(() => false);
+      case 'view': return reps.map((r) => !!(inView && inView(r)));
+      case 'reported': return reps.map((r) => r.source === 'status');
+      case 'norelayed': return reps.map((r) => r.source !== 'relayed');
+      default: return null;
+    }
   }
 
   /** What the estimate assumes, as list items, with the numbers in use. */
@@ -1130,13 +1202,16 @@
         const only = enabled[i] && enabled.filter(Boolean).length === 1;
         div.innerHTML = describe(r) + '<br>'
           + (only ? '<button type="button" class="mm-cov-chip" data-act="all">Show all repeaters</button>'
-            : '<button type="button" class="mm-cov-chip" data-act="only">Only this repeater</button>');
-        div.querySelector('button').addEventListener('click', (ev) => {
-          const all = ev.currentTarget.dataset.act === 'all';
-          for (let k = 0; k < enabled.length; k++) enabled[k] = all || k === i;
+            : '<button type="button" class="mm-cov-chip" data-act="only">Only this repeater</button>')
+          + (only ? '' : enabled[i] ? ' <button type="button" class="mm-cov-chip" data-act="drop">Leave this one out</button>'
+            : ' <button type="button" class="mm-cov-chip" data-act="add">Count this one</button>');
+        div.querySelectorAll('button').forEach((btn) => btn.addEventListener('click', (ev) => {
+          const act = ev.currentTarget.dataset.act;
+          if (act === 'drop' || act === 'add') enabled[i] = act === 'add';
+          else for (let k = 0; k < enabled.length; k++) enabled[k] = act === 'all' || k === i;
           m.closePopup();
           applyEnabled();
-        });
+        }));
         return div;
       });
       return m;
@@ -1233,10 +1308,64 @@
     }
     map.on('click', (e) => { if (shown) { picked = e.latlng; drawProfile(); } });
 
+    // The repeater picker: drawn once, then kept in step with `enabled`, so
+    // the search text and which groups are open survive every change.
+    let panelOpen = false;
+    const summaryEl = repsEl && repsEl.querySelector('#mmCovRepSummary');
+    const panelEl = repsEl && repsEl.querySelector('#mmCovRepPanel');
+    if (panelEl) panelEl.innerHTML = repPanelHtml(placed);
     function drawReps() {
-      if (repsEl) repsEl.innerHTML = repChipsHtml(placed, enabled);
+      if (summaryEl) summaryEl.innerHTML = repSummaryHtml(placed, enabled, panelOpen);
+      if (panelEl) {
+        panelEl.hidden = !panelOpen;
+        panelEl.querySelectorAll('[data-mm-cov-rep]').forEach((box) => { box.checked = !!enabled[Number(box.dataset.mmCovRep)]; });
+        panelEl.querySelectorAll('[data-mm-cov-area]').forEach((box) => {
+          const idx = box.dataset.mmCovArea.split(',').map(Number);
+          const on = idx.filter((i) => enabled[i]).length;
+          box.checked = on === idx.length;
+          box.indeterminate = on > 0 && on < idx.length;
+          const n = box.closest('.mm-cov-group-head').querySelector('[data-mm-cov-group-count]');
+          if (n) n.textContent = on === idx.length ? `${idx.length}` : `${on} of ${idx.length}`;
+        });
+      }
       markers.forEach((m, i) => m.setStyle({ opacity: enabled[i] ? 1 : 0.35, fillOpacity: enabled[i] ? 1 : 0.35 }));
     }
+    function setFold(g, open) {
+      const t = g && g.querySelector('[data-mm-cov-fold]');
+      if (!t) return;
+      t.setAttribute('aria-expanded', open ? 'true' : 'false');
+      t.querySelector('.mm-cov-caret').textContent = open ? '▴' : '▾';
+      g.querySelector('.mm-cov-group-body').hidden = !open;
+    }
+    function filterPanel(q) {
+      if (!panelEl) return;
+      q = String(q || '').trim().toLowerCase();
+      let any = false;
+      panelEl.querySelectorAll('.mm-cov-group').forEach((g) => {
+        const area = g.querySelector('.mm-cov-group-name').textContent.toLowerCase();
+        const areaHit = q && area.includes(q);
+        let shownRows = 0;
+        g.querySelectorAll('[data-mm-cov-search]').forEach((row) => {
+          const hit = !q || areaHit || row.dataset.mmCovSearch.includes(q);
+          row.hidden = !hit;
+          if (hit) shownRows++;
+        });
+        g.hidden = shownRows === 0;
+        if (q && shownRows) setFold(g, true);
+        if (shownRows) any = true;
+      });
+      const empty = panelEl.querySelector('[data-mm-cov-empty]');
+      if (empty) empty.hidden = any;
+    }
+    const onSearch = (e) => { if (e.target.matches('[data-mm-cov-search-box]')) filterPanel(e.target.value); };
+    const onPanelChange = (e) => {
+      const box = e.target;
+      if (box.matches('[data-mm-cov-rep]')) enabled[Number(box.dataset.mmCovRep)] = box.checked;
+      else if (box.matches('[data-mm-cov-area]')) box.dataset.mmCovArea.split(',').forEach((i) => { enabled[Number(i)] = box.checked; });
+      else return;
+      applyEnabled();
+    };
+    if (panelEl) { panelEl.addEventListener('input', onSearch); panelEl.addEventListener('change', onPanelChange); }
     function drawOverlay() {
       if (overlay) { map.removeLayer(overlay); overlay = null; }
       if (!shown) return;
@@ -1300,13 +1429,17 @@
       const b = e.target.closest('[data-mm-cov]');
       if (b) { show(b.dataset.mmCov); return; }
       if (e.target.closest('[data-mm-cov-close]')) { clearProfile(); return; }
-      const chip = e.target.closest('[data-mm-cov-rep]');
-      if (chip) {
-        const v = chip.dataset.mmCovRep;
-        if (v === 'all' || v === 'none') enabled.fill(v === 'all'); else enabled[Number(v)] = !enabled[Number(v)];
-        applyEnabled();
+      if (e.target.closest('[data-mm-cov-panel]')) { panelOpen = !panelOpen; drawReps(); return; }
+      const fold = e.target.closest('[data-mm-cov-fold]');
+      if (fold) { setFold(fold.closest('.mm-cov-group'), fold.getAttribute('aria-expanded') !== 'true'); return; }
+      const act = e.target.closest('[data-mm-cov-act]');
+      if (act) {
+        const view = map.getBounds();
+        const next = repAction(act.dataset.mmCovAct, placed, (r) => view.contains([r.lat, r.lon]));
+        if (next) { next.forEach((v, i) => { enabled[i] = v; }); applyEnabled(); }
       }
     };
+
     el.addEventListener('click', onClick);
     drawLinks();
     show((opts && opts.mode) || 'ground');
@@ -1314,6 +1447,7 @@
       destroyed = true;
       el.removeEventListener('click', onClick);
       if (slider) slider.removeEventListener('input', onSlide);
+      if (panelEl) { panelEl.removeEventListener('input', onSearch); panelEl.removeEventListener('change', onPanelChange); }
       if (linksToggle) linksToggle.removeEventListener('change', onLinksToggle);
       map.remove();
     };
@@ -1324,6 +1458,6 @@
     worstEdge, cascadedKnifeEdge, sampleDistances, gridFor, buildJob, polarMargins, repRaster, merge,
     computeCoverage, workerPool, pathProfile, profileVerdict, budgetRows, profileSvg, profileHtml,
     terrainPlan, loadTerrainLevels, loadTerrain, rampColor, edgeFade, cellAt, readout,
-    repChipsHtml, assumptionsHtml, linkRows, linksTableHtml, init,
+    repNotes, repArea, repGroups, repSummaryHtml, repPanelHtml, repAction, assumptionsHtml, linkRows, linksTableHtml, init,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
