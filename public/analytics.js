@@ -619,15 +619,15 @@
     if (_currentTab !== 'mediamesh') return;
     el.innerHTML = renderMediaMeshTabHtml(mm, twVal);
     initMediaMeshTableSort(el);
-    initMediaMeshCoverage(el, Array.isArray(mm.repeaters) ? mm.repeaters : []);
+    initMediaMeshCoverage(el, Array.isArray(mm.repeaters) ? mm.repeaters : [], Array.isArray(mm.links) ? mm.links : []);
   }
 
   let _mmCoverageDestroy = null;
-  function initMediaMeshCoverage(el, reps) {
+  function initMediaMeshCoverage(el, reps, links) {
     if (_mmCoverageDestroy) { try { _mmCoverageDestroy(); } catch (_) { /* ignore */ } _mmCoverageDestroy = null; }
     const card = el.querySelector('#mmCoverageCard');
     if (!card || !window.MediaMeshCoverage) return;
-    _mmCoverageDestroy = window.MediaMeshCoverage.init(card, reps);
+    _mmCoverageDestroy = window.MediaMeshCoverage.init(card, reps, { links: links || [] });
   }
 
   // The coverage estimate card (mediamesh-coverage.js draws the map into it).
@@ -640,13 +640,14 @@
       <div class="mm-cov-head">
         <div>
           <h3>MediaMesh coverage estimate</h3>
-          <p class="text-muted mm-cov-intro">Where photos and voice on 911.150 MHz should get through, from each MediaMesh repeater's position and the terrain. Conservative: 22 dBm, antennas 10 m up, a 10 dB safety margin.</p>
+          <p class="text-muted mm-cov-intro">Where photos and voice on 911.150 MHz should get through, from each MediaMesh repeater's position and the terrain. Conservative: 22 dBm, antennas 10 m up, a 10 dB safety margin. Click the map for the terrain profile to any point.</p>
         </div>
         <div class="mm-cov-toggle">
           <button type="button" class="tab-btn active" data-mm-cov="ground">People on the ground</button>
           <button type="button" class="tab-btn" data-mm-cov="repeater">Repeater to repeater</button>
         </div>
       </div>
+      <div class="mm-cov-reps" id="mmCovReps"></div>
       <div id="mmCovMap" class="mm-cov-map"></div>
       <div class="mm-cov-legend">
         <span class="mm-cov-scale">
@@ -656,11 +657,22 @@
         </span>
         <span><span class="mm-cov-sw mm-cov-sw--node"></span>MediaMesh repeater</span>
         <span><span class="mm-cov-sw mm-cov-sw--relayed"></span>Relayed (weaker evidence)</span>
+        <label class="mm-cov-links-key" id="mmCovLinksKey" hidden><input type="checkbox" id="mmCovLinksToggle" checked> <span class="mm-cov-sw mm-cov-sw--link"></span>Heard on radio2</label>
         <label class="mm-cov-opacity">Opacity <input type="range" id="mmCovOpacity" min="0" max="100" value="100" aria-label="Coverage opacity"></label>
       </div>
       <p class="mm-cov-readout" id="mmCovReadout" aria-live="polite"></p>
       <p class="text-muted mm-cov-note" id="mmCovStatus" aria-live="polite"></p>
-      <p class="text-muted mm-cov-note">Estimate, not a measurement. Line of sight over terrain (SRTM / USGS elevation), 911.15 MHz free-space loss plus ridge losses; buildings and trees aren't modelled, so street level in dense areas will be worse.${missing} <span id="mmCovMode">People on the ground: a companion or standalone radio at 1.5 m.</span></p>
+      <div class="mm-cov-profile" id="mmCovProfile" hidden></div>
+      <p class="text-muted mm-cov-note">Estimate, not a measurement: bare terrain only, so street level among buildings and trees will be worse.${missing} <span id="mmCovMode">People on the ground: a companion or standalone radio at 1.5 m.</span></p>
+      <details class="mm-cov-details" id="mmCovLinksWrap" hidden>
+        <summary>Model against what was heard</summary>
+        <p class="text-muted mm-cov-note">Packets an observer received on radio2 straight from the node named, with the signal the model expects over the same path (no safety margin taken off). Observers and repeaters are taken as 10 m up; a real antenna, height or power moves the difference either way.</p>
+        <div id="mmCovLinks"></div>
+      </details>
+      <details class="mm-cov-details">
+        <summary>How this is estimated</summary>
+        <ul class="mm-cov-how" id="mmCovHow"></ul>
+      </details>
     </div></div>`;
   }
 

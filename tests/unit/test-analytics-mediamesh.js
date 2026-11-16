@@ -180,6 +180,25 @@ test('empty state explains what is needed', () => {
   assert.ok(h.includes('No MediaMesh traffic or repeaters'));
 });
 
+test('the coverage card has everything the map script fills in, and gets the heard links', () => {
+  const html = A.renderMediaMeshTabHtml(MM, '');
+  for (const id of ['mmCoverageCard', 'mmCovMap', 'mmCovReps', 'mmCovGradient', 'mmCovOpacity', 'mmCovReadout', 'mmCovStatus',
+    'mmCovProfile', 'mmCovMode', 'mmCovLinksKey', 'mmCovLinksToggle', 'mmCovLinksWrap', 'mmCovLinks', 'mmCovHow']) {
+    assert.strictEqual(html.split('id="' + id + '"').length, 2, id);
+  }
+  assert.ok(html.includes('data-mm-cov="ground"') && html.includes('data-mm-cov="repeater"'));
+  assert.ok(/<div class="mm-cov-profile" id="mmCovProfile" hidden>/.test(html), 'no profile until a point is clicked');
+  assert.ok(/id="mmCovLinksKey" hidden/.test(html) && /id="mmCovLinksWrap" hidden/.test(html), 'nothing about heard links until there are some');
+  assert.ok(html.includes('Estimate, not a measurement'));
+  assert.ok(html.includes('Repeaters without a saved position (Peak, Valley)'));
+  assert.ok(analytics.includes('initMediaMeshCoverage(el, Array.isArray(mm.repeaters) ? mm.repeaters : [], Array.isArray(mm.links) ? mm.links : [])'));
+  assert.ok(analytics.includes('window.MediaMeshCoverage.init(card, reps, { links: links || [] })'));
+  const css = fs.readFileSync('public/style.css', 'utf8');
+  for (const cls of ['.mm-cov-chip', '.mm-cov-profile', '.mm-cov-prof-zone', '.mm-cov-prof-los', '.mm-cov-budget', '.mm-cov-how', '.mm-cov-links-table']) {
+    assert.ok(css.includes(cls + ' {'), cls);
+  }
+});
+
 test('tab button, switch case and bulk load are wired', () => {
   assert.ok(analytics.includes('data-tab="mediamesh">MediaMesh</button>'));
   assert.ok(analytics.includes("case 'mediamesh': await renderMediaMeshTab(el); break;"));

@@ -6024,6 +6024,57 @@ body.embed #app.app-fixed {
 .mm-cov-sw--relayed { background: #fff; border: 2px solid var(--mediamesh-node-weak-color); border-radius: 50%; }
 .mm-cov-note { font-size: 0.8em; margin: 8px 0 0; }
 .mm-cov-note:empty { display: none; }
+.mm-cov-reps { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 10px; font-size: 0.8em; max-height: 5.6em; overflow-y: auto; }
+.mm-cov-reps:empty { display: none; }
+.mm-cov-reps-label { color: var(--text-muted); margin-right: 2px; }
+.mm-cov-chip { font: inherit; font-size: 1em; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); cursor: pointer; line-height: 1.5; }
+.mm-cov-chip.active { border-color: var(--mediamesh-node-color); color: var(--text); background: color-mix(in srgb, var(--mediamesh-node-color) 14%, transparent); }
+.mm-cov-chip--relayed.active { border-color: var(--mediamesh-node-weak-color); border-style: dashed; }
+.mm-cov-chip:not(.active):not(.mm-cov-chip--all) { text-decoration: line-through; }
+.mm-cov-chip--all { color: var(--text); }
+.mm-cov-chip:focus-visible { outline: 2px solid var(--mediamesh-node-color); outline-offset: 1px; }
+.mm-cov-chip-note { color: var(--text-muted); font-size: 0.9em; }
+.mm-cov-popup { font-size: 12px; line-height: 1.5; }
+.mm-cov-popup .mm-cov-chip { margin-top: 6px; color: #1a1a2e; border-color: #d946ef; }
+.mm-cov-sw--link { width: 18px; height: 0; border-radius: 0; border-top: 2px dashed var(--text); vertical-align: 3px; }
+.mm-cov-links-key { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.mm-cov-links-key[hidden], .mm-cov-details[hidden], .mm-cov-profile[hidden] { display: none; }
+.mm-cov-map { cursor: crosshair; }
+.mm-cov-profile { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 0.85em; }
+.mm-cov-prof-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.mm-cov-prof-close { font: inherit; font-size: 1.3em; line-height: 1; border: 0; background: transparent; color: var(--text-muted); cursor: pointer; padding: 0 4px; }
+.mm-cov-prof-verdict { margin: 4px 0 8px; }
+.mm-cov-prof-result { font-weight: 600; white-space: nowrap; }
+.mm-cov-prof-body { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+.mm-cov-prof-chart { flex: 3 1 320px; min-width: 0; }
+.mm-cov-prof-svg { display: block; width: 100%; height: 200px; }
+.mm-cov-prof-ground { fill: color-mix(in srgb, var(--text-muted) 38%, transparent); stroke: var(--text-muted); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.mm-cov-prof-zone { fill: color-mix(in srgb, var(--mediamesh-node-color) 22%, transparent); stroke: var(--mediamesh-node-color); stroke-width: 0.75; stroke-opacity: 0.6; vector-effect: non-scaling-stroke; }
+.mm-cov-prof-los { stroke: var(--mediamesh-node-color); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.mm-cov-prof-los--blocked { stroke-dasharray: 5 4; }
+.mm-cov-prof-mast { stroke: var(--text); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.mm-cov-prof-ant { fill: var(--mediamesh-node-color); stroke: var(--text); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.mm-cov-prof-edge { fill: var(--text-muted); }
+.mm-cov-prof-edge--main { fill: var(--text); }
+.mm-cov-prof-grid { stroke: var(--border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.mm-cov-prof-tick { fill: var(--text-muted); font-size: 10px; }
+.mm-cov-prof-key { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 4px; font-size: 0.92em; }
+.mm-cov-key { display: inline-block; width: 16px; margin-right: 5px; vertical-align: middle; }
+.mm-cov-key--los { border-top: 2px solid var(--mediamesh-node-color); }
+.mm-cov-key--zone { height: 8px; border-radius: 4px; background: color-mix(in srgb, var(--mediamesh-node-color) 22%, transparent); border: 1px solid color-mix(in srgb, var(--mediamesh-node-color) 60%, transparent); }
+.mm-cov-key--edge { width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 8px solid var(--text); }
+.mm-cov-budget { flex: 2 1 250px; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.mm-cov-budget td { padding: 2px 0; border: 0; }
+.mm-cov-budget td:last-child { text-align: right; white-space: nowrap; padding-left: 12px; }
+.mm-cov-budget--sum td, .mm-cov-budget--result td { border-top: 1px solid var(--border); }
+.mm-cov-budget--result td { font-weight: 600; }
+.mm-cov-details { margin-top: 8px; font-size: 0.85em; }
+.mm-cov-details summary { cursor: pointer; color: var(--text-muted); }
+.mm-cov-how { margin: 6px 0 0; padding-left: 18px; color: var(--text-muted); }
+.mm-cov-how li { margin: 3px 0; }
+.mm-cov-how strong { color: var(--text); font-weight: 600; }
+.mm-cov-links-scroll { overflow-x: auto; margin-top: 6px; }
+.mm-cov-links-table { font-size: 0.95em; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .mm-row--relayed a { opacity: 0.8; }
 
 /* MediaMesh (radio2) on Analytics: the radio2 part of a payload bar, the
