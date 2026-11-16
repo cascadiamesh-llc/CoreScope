@@ -41,6 +41,16 @@ func ensureMediaMesh(rw *sql.DB) error {
 		CREATE TABLE IF NOT EXISTS observation_mainmesh (
 			observation_id INTEGER PRIMARY KEY
 		);
+		-- MediaMesh evidence for a repeater the analyzer has no advert from:
+		-- only its path hash (2 or 3 bytes, upper-case hex) is known. Turned
+		-- into a node_mediamesh mark once the hash matches exactly one node.
+		CREATE TABLE IF NOT EXISTS mediamesh_prefix (
+			prefix     TEXT PRIMARY KEY,
+			source     TEXT NOT NULL,
+			first_seen TEXT NOT NULL,
+			last_seen  TEXT NOT NULL,
+			packets    INTEGER NOT NULL DEFAULT 1
+		);
 		CREATE TABLE IF NOT EXISTS node_mediamesh (
 			public_key TEXT PRIMARY KEY,
 			mode       TEXT NOT NULL,

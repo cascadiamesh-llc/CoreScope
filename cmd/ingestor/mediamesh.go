@@ -60,7 +60,7 @@ const (
 	// are in before the path is judged.
 	mediaMeshRelayDelay = 3 * time.Minute
 	// Bounds the queue of MediaMesh floods waiting to be judged.
-	mediaMeshRelayQueueMax = 20000
+	mediaMeshRelayQueueMax = 50000
 )
 
 // mediaMeshFlag reads the packet's `mediamesh` key: a JSON boolean, with the
@@ -213,6 +213,141 @@ func mediaMeshSender(data *PacketData, resolved []*string) string {
 	return strings.ToLower(*last)
 }
 
+// mediaMeshUnknownSender is the path hash of the forwarder an observer heard
+// on radio2 when no single known node matches it (no advert yet): the last
+// hop of a received flood, 2 or 3 bytes. Empty otherwise.
+func mediaMeshUnknownSender(data *PacketData, resolved []*string) string {
+	if data.Direction != nil && strings.EqualFold(*data.Direction, "tx") {
+		return ""
+	}
+	if !pathHopsTransmitted(data) {
+		return ""
+	}
+	hops := parsePathArray(data.PathJSON)
+	if len(hops) == 0 || len(resolved) != len(hops) || resolved[len(hops)-1] != nil {
+		return ""
+	}
+	last := hops[len(hops)-1]
+	if len(last) < 2*mediaMeshRelayedMinHashBytes {
+		return ""
+	}
+	return strings.ToUpper(last)
+}
+
+// RecordMediaMeshPrefix stores MediaMesh evidence for a repeater known only by
+// its path hash. A 2-byte hash and a 3-byte one it begins share one row, under
+// the longer. "heard" outranks "relayed". The caller holds writerMu.
+func (s *Store) RecordMediaMeshPrefix(hop, source string, seen time.Time) error {
+	hop = strings.ToUpper(hop)
+	ts := seen.UTC().Format(time.RFC3339)
+	key := hop
+	// A longer hash already stored that begins with this one: use it.
+	var longer string
+	if s.db.QueryRow(`SELECT prefix FROM mediamesh_prefix WHERE prefix LIKE ? AND prefix != ? ORDER BY length(prefix) DESC LIMIT 1`,
+		hop+"%", hop).Scan(&longer) == nil {
+		key = longer
+	}
+	if _, err := s.db.Exec(`
+		INSERT INTO mediamesh_prefix (prefix, source, first_seen, last_seen, packets)
+		VALUES (?, ?, ?, ?, 1)
+		ON CONFLICT(prefix) DO UPDATE SET
+			source     = CASE WHEN mediamesh_prefix.source = 'heard' OR excluded.source = 'heard'
+			                  THEN 'heard' ELSE excluded.source END,
+			first_seen = MIN(mediamesh_prefix.first_seen, excluded.first_seen),
+			last_seen  = MAX(mediamesh_prefix.last_seen, excluded.last_seen),
+			packets    = mediamesh_prefix.packets + 1`, key, source, ts, ts); err != nil {
+		s.Stats.WriteErrors.Add(1)
+		return err
+	}
+	// Shorter hashes this one begins with fold into it.
+	rows, err := s.db.Query(`SELECT prefix, source, first_seen, packets FROM mediamesh_prefix
+		WHERE ? LIKE prefix || '%' AND prefix != ?`, key, key)
+	if err != nil {
+		return err
+	}
+	type short struct {
+		prefix, source, first string
+		packets               int
+	}
+	var shorter []short
+	for rows.Next() {
+		var r short
+		if rows.Scan(&r.prefix, &r.source, &r.first, &r.packets) == nil {
+			shorter = append(shorter, r)
+		}
+	}
+	rows.Close()
+	for _, r := range shorter {
+		if _, err := s.db.Exec(`UPDATE mediamesh_prefix SET
+				source     = CASE WHEN source = 'heard' OR ? = 'heard' THEN 'heard' ELSE source END,
+				first_seen = MIN(first_seen, ?),
+				packets    = packets + ?
+			WHERE prefix = ?`, r.source, r.first, r.packets, key); err != nil {
+			return err
+		}
+		if _, err := s.db.Exec(`DELETE FROM mediamesh_prefix WHERE prefix = ?`, r.prefix); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ResolveMediaMeshPrefixes turns stored hashes into marks for the node they
+// now match, once exactly one known node does (its advert has been heard):
+// "heard" as a heard mark, "relayed" as a relayed one, stamped with the
+// hash's last sighting. Returns the number resolved.
+func (s *Store) ResolveMediaMeshPrefixes(now time.Time) int {
+	type row struct{ prefix, source, lastSeen string }
+	rows, err := s.db.Query(`SELECT prefix, source, last_seen FROM mediamesh_prefix`)
+	if err != nil {
+		return 0
+	}
+	var all []row
+	for rows.Next() {
+		var r row
+		if rows.Scan(&r.prefix, &r.source, &r.lastSeen) == nil {
+			all = append(all, r)
+		}
+	}
+	rows.Close()
+	resolved := 0
+	for _, r := range all {
+		var keys []string
+		krows, err := s.db.Query(`SELECT public_key FROM nodes WHERE public_key LIKE ? LIMIT 2`, strings.ToLower(r.prefix)+"%")
+		if err != nil {
+			continue
+		}
+		for krows.Next() {
+			var k string
+			if krows.Scan(&k) == nil {
+				keys = append(keys, strings.ToLower(k))
+			}
+		}
+		krows.Close()
+		if len(keys) != 1 || !targetPubkeyRe.MatchString(keys[0]) {
+			continue
+		}
+		seen, err := time.Parse(time.RFC3339, r.lastSeen)
+		if err != nil {
+			seen = now
+		}
+		writerMu.Lock()
+		if r.source == mediaMeshSourceHeard {
+			err = s.RecordMediaMesh(MediaMeshReport{PubKey: keys[0], Mode: mediaMeshModeRxTx, Source: mediaMeshSourceHeard}, seen)
+		} else {
+			err = s.RecordMediaMeshRelayed(keys[0], seen)
+		}
+		if err == nil {
+			_, err = s.db.Exec(`DELETE FROM mediamesh_prefix WHERE prefix = ?`, r.prefix)
+		}
+		writerMu.Unlock()
+		if err == nil {
+			resolved++
+		}
+	}
+	return resolved
+}
+
 // mediaMeshRelayers are the repeaters that forwarded a MediaMesh flood before
 // the node mediaMeshSender marks: for one the observer received, every hop but
 // the last (the forwarder it heard); for one it sent, every hop but its own,
@@ -224,7 +359,9 @@ func mediaMeshSender(data *PacketData, resolved []*string) string {
 func mediaMeshRelayers(data *PacketData, resolved []*string) []string {
 	var out []string
 	for _, c := range mediaMeshRelayerHops(data, resolved) {
-		out = append(out, c.pubkey)
+		if c.pubkey != "" {
+			out = append(out, c.pubkey)
+		}
 	}
 	return out
 }
@@ -233,7 +370,8 @@ func mediaMeshRelayers(data *PacketData, resolved []*string) []string {
 // its position in the path and the node it resolved to.
 type relayCandidate struct {
 	index  int
-	pubkey string
+	pubkey string // empty for a hop no known node matches
+	hop    string // the path hash, upper-case hex
 }
 
 // mediaMeshRelayerHops is mediaMeshRelayers with each hop's path position.
@@ -254,11 +392,17 @@ func mediaMeshRelayerHops(data *PacketData, resolved []*string) []relayCandidate
 	self := strings.ToLower(data.ObserverID)
 	var out []relayCandidate
 	for i, r := range candidates {
-		if r == nil || len(hops[i]) < 2*mediaMeshRelayedMinHashBytes {
+		if len(hops[i]) < 2*mediaMeshRelayedMinHashBytes {
+			continue
+		}
+		hop := strings.ToUpper(hops[i])
+		if r == nil {
+			// No single known node: kept by its hash (mediamesh_prefix).
+			out = append(out, relayCandidate{index: i, hop: hop})
 			continue
 		}
 		if pk := strings.ToLower(*r); targetPubkeyRe.MatchString(pk) && pk != self {
-			out = append(out, relayCandidate{index: i, pubkey: pk})
+			out = append(out, relayCandidate{index: i, pubkey: pk, hop: hop})
 		}
 	}
 	return out
@@ -371,7 +515,8 @@ type pendingRelay struct {
 	packet string
 	path   []string
 	cands  []relayCandidate
-	at     time.Time
+	at     time.Time // when queued
+	seen   time.Time // when the packet was heard (marks are stamped with it)
 }
 
 type mediaMeshRelayQueue struct {
@@ -448,22 +593,40 @@ func (s *Store) ProcessMediaMeshRelays(now time.Time) int {
 			if c.index < onMain {
 				continue
 			}
+			key := c.pubkey
+			if key == "" {
+				key = "?" + c.hop
+			}
+			seen := p.seen
+			if seen.IsZero() {
+				seen = now
+			}
 			// Always noted, so a later packet can confirm it.
-			twice := s.mediaMeshRelaySightings.confirmed(c.pubkey, p.packet, now)
+			twice := s.mediaMeshRelaySightings.confirmed(key, p.packet, seen)
 			if !twice && !mediaMeshOnly {
 				continue
 			}
-			if !s.mediaMeshRelayed.due(c.pubkey, now) {
+			if !s.mediaMeshRelayed.due(key, seen) {
 				continue
 			}
-			write = append(write, c.pubkey)
+			write = append(write, key)
 		}
 		if len(write) == 0 {
 			continue
 		}
+		seen := p.seen
+		if seen.IsZero() {
+			seen = now
+		}
 		writerMu.Lock()
-		for _, pk := range write {
-			if err := s.RecordMediaMeshRelayed(pk, now); err != nil {
+		for _, key := range write {
+			var err error
+			if strings.HasPrefix(key, "?") {
+				err = s.RecordMediaMeshPrefix(key[1:], mediaMeshSourceRelayed, seen)
+			} else {
+				err = s.RecordMediaMeshRelayed(key, seen)
+			}
+			if err != nil {
 				log.Printf("[db] node mediamesh relayed (non-fatal): %v", err)
 				continue
 			}
@@ -474,15 +637,19 @@ func (s *Store) ProcessMediaMeshRelays(now time.Time) int {
 	return marked
 }
 
-// BackfillMediaMeshRelays queues the MediaMesh floods stored in the last
-// mediaMeshRelayedRetention for judging, as if just heard: the relay queue
-// and sightings live in memory, so without this a restart would forget them
-// and a repeater could wait days for its mark. Returns the number queued.
+// BackfillMediaMeshRelays queues every MediaMesh photo and voice flood still
+// stored (up to mediaMeshNodeRetention old) for judging, stamped with the
+// time it was heard: the relay queue and sightings live in memory, so a
+// restart would otherwise forget them, and this also finds repeaters missed
+// before the current rules. Old evidence makes old marks, which fade as
+// usual. Unknown hashes (no advert yet) go to mediamesh_prefix, including the
+// forwarder an observer heard. Returns the number queued.
 func (s *Store) BackfillMediaMeshRelays(now time.Time) int {
-	since := now.Add(-mediaMeshRelayedRetention).Unix()
+	since := now.Add(-mediaMeshNodeRetention).Unix()
 	rows, err := s.db.Query(`SELECT t.id, t.hash, t.payload_type, t.route_type,
 			COALESCE(t.decoded_json, ''), COALESCE(o.path_json, ''),
-			COALESCE(o.resolved_path, ''), COALESCE(o.direction, ''), COALESCE(obs.id, '')
+			COALESCE(o.resolved_path, ''), COALESCE(o.direction, ''), COALESCE(obs.id, ''),
+			o.timestamp
 		FROM observation_mediamesh m
 		JOIN observations o ON o.id = m.observation_id
 		JOIN transmissions t ON t.id = o.transmission_id
@@ -496,26 +663,46 @@ func (s *Store) BackfillMediaMeshRelays(now time.Time) int {
 	defer rows.Close()
 	queued := 0
 	at := now.Add(-mediaMeshRelayDelay)
+	type heardHop struct {
+		hop  string
+		seen time.Time
+	}
+	var heard []heardHop
 	for rows.Next() {
-		var txID int64
+		var txID, ts int64
 		var d PacketData
 		var resolvedJSON, dir string
 		if err := rows.Scan(&txID, &d.Hash, &d.PayloadType, &d.RouteType, &d.DecodedJSON,
-			&d.PathJSON, &resolvedJSON, &dir, &d.ObserverID); err != nil {
+			&d.PathJSON, &resolvedJSON, &dir, &d.ObserverID, &ts); err != nil {
 			continue
 		}
 		if dir != "" {
 			d.Direction = &dir
 		}
+		hops := parsePathArray(d.PathJSON)
 		var resolved []*string
-		if resolvedJSON == "" || json.Unmarshal([]byte(resolvedJSON), &resolved) != nil {
-			continue
+		if resolvedJSON == "" || json.Unmarshal([]byte(resolvedJSON), &resolved) != nil || len(resolved) != len(hops) {
+			resolved = make([]*string, len(hops)) // nothing resolved: every hop is unknown
+		}
+		seen := time.Unix(ts, 0)
+		if hop := mediaMeshUnknownSender(&d, resolved); hop != "" {
+			heard = append(heard, heardHop{hop, seen})
 		}
 		if cands := mediaMeshRelayerHops(&d, resolved); len(cands) > 0 {
 			s.mediaMeshRelayQueue.push(pendingRelay{txID: txID, packet: d.Hash,
-				path: parsePathArray(d.PathJSON), cands: cands, at: at})
+				path: hops, cands: cands, at: at, seen: seen})
 			queued++
 		}
+	}
+	rows.Close()
+	if len(heard) > 0 {
+		writerMu.Lock()
+		for _, h := range heard {
+			if err := s.RecordMediaMeshPrefix(h.hop, mediaMeshSourceHeard, h.seen); err != nil {
+				log.Printf("[mediamesh] prefix backfill (non-fatal): %v", err)
+			}
+		}
+		writerMu.Unlock()
 	}
 	return queued
 }
@@ -701,6 +888,11 @@ func (s *Store) noteMediaMeshObservation(obsID, txID int64, data *PacketData, re
 	}
 	s.recordObservationMediaMesh(obsID)
 	now := time.Now()
+	if hop := mediaMeshUnknownSender(data, resolved); hop != "" && s.mediaMeshHeard.due("?"+hop, now) {
+		if err := s.RecordMediaMeshPrefix(hop, mediaMeshSourceHeard, now); err != nil {
+			log.Printf("[db] mediamesh prefix heard (non-fatal): %v", err)
+		}
+	}
 	if sender := mediaMeshSender(data, resolved); targetPubkeyRe.MatchString(sender) && s.mediaMeshHeard.due(sender, now) {
 		if err := s.RecordMediaMesh(MediaMeshReport{
 			PubKey: sender, Mode: mediaMeshModeRxTx, Source: mediaMeshSourceHeard,
@@ -715,6 +907,7 @@ func (s *Store) noteMediaMeshObservation(obsID, txID int64, data *PacketData, re
 			path:   parsePathArray(data.PathJSON),
 			cands:  cands,
 			at:     now,
+			seen:   now,
 		})
 	}
 }
@@ -728,6 +921,9 @@ func (s *Store) PruneMediaMeshNodes(now time.Time) (int64, error) {
 		WHERE last_seen < ? OR (source = ? AND last_seen < ?)`,
 		cutoff, mediaMeshSourceRelayed, relayedCutoff)
 	if err != nil {
+		return 0, err
+	}
+	if _, err := s.db.Exec(`DELETE FROM mediamesh_prefix WHERE last_seen < ?`, cutoff); err != nil {
 		return 0, err
 	}
 	return res.RowsAffected()

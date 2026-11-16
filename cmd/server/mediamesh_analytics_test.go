@@ -185,3 +185,31 @@ func TestMediaMeshAnalyticsObserverNotRunning(t *testing.T) {
 		t.Errorf("observers = %+v, want none", got.Observers)
 	}
 }
+
+// MediaMesh repeaters known only by their hash are listed beside the others,
+// within the usual windows (heard 7 days, relayed 2).
+func TestMediaMeshAnalyticsUnknownRepeaters(t *testing.T) {
+	srv, router := setupTestServer(t)
+	recent := mmRecentTS()
+	old := time.Now().UTC().Add(-3 * 24 * time.Hour).Format(time.RFC3339)
+	seedMediaMesh(t, srv,
+		`INSERT INTO mediamesh_prefix VALUES ('C267A0', 'heard', '`+old+`', '`+recent+`', 40)`,
+		`INSERT INTO mediamesh_prefix VALUES ('9E3C', 'relayed', '`+recent+`', '`+recent+`', 3)`,
+		`INSERT INTO mediamesh_prefix VALUES ('B6B2', 'relayed', '`+old+`', '`+old+`', 1)`,
+	)
+	var got MediaMeshAnalytics
+	getJSON(t, router, "/api/analytics/mediamesh", &got)
+	seen := map[string]MediaMeshUnknown{}
+	for _, u := range got.UnknownRepeaters {
+		seen[u.Prefix] = u
+	}
+	if u, ok := seen["C267A0"]; !ok || u.Source != "heard" || u.Packets != 40 {
+		t.Errorf("C267A0 = %+v (%v)", u, ok)
+	}
+	if _, ok := seen["9E3C"]; !ok {
+		t.Error("9E3C (relayed an hour ago) missing")
+	}
+	if _, ok := seen["B6B2"]; ok {
+		t.Error("B6B2 relayed 3 days ago, past the 2-day window, but listed")
+	}
+}

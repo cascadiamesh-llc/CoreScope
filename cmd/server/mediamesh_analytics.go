@@ -65,7 +65,10 @@ type MediaMeshAnalytics struct {
 	PerHour                []MediaMeshHour      `json:"per_hour"`
 	Observers              []MediaMeshObserver  `json:"observers"`
 	Repeaters              []MediaMeshRepeater  `json:"repeaters"`
-	Window                 string               `json:"window,omitempty"`
+	// UnknownRepeaters: MediaMesh repeaters known only by their path hash
+	// (no advert heard yet), so no name or position.
+	UnknownRepeaters []MediaMeshUnknown `json:"unknown_repeaters"`
+	Window           string             `json:"window,omitempty"`
 }
 
 func (s *Server) handleAnalyticsMediaMesh(w http.ResponseWriter, r *http.Request) {
@@ -82,6 +85,7 @@ func emptyMediaMeshAnalytics() *MediaMeshAnalytics {
 	return &MediaMeshAnalytics{
 		ByType: []MediaMeshTypeCount{}, PerHour: []MediaMeshHour{},
 		Observers: []MediaMeshObserver{}, Repeaters: []MediaMeshRepeater{},
+		UnknownRepeaters: []MediaMeshUnknown{},
 	}
 }
 
@@ -248,6 +252,7 @@ func (s *PacketStore) computeMediaMeshAnalytics(region string, window TimeWindow
 		return out.Observers[i].ID < out.Observers[j].ID
 	})
 	out.Repeaters = s.mediaMeshRepeaters(now, nodes)
+	out.UnknownRepeaters = mediaMeshUnknownAt(now)
 	return out
 }
 

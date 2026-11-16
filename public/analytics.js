@@ -642,11 +642,12 @@
   function renderMediaMeshTabHtml(mm, windowVal) {
     mm = mm || {};
     const reps = Array.isArray(mm.repeaters) ? mm.repeaters : [];
+    const unknown = Array.isArray(mm.unknown_repeaters) ? mm.unknown_repeaters : [];
     const obs = Array.isArray(mm.observers) ? mm.observers : [];
     const hours = Array.isArray(mm.per_hour) ? mm.per_hour : [];
     const n = Number(mm.mediamesh_transmissions || 0);
     const intro = '<p class="text-muted" style="margin:0 0 12px">MediaMesh is the second LoRa profile (radio2) that Keymind Cascade repeaters, Wadamesh TAK standalones and MeshCore Open TAK use for photos and voice. A transmission counts here when an observer heard it on radio2.</p>';
-    if (n === 0 && reps.length === 0) {
+    if (n === 0 && reps.length === 0 && unknown.length === 0) {
       return intro + '<div class="text-center text-muted" style="padding:40px">No MediaMesh traffic or repeaters in this period. Observers need firmware that tags radio2.</div>';
     }
     const repRows = reps.map((r) => {
@@ -663,6 +664,22 @@
         <td>${esc(mediaMeshRadioText(r.radio))}</td>
         <td>${how}</td>
         <td data-value="${esc(mediaMeshTime(r.last_seen))}">${seen}</td>
+      </tr>`;
+    }).join('');
+    // Known only by their path hash: no advert heard yet, so no name or place.
+    const unknownRows = unknown.map((u) => {
+      const id = String(u.prefix || '').toUpperCase();
+      const how = u.source === 'heard' ? 'heard sending on radio2' : 'seen relaying MediaMesh packets';
+      const seen = u.last_seen && typeof timeAgo === 'function' ? timeAgo(u.last_seen) : esc(u.last_seen || '');
+      const rowClass = u.source === 'relayed' ? ' class="mm-row--relayed mm-row--unknown"' : ' class="mm-row--unknown"';
+      return `<tr${rowClass}>
+        <td data-value="~${esc(id.toLowerCase())}"><span class="mm-dot mm-dot--rxtx" aria-hidden="true"></span>Unknown repeater <code>${esc(id)}</code></td>
+        <td>—</td>
+        <td>—</td>
+        <td>listens and sends</td>
+        <td>—</td>
+        <td>${how}, no advert heard yet (${Number(u.packets || 0).toLocaleString()} packets)</td>
+        <td data-value="${esc(mediaMeshTime(u.last_seen))}">${seen}</td>
       </tr>`;
     }).join('');
     const obsRows = obs.map((o) => {
@@ -683,14 +700,14 @@
     return intro + `
       <div class="stats-grid">
         <div class="stat-card stat-card-mediamesh"><div class="stat-value">${n.toLocaleString()}</div><div class="stat-label">radio2 transmissions</div><div class="stat-detail">${sf(mm.share_pct || 0, 1)}% of ${Number(mm.total_transmissions || 0).toLocaleString()}</div></div>
-        <div class="stat-card stat-card-mediamesh"><div class="stat-value">${reps.length}</div><div class="stat-label">MediaMesh repeaters</div><div class="stat-detail">${reps.filter((r) => r.mode === 'rxtx').length} send, ${reps.filter((r) => r.mode !== 'rxtx').length} listen only</div></div>
+        <div class="stat-card stat-card-mediamesh"><div class="stat-value">${reps.length + unknown.length}</div><div class="stat-label">MediaMesh repeaters</div><div class="stat-detail">${reps.filter((r) => r.mode === 'rxtx').length} send, ${reps.filter((r) => r.mode !== 'rxtx').length} listen only${unknown.length ? `, ${unknown.length} not yet identified` : ''}</div></div>
         <div class="stat-card stat-card-mediamesh"><div class="stat-value">${obs.length}</div><div class="stat-label">MediaMesh observers</div><div class="stat-detail">${obs.filter((o) => Number(o.mediamesh_observations || 0) > 0).length} heard radio2</div></div>
       </div>
       <div class="analytics-row"><div class="analytics-card flex-1 mm-chart">${chart.html.replace('Packets /', 'radio2 packets /')}</div></div>
       <div class="analytics-row">
         <div class="analytics-card flex-1">
           <h3>MediaMesh repeaters</h3>
-          ${reps.length ? `<table class="analytics-table" id="mmRepeaterTable"><thead><tr><th scope="col" data-sort-key="name">Node</th><th scope="col" data-sort-key="near">Near</th><th scope="col" data-sort-key="role">Role</th><th scope="col" data-sort-key="mode">Mode</th><th scope="col" data-sort-key="radio">radio2 setting</th><th scope="col" data-sort-key="source">Known from</th><th scope="col" data-sort-key="last_seen" data-type="date">Last seen</th></tr></thead><tbody>${repRows}</tbody></table>` : '<p class="text-muted">None known yet.</p>'}
+          ${reps.length || unknown.length ? `<table class="analytics-table" id="mmRepeaterTable"><thead><tr><th scope="col" data-sort-key="name">Node</th><th scope="col" data-sort-key="near">Near</th><th scope="col" data-sort-key="role">Role</th><th scope="col" data-sort-key="mode">Mode</th><th scope="col" data-sort-key="radio">radio2 setting</th><th scope="col" data-sort-key="source">Known from</th><th scope="col" data-sort-key="last_seen" data-type="date">Last seen</th></tr></thead><tbody>${repRows}${unknownRows}</tbody></table>` : '<p class="text-muted">None known yet.</p>'}
         </div>
       </div>
       <div class="analytics-row">

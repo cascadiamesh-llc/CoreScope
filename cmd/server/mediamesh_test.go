@@ -19,6 +19,7 @@ func withMediaMesh(t testing.TB) {
 		mediaMeshNodesTS = ""
 		mediaMeshMu.Unlock()
 		mediaMeshNodes.Store(nil)
+		mediaMeshUnknown.Store(nil)
 	}
 	reset()
 	t.Cleanup(reset)
@@ -29,6 +30,8 @@ func seedMediaMesh(t *testing.T, srv *Server, stmts ...string) {
 	base := []string{
 		`CREATE TABLE IF NOT EXISTS observation_mediamesh (observation_id INTEGER PRIMARY KEY)`,
 		`CREATE TABLE IF NOT EXISTS observation_mainmesh (observation_id INTEGER PRIMARY KEY)`,
+		`CREATE TABLE IF NOT EXISTS mediamesh_prefix (prefix TEXT PRIMARY KEY, source TEXT NOT NULL,
+			first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, packets INTEGER NOT NULL DEFAULT 1)`,
 		`CREATE TABLE IF NOT EXISTS node_mediamesh (public_key TEXT PRIMARY KEY, mode TEXT NOT NULL,
 			radio TEXT, source TEXT NOT NULL, last_seen TEXT NOT NULL)`,
 	}

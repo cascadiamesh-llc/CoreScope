@@ -330,8 +330,15 @@ func main() {
 	}
 	mediaMeshRelayTicker := time.NewTicker(30 * time.Second)
 	go func() {
+		n := 0
 		for range mediaMeshRelayTicker.C {
 			store.ProcessMediaMeshRelays(time.Now())
+			// Every 5 minutes: MediaMesh repeaters known only by their hash
+			// become real marks once their advert is heard.
+			if n%10 == 0 {
+				store.ResolveMediaMeshPrefixes(time.Now())
+			}
+			n++
 		}
 	}()
 

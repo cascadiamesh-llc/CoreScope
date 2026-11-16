@@ -52,11 +52,66 @@ var (
 	mediaMeshMu       sync.RWMutex
 	mediaMeshObs      = map[int]struct{}{}
 	mediaMeshMainObs  = map[int]struct{}{} // MediaMesh rows also heard on the main radio
+	mediaMeshUnknown  atomic.Pointer[[]MediaMeshUnknown]
 	mediaMeshMaxObsID int64
 	mediaMeshNodes    atomic.Pointer[map[string]MediaMeshNode]
 	mediaMeshNodesTS  string     // newest last_seen loaded (incremental watermark)
 	mediaMeshRefresh  sync.Mutex // one refresh at a time
 )
+
+// MediaMeshUnknown is a MediaMesh repeater the analyzer has no advert from,
+// known only by its path hash (the ingestor's mediamesh_prefix table).
+type MediaMeshUnknown struct {
+	Prefix    string `json:"prefix"`
+	Source    string `json:"source"` // heard | relayed
+	FirstSeen string `json:"first_seen"`
+	LastSeen  string `json:"last_seen"`
+	Packets   int    `json:"packets"`
+}
+
+func loadMediaMeshUnknown(conn *sql.DB) ([]MediaMeshUnknown, error) {
+	out := []MediaMeshUnknown{}
+	if !tableExists(conn, "mediamesh_prefix") {
+		return out, nil
+	}
+	rows, err := conn.Query(`SELECT prefix, source, first_seen, last_seen, packets FROM mediamesh_prefix ORDER BY last_seen DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var u MediaMeshUnknown
+		if err := rows.Scan(&u.Prefix, &u.Source, &u.FirstSeen, &u.LastSeen, &u.Packets); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// mediaMeshUnknownAt lists the unknown MediaMesh repeaters with current
+// evidence, by the same windows as node marks (relayed 2 days, heard 7).
+func mediaMeshUnknownAt(now time.Time) []MediaMeshUnknown {
+	out := []MediaMeshUnknown{}
+	p := mediaMeshUnknown.Load()
+	if p == nil {
+		return out
+	}
+	for _, u := range *p {
+		t, err := time.Parse(time.RFC3339, u.LastSeen)
+		if err != nil {
+			continue
+		}
+		window := mediaMeshEvidenceWindow
+		if u.Source == "relayed" {
+			window = mediaMeshRelayedWindow
+		}
+		if now.Sub(t) <= window {
+			out = append(out, u)
+		}
+	}
+	return out
+}
 
 // observationMediaMesh reports whether one observation was carried on radio2.
 func observationMediaMesh(obsID int) bool {
@@ -240,6 +295,11 @@ func refreshMediaMesh(conn *sql.DB, full bool) {
 	if err != nil {
 		log.Printf("[mediamesh] main-radio copies: %v", err)
 		return
+	}
+	if unknown, err := loadMediaMeshUnknown(conn); err != nil {
+		log.Printf("[mediamesh] unknown repeaters: %v", err)
+	} else {
+		mediaMeshUnknown.Store(&unknown)
 	}
 	nodes, newest, err := loadMediaMeshNodes(conn, sinceTS)
 	if err != nil {

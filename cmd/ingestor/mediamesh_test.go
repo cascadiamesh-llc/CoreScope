@@ -754,3 +754,136 @@ func TestMainMeshCopyOfMediaMeshObservation(t *testing.T) {
 		t.Errorf("single copies recorded %d main-radio copies, want 0", n)
 	}
 }
+
+func mmPrefixRow(t *testing.T, s *Store, prefix string) (source string, packets int, ok bool) {
+	t.Helper()
+	err := s.db.QueryRow(`SELECT source, packets FROM mediamesh_prefix WHERE prefix = ?`, prefix).Scan(&source, &packets)
+	return source, packets, err == nil
+}
+
+// A MediaMesh repeater the analyzer has no advert from is kept by its path
+// hash: relaying in a MediaMesh-only photo, or heard as the last hop.
+func TestUnknownMediaMeshRepeatersByHash(t *testing.T) {
+	s := newTestStore(t)
+	b, c := strings.Repeat("b", 64), strings.Repeat("c", 64)
+	rx := "rx"
+	now := time.Now()
+	// aaaa relays (unknown), bbbb relays, cccc is heard.
+	s.noteMediaMeshObservation(0, 1, &PacketData{PayloadType: 6, RouteType: 1, Direction: &rx,
+		PathJSON: `["aaaa","bbbb","cccc"]`, ObserverID: strings.Repeat("e", 64), MediaMesh: true, Hash: "p1"},
+		[]*string{nil, &b, &c})
+	// c267a0 is heard directly (unknown), after bbbb.
+	s.noteMediaMeshObservation(0, 2, &PacketData{PayloadType: 6, RouteType: 1, Direction: &rx,
+		PathJSON: `["bbbb","c267a0"]`, ObserverID: strings.Repeat("e", 64), MediaMesh: true, Hash: "p2"},
+		[]*string{&b, nil})
+	s.ProcessMediaMeshRelays(now.Add(mediaMeshRelayDelay + time.Second))
+	if src, _, ok := mmPrefixRow(t, s, "AAAA"); !ok || src != "relayed" {
+		t.Errorf("AAAA: %q (%v), want relayed", src, ok)
+	}
+	if src, _, ok := mmPrefixRow(t, s, "C267A0"); !ok || src != "heard" {
+		t.Errorf("C267A0: %q (%v), want heard", src, ok)
+	}
+	if _, _, src, ok := nodeMediaMesh(t, s, b); !ok || src != "relayed" {
+		t.Errorf("bbbb: %q (%v), want relayed", src, ok)
+	}
+	// A 1-byte unknown hop is not kept.
+	if n := mmCountRows(t, s, `SELECT COUNT(*) FROM mediamesh_prefix`); n != 2 {
+		t.Errorf("%d hash rows, want 2", n)
+	}
+}
+
+// A 2-byte hash and the 3-byte one it begins share one row under the longer.
+func TestMediaMeshPrefixMerge(t *testing.T) {
+	s := newTestStore(t)
+	t0 := time.Now().Add(-time.Hour)
+	for _, step := range []struct {
+		hop, src string
+		at       time.Time
+	}{{"C267", "heard", t0}, {"C267A0", "relayed", t0.Add(time.Minute)}, {"C267", "relayed", t0.Add(2 * time.Minute)}} {
+		if err := s.RecordMediaMeshPrefix(step.hop, step.src, step.at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := mmCountRows(t, s, `SELECT COUNT(*) FROM mediamesh_prefix`); n != 1 {
+		t.Fatalf("%d rows, want 1", n)
+	}
+	if src, packets, ok := mmPrefixRow(t, s, "C267A0"); !ok || src != "heard" || packets != 3 {
+		t.Errorf("C267A0 = %q, %d packets (%v); want heard, 3", src, packets, ok)
+	}
+}
+
+// Once the node's advert has been heard, its hash becomes a real mark.
+func TestResolveMediaMeshPrefixes(t *testing.T) {
+	s := newTestStore(t)
+	key := "c267a0" + strings.Repeat("1", 58)
+	seen := time.Now().Add(-10 * time.Minute)
+	if err := s.RecordMediaMeshPrefix("C267A0", "heard", seen); err != nil {
+		t.Fatal(err)
+	}
+	if n := s.ResolveMediaMeshPrefixes(time.Now()); n != 0 {
+		t.Fatalf("resolved %d with no matching node", n)
+	}
+	if _, err := s.db.Exec(`INSERT INTO nodes (public_key, name, role) VALUES (?, 'Mystery', 'repeater')`, key); err != nil {
+		t.Fatal(err)
+	}
+	if n := s.ResolveMediaMeshPrefixes(time.Now()); n != 1 {
+		t.Fatalf("resolved %d, want 1", n)
+	}
+	if _, _, src, ok := nodeMediaMesh(t, s, key); !ok || src != "heard" {
+		t.Errorf("node mark %q (%v), want heard", src, ok)
+	}
+	if n := mmCountRows(t, s, `SELECT COUNT(*) FROM mediamesh_prefix`); n != 0 {
+		t.Errorf("%d hash rows left, want 0", n)
+	}
+	// Two nodes sharing the hash: left alone.
+	if err := s.RecordMediaMeshPrefix("ABCD", "relayed", seen); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"abcd" + strings.Repeat("1", 60), "abcd" + strings.Repeat("2", 60)} {
+		if _, err := s.db.Exec(`INSERT INTO nodes (public_key, name, role) VALUES (?, 'x', 'repeater')`, k); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := s.ResolveMediaMeshPrefixes(time.Now()); n != 0 {
+		t.Errorf("resolved an ambiguous hash")
+	}
+}
+
+// The backfill covers everything stored, stamps marks with when the packet
+// was heard, and keeps unknown hashes.
+func TestBackfillFullHistory(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Now()
+	old := now.Add(-5 * 24 * time.Hour)
+	if _, err := s.InsertTransmission(&PacketData{Hash: "old", RawHex: "1900", RouteType: 1, PayloadType: 6,
+		PathJSON: `[]`, Timestamp: old.UTC().Format(time.RFC3339)}); err != nil {
+		t.Fatal(err)
+	}
+	var txID int64
+	if err := s.db.QueryRow(`SELECT id FROM transmissions WHERE hash = 'old'`).Scan(&txID); err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.db.Exec(`INSERT INTO observations (transmission_id, direction, path_json, timestamp)
+		VALUES (?, 'rx', '["9e3c","62ccbf"]', ?)`, txID, old.Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	obsID, _ := res.LastInsertId()
+	if _, err := s.db.Exec(`INSERT INTO observation_mediamesh (observation_id) VALUES (?)`, obsID); err != nil {
+		t.Fatal(err)
+	}
+	if n := s.BackfillMediaMeshRelays(now); n != 1 {
+		t.Fatalf("queued %d, want 1", n)
+	}
+	s.ProcessMediaMeshRelays(now)
+	if src, _, ok := mmPrefixRow(t, s, "9E3C"); !ok || src != "relayed" {
+		t.Errorf("9E3C: %q (%v), want relayed", src, ok)
+	}
+	if src, _, ok := mmPrefixRow(t, s, "62CCBF"); !ok || src != "heard" {
+		t.Errorf("62CCBF: %q (%v), want heard", src, ok)
+	}
+	var last string
+	if err := s.db.QueryRow(`SELECT last_seen FROM mediamesh_prefix WHERE prefix = '9E3C'`).Scan(&last); err != nil || last != old.UTC().Format(time.RFC3339) {
+		t.Errorf("9E3C last_seen %q (%v), want the packet's time %s", last, err, old.UTC().Format(time.RFC3339))
+	}
+}

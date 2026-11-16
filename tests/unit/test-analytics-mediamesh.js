@@ -161,6 +161,20 @@ test('both lists have a Near column and sortable headers', () => {
   assert.ok(h.split('<tr').some((r) => r.includes('#/nodes/') && r.includes('<td>—</td>')));
 });
 
+test('repeaters known only by their hash are listed as unknown', () => {
+  const withUnknown = Object.assign({}, MM, { unknown_repeaters: [
+    { prefix: 'C267A0', source: 'heard', first_seen: '2026-10-30T14:00:00Z', last_seen: '2026-10-30T15:00:00Z', packets: 40 },
+    { prefix: '9E3C', source: 'relayed', first_seen: '2026-10-30T14:00:00Z', last_seen: '2026-10-30T15:00:00Z', packets: 3 },
+  ] });
+  const h = A.renderMediaMeshTabHtml(withUnknown, '');
+  assert.ok(h.includes('Unknown repeater <code>C267A0</code>') && h.includes('Unknown repeater <code>9E3C</code>'));
+  assert.ok(h.includes('no advert heard yet (40 packets)'));
+  assert.ok(h.includes('2 not yet identified'), 'stat card counts them');
+  const rows = h.split('<tr').filter((r) => r.includes('Unknown repeater'));
+  assert.ok(rows.some((r) => r.includes('mm-row--relayed') && r.includes('9E3C')), 'relayed unknown is greyed');
+  assert.ok(!h.includes('href="#/nodes/c267'), 'no node link for an unknown hash');
+});
+
 test('empty state explains what is needed', () => {
   const h = A.renderMediaMeshTabHtml({ mediamesh_transmissions: 0, repeaters: [], observers: [], per_hour: [] }, '');
   assert.ok(h.includes('No MediaMesh traffic or repeaters'));

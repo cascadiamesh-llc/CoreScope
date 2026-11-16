@@ -245,5 +245,8 @@ passes through your repeater:
   - A packet no observer heard on the main mesh travelled on MediaMesh the whole way, so one is
     enough. A packet the main mesh also heard needs a second packet to confirm the repeater.
   - The mark fades after 2 days without being seen relaying again.
+- A MediaMesh repeater the analyzer has never heard advertise is listed as **Unknown repeater**
+  with its path ID (for example `C267A0`): it's on MediaMesh, but its name and position aren't
+  known yet. It becomes the real repeater as soon as its advert reaches an observer.
 
 Questions? Ask on the CascadiaMesh Discord or email cascadiamesh@gmail.com.
