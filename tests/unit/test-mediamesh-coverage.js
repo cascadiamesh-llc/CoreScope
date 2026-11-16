@@ -76,6 +76,39 @@ function cellAt(cov, lat, lon) {
     assert.ok(cov && cov.width > 0);
   });
 
+  await test('gradient: nothing below 0 dB, faint and pale at the edge, deeper up to 25 dB, capped at 45%', () => {
+    const rgb = [217, 70, 239];
+    assert.strictEqual(M.rampColor(-1, rgb), null);
+    const edge = M.rampColor(0, rgb), mid = M.rampColor(10, rgb), top = M.rampColor(25, rgb), over = M.rampColor(60, rgb);
+    assert.ok(edge[3] < mid[3] && mid[3] < top[3], 'alpha rises');
+    assert.ok(edge[1] > top[1], 'paler at the edge (more white mixed in)');
+    assert.deepStrictEqual(top, over, 'flat above 25 dB');
+    assert.ok(top[3] <= 0.45 + 1e-9 && edge[3] >= 0.05);
+    assert.deepStrictEqual(top.slice(0, 3), rgb);
+  });
+
+  await test('gaps between rays are filled; the edge of coverage is not grown', async () => {
+    const cov = await M.computeCoverage(rep, () => 0, 'repeater');
+    // count empty cells strictly inside the covered disc (well within 35 km)
+    let holes = 0, inside = 0;
+    const cx = cov.width / 2, cy = cov.height / 2, rCells = (35 / 40) * (cov.width / 2);
+    for (let y = 0; y < cov.height; y++) for (let x = 0; x < cov.width; x++) {
+      if (Math.hypot(x - cx, y - cy) > rCells) continue;
+      inside++;
+      if (!(cov.margins[y * cov.width + x] > -1e8)) holes++;
+    }
+    assert.ok(holes / inside < 0.001, `${holes} holes of ${inside}`);
+    assert.ok(cov.margins[0] < -1e8, 'corner still empty');
+  });
+
+  await test('hover readout names the margin, band and serving repeater', async () => {
+    const two = [{ name: 'North', lat: 47.62, lon: -122.33 }, { name: 'South', lat: 47.55, lon: -122.33 }];
+    const cov = await M.computeCoverage(two, () => 0, 'ground');
+    assert.ok(/dB to spare \(strong\), best from North$/.test(M.readout(cov, 47.625, -122.33)), M.readout(cov, 47.625, -122.33));
+    assert.ok(/best from South$/.test(M.readout(cov, 47.545, -122.33)));
+    assert.strictEqual(M.readout(cov, 10, 10), '');
+  });
+
   await test('terrain tiles: terrarium decoding and the tiles requested for the bounds', async () => {
     const urls = [];
     // every pixel encodes 100 m: (R*256 + G + B/256) - 32768

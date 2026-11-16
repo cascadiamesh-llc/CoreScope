@@ -99,7 +99,10 @@
    * or NaN where there is no terrain data (those cells stay empty).
    * onProgress(done, total) is called after each repeater; the work yields
    * between repeaters so the page stays responsive.
-   * Returns { margins: Float32Array (row 0 = north), width, height, bounds }.
+   * Returns { margins: Float32Array (row 0 = north), best: Int16Array (index
+   * into the placed repeaters of the one giving each cell's margin, -1 none),
+   * reps (the placed repeaters), width, height, bounds }. Small gaps between
+   * rays far from a repeater are filled from their neighbours.
    */
   async function computeCoverage(repeaters, elevAt, modeKey, onProgress) {
     const c = CONFIG;
@@ -108,6 +111,7 @@
     if (!reps.length) return null;
     const g = gridFor(reps, mode);
     const margins = new Float32Array(g.width * g.height).fill(NO_DATA);
+    const best = new Int16Array(g.width * g.height).fill(-1);
     const lambda = 299.792458 / c.freqMHz;
     const effR = c.kFactor * c.earthRadiusM;
     const radiusM = mode.radiusKm * 1000;
@@ -141,7 +145,7 @@
             const row = Math.floor((g.bounds.north - lat) / g.cellLat);
             if (col >= 0 && col < g.width && row >= 0 && row < g.height) {
               const i = row * g.width + col;
-              if (margin > margins[i]) margins[i] = margin;
+              if (margin > margins[i]) { margins[i] = margin; best[i] = ri; }
             }
             const slope = (he - ht) / d;
             if (slope > maxSlope) { maxSlope = slope; obsD = d; }
@@ -151,7 +155,30 @@
       if (onProgress) onProgress(ri + 1, reps.length);
       await new Promise((res) => setTimeout(res, 0));
     }
-    return { margins, width: g.width, height: g.height, bounds: g.bounds };
+    fillGaps(margins, best, g.width, g.height);
+    return { margins, best, reps, width: g.width, height: g.height, bounds: g.bounds };
+  }
+
+  /** Fills empty cells that have covered neighbours on both sides (gaps
+   * between rays), with the mean of their covered neighbours. */
+  function fillGaps(margins, best, w, h) {
+    const src = margins.slice();
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        const i = y * w + x;
+        if (src[i] > NO_DATA) continue;
+        let sum = 0, n = 0, top = -1, topM = NO_DATA;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const j = (y + dy) * w + (x + dx);
+            if (src[j] > NO_DATA) { sum += src[j]; n++; if (src[j] > topM) { topM = src[j]; top = best[j]; } }
+          }
+        }
+        // Opposite neighbours covered: a hole, not the edge of coverage.
+        const across = (src[i - 1] > NO_DATA && src[i + 1] > NO_DATA) || (src[i - w] > NO_DATA && src[i + w] > NO_DATA);
+        if (n >= 4 && across) { margins[i] = sum / n; best[i] = top; }
+      }
+    }
   }
 
   // ---- Terrain (browser) ----------------------------------------------------
@@ -225,22 +252,62 @@
     return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)];
   }
 
-  const ALPHA = { strong: 0.62, fair: 0.38, marginal: 0.18 };
+  // The gradient: from a pale, faint tint at the edge of coverage (0 dB to
+  // spare) to the full MediaMesh colour where it's strong (RAMP_DB and up).
+  const RAMP_DB = 25;
+  const ALPHA_MIN = 0.07, ALPHA_MAX = 0.45;
+
+  /** [r, g, b, alpha 0-1] for a margin, or null below 0 dB. */
+  function rampColor(margin, rgb) {
+    if (!(margin >= 0)) return null;
+    const t = Math.min(1, margin / RAMP_DB);
+    const mix = 0.45 + 0.55 * t; // share of the MediaMesh colour; the rest white
+    return [
+      Math.round(255 + (rgb[0] - 255) * mix),
+      Math.round(255 + (rgb[1] - 255) * mix),
+      Math.round(255 + (rgb[2] - 255) * mix),
+      ALPHA_MIN + (ALPHA_MAX - ALPHA_MIN) * Math.sqrt(t),
+    ];
+  }
 
   function coverageImage(cov) {
     const cv = document.createElement('canvas');
     cv.width = cov.width; cv.height = cov.height;
     const ctx = cv.getContext('2d');
     const img = ctx.createImageData(cov.width, cov.height);
-    const [r, g, b] = nodeColor();
+    const rgb = nodeColor();
     for (let i = 0; i < cov.margins.length; i++) {
-      const a = ALPHA[band(cov.margins[i])];
-      if (!a) continue;
-      img.data[i * 4] = r; img.data[i * 4 + 1] = g; img.data[i * 4 + 2] = b;
-      img.data[i * 4 + 3] = Math.round(a * 255);
+      const c = rampColor(cov.margins[i], rgb);
+      if (!c) continue;
+      img.data[i * 4] = c[0]; img.data[i * 4 + 1] = c[1]; img.data[i * 4 + 2] = c[2];
+      img.data[i * 4 + 3] = Math.round(c[3] * 255);
     }
     ctx.putImageData(img, 0, 0);
     return cv.toDataURL();
+  }
+
+  /** The legend's gradient, matching rampColor. */
+  function legendGradient() {
+    const rgb = nodeColor();
+    const stops = [0, 5, 10, 15, 20, 25].map((m) => {
+      const c = rampColor(m, rgb);
+      return `rgba(${c[0]},${c[1]},${c[2]},${c[3].toFixed(3)}) ${(m / RAMP_DB) * 100}%`;
+    });
+    return `linear-gradient(to right, ${stops.join(', ')})`;
+  }
+
+  /** "≈ 12 dB to spare, best from First Hill" for the cell at lat/lon. */
+  function readout(cov, lat, lon) {
+    if (!cov) return '';
+    const col = Math.floor(((lon - cov.bounds.west) / (cov.bounds.east - cov.bounds.west)) * cov.width);
+    const row = Math.floor(((cov.bounds.north - lat) / (cov.bounds.north - cov.bounds.south)) * cov.height);
+    if (col < 0 || col >= cov.width || row < 0 || row >= cov.height) return '';
+    const i = row * cov.width + col;
+    const m = cov.margins[i];
+    if (!(m >= 0)) return 'Out of estimated MediaMesh coverage here';
+    const rep = cov.reps[cov.best[i]];
+    const name = rep ? String(rep.name || (rep.public_key || '').slice(0, 8)) : '';
+    return `≈ ${Math.round(m)} dB to spare (${band(m)})` + (name ? `, best from ${name}` : '');
   }
 
   /**
@@ -278,7 +345,19 @@
     });
 
     const cache = {};
-    let overlay = null, current = null, destroyed = false;
+    let overlay = null, current = null, destroyed = false, shown = null;
+    let opacity = 1;
+    const readoutEl = el.querySelector('#mmCovReadout');
+    const slider = el.querySelector('#mmCovOpacity');
+    const legendBar = el.querySelector('#mmCovGradient');
+    if (legendBar) legendBar.style.background = legendGradient();
+    const onSlide = () => {
+      opacity = Math.max(0, Math.min(1, Number(slider.value) / 100));
+      if (overlay) overlay.setOpacity(opacity);
+    };
+    if (slider) slider.addEventListener('input', onSlide);
+    map.on('mousemove', (e) => { if (readoutEl) readoutEl.textContent = readout(shown, e.latlng.lat, e.latlng.lng); });
+    map.on('mouseout', () => { if (readoutEl) readoutEl.textContent = ''; });
     const loader = opts && opts.loadTile;
 
     async function show(modeKey) {
@@ -286,6 +365,7 @@
       el.querySelectorAll('[data-mm-cov]').forEach((b) => b.classList.toggle('active', b.dataset.mmCov === modeKey));
       if (noteEl) noteEl.textContent = CONFIG.modes[modeKey].note;
       if (overlay) { map.removeLayer(overlay); overlay = null; }
+      shown = null;
       if (!placed.length) { if (status) status.textContent = 'No MediaMesh repeater has a saved position yet.'; return; }
       let entry = cache[modeKey];
       if (!entry) {
@@ -305,7 +385,9 @@
         const res = await entry;
         if (destroyed || current !== modeKey) return;
         const b = res.cov.bounds;
-        overlay = L.imageOverlay(res.url, [[b.south, b.west], [b.north, b.east]], { pane: 'mmCoverage', opacity: 1 }).addTo(map);
+        overlay = L.imageOverlay(res.url, [[b.south, b.west], [b.north, b.east]],
+          { pane: 'mmCoverage', opacity, className: 'mm-cov-overlay' }).addTo(map);
+        shown = res.cov;
         if (status) status.textContent = res.failed ? 'Some terrain could not be loaded; those areas are left blank.' : '';
       } catch (_) {
         delete cache[modeKey];
@@ -319,8 +401,16 @@
     };
     el.addEventListener('click', onClick);
     show((opts && opts.mode) || 'ground');
-    return () => { destroyed = true; el.removeEventListener('click', onClick); map.remove(); };
+    return () => {
+      destroyed = true;
+      el.removeEventListener('click', onClick);
+      if (slider) slider.removeEventListener('input', onSlide);
+      map.remove();
+    };
   }
 
-  root.MediaMeshCoverage = { CONFIG, fspl, knifeEdgeLoss, marginFor, band, gridFor, computeCoverage, loadTerrain, init };
+  root.MediaMeshCoverage = {
+    CONFIG, fspl, knifeEdgeLoss, marginFor, band, gridFor, computeCoverage, loadTerrain,
+    rampColor, readout, init,
+  };
 })(typeof window !== 'undefined' ? window : globalThis);

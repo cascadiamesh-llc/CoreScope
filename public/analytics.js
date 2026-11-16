@@ -649,12 +649,16 @@
       </div>
       <div id="mmCovMap" class="mm-cov-map"></div>
       <div class="mm-cov-legend">
-        <span><span class="mm-cov-sw mm-cov-sw--strong"></span>Strong (15 dB+ to spare)</span>
-        <span><span class="mm-cov-sw mm-cov-sw--fair"></span>Fair (5–15 dB)</span>
-        <span><span class="mm-cov-sw mm-cov-sw--marginal"></span>Marginal (0–5 dB)</span>
+        <span class="mm-cov-scale">
+          <span class="mm-cov-scale-label">Marginal</span>
+          <span class="mm-cov-gradient" id="mmCovGradient" role="img" aria-label="Shading from marginal (0 dB to spare) to strong (25 dB or more)"></span>
+          <span class="mm-cov-scale-label">Strong</span>
+        </span>
         <span><span class="mm-cov-sw mm-cov-sw--node"></span>MediaMesh repeater</span>
         <span><span class="mm-cov-sw mm-cov-sw--relayed"></span>Relayed (weaker evidence)</span>
+        <label class="mm-cov-opacity">Opacity <input type="range" id="mmCovOpacity" min="0" max="100" value="100" aria-label="Coverage opacity"></label>
       </div>
+      <p class="mm-cov-readout" id="mmCovReadout" aria-live="polite"></p>
       <p class="text-muted mm-cov-note" id="mmCovStatus" aria-live="polite"></p>
       <p class="text-muted mm-cov-note">Estimate, not a measurement. Line of sight over terrain (SRTM / USGS elevation), 911.15 MHz free-space loss plus ridge losses; buildings and trees aren't modelled, so street level in dense areas will be worse.${missing} <span id="mmCovMode">People on the ground: a companion or standalone radio at 1.5 m.</span></p>
     </div></div>`;

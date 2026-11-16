@@ -6013,9 +6013,13 @@ body.embed #app.app-fixed {
 @media (max-width: 640px) { .mm-cov-map { height: 380px; } }
 .mm-cov-legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 10px; font-size: 0.85em; align-items: center; }
 .mm-cov-sw { display: inline-block; width: 14px; height: 14px; border-radius: 3px; margin-right: 6px; vertical-align: -2px; }
-.mm-cov-sw--strong { background: var(--mediamesh-node-color); opacity: 0.62; }
-.mm-cov-sw--fair { background: var(--mediamesh-node-color); opacity: 0.38; }
-.mm-cov-sw--marginal { background: var(--mediamesh-node-color); opacity: 0.18; }
+.mm-cov-scale { display: inline-flex; align-items: center; gap: 6px; }
+.mm-cov-gradient { display: inline-block; width: 140px; height: 12px; border-radius: 3px; border: 1px solid var(--border); }
+.mm-cov-scale-label { color: var(--text-muted); }
+.mm-cov-opacity { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); margin-left: auto; }
+.mm-cov-opacity input { width: 110px; }
+.mm-cov-readout { font-size: 0.85em; margin: 6px 0 0; min-height: 1.2em; }
+.mm-cov-overlay { image-rendering: auto; }
 .mm-cov-sw--node { background: var(--mediamesh-node-color); border-radius: 50%; }
 .mm-cov-sw--relayed { background: #fff; border: 2px solid var(--mediamesh-node-weak-color); border-radius: 50%; }
 .mm-cov-note { font-size: 0.8em; margin: 8px 0 0; }
