@@ -34,6 +34,10 @@ const (
 	placeNearKm = 8.0
 	// Beyond this the list has nothing useful to say.
 	placeMaxKm = 150.0
+	// A node this close outside a neighbourhood's edge counts as in it:
+	// saved positions are often off by tens of metres, and a boundary that
+	// is also the city limit would otherwise drop it to the nearest town.
+	hoodEdgeSlackM = 150.0
 )
 
 var hoodBoundsOnce sync.Once
@@ -95,15 +99,54 @@ func hoodAt(lat, lon float64) *hood {
 	return nil
 }
 
+// hoodNear is the neighbourhood whose outline passes within hoodEdgeSlackM
+// of lat/lon (the closest such), or nil.
+func hoodNear(lat, lon float64) *hood {
+	hoodBoundsOnce.Do(hoodBounds)
+	const mPerDegLat = 111320.0
+	mPerDegLon := mPerDegLat * math.Cos(lat*math.Pi/180)
+	padLat := hoodEdgeSlackM / mPerDegLat
+	padLon := hoodEdgeSlackM / mPerDegLon
+	var best *hood
+	bestM := hoodEdgeSlackM
+	for i := range hoodList {
+		h := &hoodList[i]
+		if lat < h.minLat-padLat || lat > h.maxLat+padLat || lon < h.minLon-padLon || lon > h.maxLon+padLon {
+			continue
+		}
+		r := h.rings[0]
+		n := len(r) / 2
+		for a, b := n-1, 0; b < n; a, b = b, b+1 {
+			// Distance to the segment, on a local flat projection in metres.
+			ax, ay := (r[2*a+1]-lon)*mPerDegLon, (r[2*a]-lat)*mPerDegLat
+			bx, by := (r[2*b+1]-lon)*mPerDegLon, (r[2*b]-lat)*mPerDegLat
+			dx, dy := bx-ax, by-ay
+			t := 0.0
+			if l2 := dx*dx + dy*dy; l2 > 0 {
+				t = math.Max(0, math.Min(1, -(ax*dx+ay*dy)/l2))
+			}
+			if d := math.Hypot(ax+t*dx, ay+t*dy); d <= bestM {
+				best, bestM = h, d
+			}
+		}
+	}
+	return best
+}
+
 // nearPlace names where lat/lon is: the Seattle or Portland neighbourhood
-// it's in ("Denny Triangle, Seattle"), else the closest town ("Woodinville,
-// WA"), or "12 km from Sequim, WA" when the closest town is more than
-// placeNearKm away. Empty without a position or nothing within placeMaxKm.
+// it's in, or just outside the edge of ("Denny Triangle, Seattle"), else the
+// closest town ("Woodinville, WA"), or "12 km from Sequim, WA" when the
+// closest town is more than placeNearKm away. Empty without a position or
+// nothing within placeMaxKm.
 func nearPlace(lat, lon float64) string {
 	if (lat == 0 && lon == 0) || math.IsNaN(lat) || math.IsNaN(lon) {
 		return ""
 	}
-	if h := hoodAt(lat, lon); h != nil {
+	h := hoodAt(lat, lon)
+	if h == nil {
+		h = hoodNear(lat, lon)
+	}
+	if h != nil {
 		return h.name + ", " + h.city
 	}
 	best, bestKm := -1, math.MaxFloat64

@@ -20,6 +20,8 @@ func TestNearPlace(t *testing.T) {
 		{"Pioneer Courthouse Square", 45.5189, -122.6793, "Downtown, Portland"},
 		{"Powell's Books", 45.5231, -122.6812, "Pearl District, Portland"},
 		{"St. Johns Bridge east end", 45.5900, -122.7520, "St. Johns, Portland"},
+		// Just outside the edge (29 m past the city limit): still that neighbourhood.
+		{"Rainier View SolarPtr", 47.502494, -122.254413, "Rainier View, Seattle"},
 		// Outside both cities: the closest town.
 		{"d1-rptr", 47.770496, -122.163162, "Woodinville, WA"},
 		{"no position", 0, 0, ""},
