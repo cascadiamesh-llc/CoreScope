@@ -44,7 +44,7 @@ const ctx = {
 ctx.escapeHtml = ctx.esc;
 vm.createContext(ctx);
 vm.runInContext(extract(analytics, ['renderPayloadPie', 'mediaMeshTypeShares', 'mediaMeshStatCard',
-  'mediaMeshRadioText', 'mediaMeshTime', 'renderMediaMeshTabHtml', 'renderRelayAirtimeDumbbell']) +
+  'mediaMeshRadioText', 'mediaMeshTime', 'mediaMeshCoverageCardHtml', 'renderMediaMeshTabHtml', 'renderRelayAirtimeDumbbell']) +
   '\nthis.api = { renderPayloadPie, mediaMeshTypeShares, mediaMeshStatCard, renderMediaMeshTabHtml, renderRelayAirtimeDumbbell };', ctx);
 const A = ctx.api;
 

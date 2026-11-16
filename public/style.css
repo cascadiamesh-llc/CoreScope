@@ -6004,6 +6004,22 @@ body.embed #app.app-fixed {
 .mm-node--relayed,
 .mm-row--relayed { --mediamesh-node-color: var(--mediamesh-node-weak-color); }
 .mm-row--relayed td { color: var(--text-muted); }
+/* MediaMesh coverage estimate (mediamesh-coverage.js) */
+.mm-cov-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.mm-cov-head h3 { margin: 0; }
+.mm-cov-intro { margin: 4px 0 0; font-size: 0.85em; }
+.mm-cov-toggle { display: flex; gap: 4px; flex-wrap: wrap; }
+.mm-cov-map { height: 520px; border-radius: 8px; margin-top: 12px; }
+@media (max-width: 640px) { .mm-cov-map { height: 380px; } }
+.mm-cov-legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 10px; font-size: 0.85em; align-items: center; }
+.mm-cov-sw { display: inline-block; width: 14px; height: 14px; border-radius: 3px; margin-right: 6px; vertical-align: -2px; }
+.mm-cov-sw--strong { background: var(--mediamesh-node-color); opacity: 0.62; }
+.mm-cov-sw--fair { background: var(--mediamesh-node-color); opacity: 0.38; }
+.mm-cov-sw--marginal { background: var(--mediamesh-node-color); opacity: 0.18; }
+.mm-cov-sw--node { background: var(--mediamesh-node-color); border-radius: 50%; }
+.mm-cov-sw--relayed { background: #fff; border: 2px solid var(--mediamesh-node-weak-color); border-radius: 50%; }
+.mm-cov-note { font-size: 0.8em; margin: 8px 0 0; }
+.mm-cov-note:empty { display: none; }
 .mm-row--relayed a { opacity: 0.8; }
 
 /* MediaMesh (radio2) on Analytics: the radio2 part of a payload bar, the

@@ -619,6 +619,45 @@
     if (_currentTab !== 'mediamesh') return;
     el.innerHTML = renderMediaMeshTabHtml(mm, twVal);
     initMediaMeshTableSort(el);
+    initMediaMeshCoverage(el, Array.isArray(mm.repeaters) ? mm.repeaters : []);
+  }
+
+  let _mmCoverageDestroy = null;
+  function initMediaMeshCoverage(el, reps) {
+    if (_mmCoverageDestroy) { try { _mmCoverageDestroy(); } catch (_) { /* ignore */ } _mmCoverageDestroy = null; }
+    const card = el.querySelector('#mmCoverageCard');
+    if (!card || !window.MediaMeshCoverage) return;
+    _mmCoverageDestroy = window.MediaMeshCoverage.init(card, reps);
+  }
+
+  // The coverage estimate card (mediamesh-coverage.js draws the map into it).
+  function mediaMeshCoverageCardHtml(reps) {
+    const unplaced = reps.filter((r) => !(Number.isFinite(r.lat) && Number.isFinite(r.lon))).map((r) => r.name || (r.public_key || '').slice(0, 8));
+    const missing = unplaced.length
+      ? ` Repeaters without a saved position (${unplaced.slice(0, 4).map((n) => esc(n)).join(', ')}${unplaced.length > 4 ? '…' : ''}) and unknown repeaters aren't drawn.`
+      : ' Unknown repeaters aren\'t drawn.';
+    return `<div class="analytics-row"><div class="analytics-card flex-1" id="mmCoverageCard">
+      <div class="mm-cov-head">
+        <div>
+          <h3>MediaMesh coverage estimate</h3>
+          <p class="text-muted mm-cov-intro">Where photos and voice on 911.150 MHz should get through, from each MediaMesh repeater's position and the terrain. Conservative: 22 dBm, antennas 10 m up, a 10 dB safety margin.</p>
+        </div>
+        <div class="mm-cov-toggle">
+          <button type="button" class="tab-btn active" data-mm-cov="ground">People on the ground</button>
+          <button type="button" class="tab-btn" data-mm-cov="repeater">Repeater to repeater</button>
+        </div>
+      </div>
+      <div id="mmCovMap" class="mm-cov-map"></div>
+      <div class="mm-cov-legend">
+        <span><span class="mm-cov-sw mm-cov-sw--strong"></span>Strong (15 dB+ to spare)</span>
+        <span><span class="mm-cov-sw mm-cov-sw--fair"></span>Fair (5–15 dB)</span>
+        <span><span class="mm-cov-sw mm-cov-sw--marginal"></span>Marginal (0–5 dB)</span>
+        <span><span class="mm-cov-sw mm-cov-sw--node"></span>MediaMesh repeater</span>
+        <span><span class="mm-cov-sw mm-cov-sw--relayed"></span>Relayed (weaker evidence)</span>
+      </div>
+      <p class="text-muted mm-cov-note" id="mmCovStatus" aria-live="polite"></p>
+      <p class="text-muted mm-cov-note">Estimate, not a measurement. Line of sight over terrain (SRTM / USGS elevation), 911.15 MHz free-space loss plus ridge losses; buildings and trees aren't modelled, so street level in dense areas will be worse.${missing} <span id="mmCovMode">People on the ground: a companion or standalone radio at 1.5 m.</span></p>
+    </div></div>`;
   }
 
   // A sortable value for a time: the ISO string, empty when unknown (sorts last).
@@ -704,6 +743,7 @@
         <div class="stat-card stat-card-mediamesh"><div class="stat-value">${obs.length}</div><div class="stat-label">MediaMesh observers</div><div class="stat-detail">${obs.filter((o) => Number(o.mediamesh_observations || 0) > 0).length} heard radio2</div></div>
       </div>
       <div class="analytics-row"><div class="analytics-card flex-1 mm-chart">${chart.html.replace('Packets /', 'radio2 packets /')}</div></div>
+      ${mediaMeshCoverageCardHtml(reps)}
       <div class="analytics-row">
         <div class="analytics-card flex-1">
           <h3>MediaMesh repeaters</h3>

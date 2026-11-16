@@ -53,6 +53,9 @@ type MediaMeshRepeater struct {
 	Name      string `json:"name,omitempty"`
 	Role      string `json:"role,omitempty"`
 	Near      string `json:"near,omitempty"` // closest town or neighbourhood (places.go)
+	// Position for the coverage estimate; absent when the node never sent one.
+	Lat *float64 `json:"lat,omitempty"`
+	Lon *float64 `json:"lon,omitempty"`
 	MediaMeshNode
 }
 
@@ -301,6 +304,10 @@ func (s *PacketStore) mediaMeshRepeaters(now time.Time, names map[string]nodeInf
 			rep.Name, rep.Role = info.Name, info.Role
 		}
 		rep.Near = nodeNear(names, pk)
+		if info, ok := names[pk]; ok && !(info.Lat == 0 && info.Lon == 0) {
+			lat, lon := info.Lat, info.Lon
+			rep.Lat, rep.Lon = &lat, &lon
+		}
 		out = append(out, rep)
 	}
 	sort.Slice(out, func(i, j int) bool {
