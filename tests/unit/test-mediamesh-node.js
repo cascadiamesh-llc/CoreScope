@@ -41,5 +41,30 @@ test('card: since when, relayed with rank, hops with partners, map only with a p
   assert.ok(!h.includes('id="mmNodeMap"') && h.includes('no saved position') && h.includes('none this week') && h.includes('None with a placed neighbour yet'), h);
 });
 
+test('MediaMesh styles never fix a text colour: text follows the theme', () => {
+  // Dark text on a dark popup slipped through once (#1a1a2e). Any MediaMesh
+  // rule that sets a text colour must take it from a theme variable.
+  const fs = require('fs');
+  const bad = [];
+  for (const file of ['public/style.css', 'public/live.css']) {
+    const css = fs.readFileSync(path.join(__dirname, '../..', file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const re = /([^{}]+)\{([^{}]*)\}/g;
+    let m;
+    while ((m = re.exec(css))) {
+      const sel = m[1].trim();
+      if (!/mm-|mediamesh/i.test(sel)) continue;
+      for (const decl of m[2].split(';')) {
+        const d = /^\s*(color|fill)\s*:\s*(.+)$/i.exec(decl);
+        if (!d) continue;
+        const v = d[2].trim();
+        // a theme variable, or inheriting, is fine; a literal colour is not
+        if (/^var\(--/.test(v) || /^(inherit|currentColor|transparent)$/i.test(v) || /^color-mix\(.*var\(--/.test(v)) continue;
+        bad.push(`${file}: ${sel} { ${d[1]}: ${v} }`);
+      }
+    }
+  }
+  assert.deepStrictEqual(bad, [], 'fixed text colours:\n' + bad.join('\n'));
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
