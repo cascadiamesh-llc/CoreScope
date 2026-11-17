@@ -78,7 +78,8 @@
   }
   if (typeof window !== 'undefined') {
     window._liveMediaMesh = { ringCap: mediaMeshRingCap, ringFractions: mediaMeshRingFractions, hopStyle: pathHopStyle,
-      mediaKind: mediaMeshMediaKind, transferKey: mediaMeshTransferKey, transferHtml: function (t, now) { return mediaMeshTransferHtml(t, now); } };
+      clipOf: mediaMeshClipOf, parseAnnouncement: mediaMeshParseAnnouncement, transferKey: mediaMeshTransferKey,
+      transferHtml: function (t, now) { return mediaMeshTransferHtml(t, now); } };
   }
   let clickablePaths = [];
   const CLICKABLE_PATH_TTL_MS = 30000;
@@ -151,56 +152,103 @@
   // MediaMesh hop number, drawn at the middle of each hop of a MediaMesh path.
   function mediaMeshHopBadgeHtml(n) { return '<span>' + (n | 0) + '</span>'; }
 
-  // What a MediaMesh packet carries, as far as can be read without the
-  // channel key: 'voice' for an Open TAK raw voice packet (RAW_CUSTOM led by
-  // 0x56 or 0x57), 'media' for channel data (GRP_DATA: a photo or voice, its
-  // type is encrypted), else null.
-  function mediaMeshMediaKind(typeName, payload) {
+  // ---- MediaMesh clips: photos, videos and voice ---------------------------
+  //
+  // MeshCore Open TAK and Wadamesh TAK send all three the same way: a clip's
+  // packets carry its 4-byte session id, as raw packets ([0x56|0x57][sid:4]
+  // [index]...) or, on a channel, inside channel data (data type 0x5643). Only
+  // the text message announcing the clip says which kind it is, with the same
+  // session id: "VI1:" photo, "VV1:" video, "VE3:"/"VM1:" voice, then
+  // sid:mode:packets:seconds in base 36. Parity packets that repair losses
+  // carry the session id XOR 0xFEC0FEC0. Push-to-talk audio on a channel
+  // (0x53 start, 0x54 audio) is always voice.
+  const MEDIAMESH_FEC_SID_XOR = 0xFEC0FEC0;
+  const MEDIAMESH_CLIP_PREFIXES = { VI1: 'photo', VV1: 'video', VE3: 'voice', VM1: 'voice' };
+
+  function mediaMeshSidHex(n) { return ((n >>> 0).toString(16)).padStart(8, '0'); }
+  function mediaMeshParitySid(sid) { return mediaMeshSidHex((parseInt(sid, 16) ^ MEDIAMESH_FEC_SID_XOR) >>> 0); }
+
+  // A clip announcement in a message's text: { sid, kind, total, seconds,
+  // caption }, or null. The text may start with the sender's name.
+  function mediaMeshParseAnnouncement(text) {
+    const m = /(?:^|[\s:])(VI1|VV1|VE3|VM1):([0-9a-z]+):([0-9a-z]+):([0-9a-z]+):([0-9a-z]+)(?:\s+([\s\S]*))?$/i.exec(String(text || '').trim());
+    if (!m) return null;
+    const sid = parseInt(m[2], 36), total = parseInt(m[4], 36), seconds = parseInt(m[5], 36);
+    if (!(sid >= 0 && sid <= 0xFFFFFFFF) || !(total >= 1 && total <= 4096) || !(seconds >= 0)) return null;
+    const kind = MEDIAMESH_CLIP_PREFIXES[m[1].toUpperCase()];
+    // the plain word after the envelope ("Photo", "Video", "Voice") is a label, not caption
+    const caption = String(m[6] || '').replace(/^(photo|video|voice)\b\s*/i, '').trim();
+    return { sid: mediaMeshSidHex(sid), kind, total, seconds: kind === 'photo' ? 0 : seconds, caption };
+  }
+
+  // A MediaMesh packet's clip: { sid ('' when unreadable), talk } for photo,
+  // video or voice packets, else null. Channel data shows its contents only
+  // when the analyzer holds the channel key.
+  function mediaMeshClipOf(typeName, payload) {
+    payload = payload || {};
     if (typeName === 'RAW_CUSTOM') {
-      const raw = String((payload && payload.raw) || '').toLowerCase();
-      return /^5[67]/.test(raw) ? 'voice' : null;
+      const raw = String(payload.raw || '').toLowerCase();
+      return /^5[67][0-9a-f]{8}/.test(raw) ? { sid: raw.slice(2, 10), talk: false } : null;
     }
-    return typeName === 'GRP_DATA' ? 'media' : null;
+    if (typeName !== 'GRP_DATA') return null;
+    const blob = String(payload.decryptedBlob || '').toLowerCase();
+    if (blob && payload.dataType === 0x5643 && /^(5[3467])[0-9a-f]{8}/.test(blob)) {
+      return { sid: blob.slice(2, 10), talk: blob[1] === '3' || blob[1] === '4' };
+    }
+    return { sid: '', talk: false };
   }
 
   function mediaMeshHopId(h) {
     return String(typeof h === 'string' ? h : (h && (h.prefix || h.id)) || '').toUpperCase();
   }
 
-  // Packets of one transfer share this: a raw voice clip its session id
-  // (bytes 1-4), channel data its channel and the first repeater it took.
-  function mediaMeshTransferKey(kind, payload, hops) {
-    if (kind === 'voice') return 'voice|' + String((payload && payload.raw) || '').slice(2, 10).toLowerCase();
+  // Packets of one transfer share this: the clip's session id when it can be
+  // read, else the channel and the first repeater the packets took.
+  function mediaMeshTransferKey(sid, payload, hops) {
+    if (sid) return 'sid|' + sid;
     const ch = payload && payload.channelHash != null ? String(payload.channelHash) : '';
-    return 'media|' + ch + '|' + (hops && hops.length ? mediaMeshHopId(hops[0]) : '');
+    return 'ch|' + ch + '|' + (hops && hops.length ? mediaMeshHopId(hops[0]) : '');
   }
 
   const MEDIAMESH_TRANSFER_IDLE_MS = 8000;
   const MEDIAMESH_TRANSFER_BOXES = 16;
+  const MEDIAMESH_CLIP_TITLES = { photo: 'Photo', video: 'Video', voice: 'Voice clip' };
+  const MEDIAMESH_CLIP_ICONS = { photo: 'ph-camera', video: 'ph-video-camera', voice: 'ph-microphone' };
 
-  // The feed card for a transfer t: { kind, chunks, maxHops, observers
-  // (names), first, last (ms) }. Done once nothing has arrived for
-  // MEDIAMESH_TRANSFER_IDLE_MS.
+  // The feed card for a transfer t: { kind ('photo' | 'video' | 'voice' |
+  // '' unknown), total (packets announced, 0 unknown), seconds, caption,
+  // chunks, repair (parity packets), maxHops, observers (names), first,
+  // last (ms) }. Done once nothing has arrived for MEDIAMESH_TRANSFER_IDLE_MS.
   function mediaMeshTransferHtml(t, now) {
     const done = now - t.last >= MEDIAMESH_TRANSFER_IDLE_MS;
-    const voice = t.kind === 'voice';
-    const icon = '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#' + (voice ? 'ph-microphone' : 'ph-camera') + '"/></svg>';
-    const n = t.chunks;
+    const kind = t.kind || '';
+    const icon = '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#' + (MEDIAMESH_CLIP_ICONS[kind] || 'ph-film-strip') + '"/></svg>';
+    let title = MEDIAMESH_CLIP_TITLES[kind] || 'Media clip';
+    if (kind !== 'photo' && t.seconds > 0) title += ', ' + t.seconds + ' s';
+    const n = t.chunks, total = t.total || 0;
     let boxes = '';
-    for (let i = 0; i < Math.min(n, MEDIAMESH_TRANSFER_BOXES); i++) boxes += '<i class="done"></i>';
-    if (n > MEDIAMESH_TRANSFER_BOXES) boxes += '<b>+' + (n - MEDIAMESH_TRANSFER_BOXES) + '</b>';
-    if (!done) boxes += '<i class="next"></i>';
+    if (total) {
+      const shown = Math.min(total, MEDIAMESH_TRANSFER_BOXES);
+      const got = Math.round(Math.min(n, total) * shown / total);
+      for (let i = 0; i < shown; i++) boxes += i < got ? '<i class="done"></i>' : '<i class="' + (done ? 'missing' : 'next') + '"></i>';
+    } else {
+      for (let i = 0; i < Math.min(n, MEDIAMESH_TRANSFER_BOXES); i++) boxes += '<i class="done"></i>';
+      if (n > MEDIAMESH_TRANSFER_BOXES) boxes += '<b>+' + (n - MEDIAMESH_TRANSFER_BOXES) + '</b>';
+      if (!done) boxes += '<i class="next"></i>';
+    }
     const obs = t.observers.slice(0, 2).map(escapeHtml).join(', ') + (t.observers.length > 2 ? ' and ' + (t.observers.length - 2) + ' more' : '');
     const hops = t.maxHops + ' hop' + (t.maxHops === 1 ? '' : 's');
-    const packets = n + ' packet' + (n === 1 ? '' : 's');
+    const count = total ? Math.min(n, total) + ' of ' + total + ' packets' : n + ' packet' + (n === 1 ? '' : 's');
+    const repair = t.repair ? ' + ' + t.repair + ' repair' : '';
     const secs = Math.max(0, (t.last - t.first) / 1000);
     const status = done
-      ? 'Done: ' + packets + ' · up to ' + hops + ' · over ' + (secs < 10 ? secs.toFixed(1) : Math.round(secs)) + ' s'
-      : packets + ' in · up to ' + hops;
+      ? 'Done: ' + count + (total && n < total ? ' heard' : '') + repair + ' · up to ' + hops + ' · over ' + (secs < 10 ? secs.toFixed(1) : Math.round(secs)) + ' s'
+      : count + repair + ' in · up to ' + hops;
     return '<div class="live-mm-transfer-head"><span class="live-mm-transfer-icon">' + icon + '</span>'
-      + '<span class="live-mm-transfer-title">' + (voice ? 'Voice clip' : 'Photo or voice') + '</span>'
+      + '<span class="live-mm-transfer-title">' + title + '</span>'
       + '<span class="badge-mediamesh">MediaMesh</span>'
       + '<span class="feed-time" data-ts="' + t.last + '">' + formatLiveTimestampHtml(t.last) + '</span></div>'
+      + (t.caption ? '<div class="live-mm-transfer-caption">“' + escapeHtml(t.caption) + '”</div>' : '')
       + (obs ? '<div class="live-mm-transfer-route">Heard by ' + obs + '</div>' : '')
       + '<div class="live-mm-transfer-chunks" aria-hidden="true">' + boxes + '</div>'
       + '<div class="live-mm-transfer-status">' + status + '</div>';
@@ -1058,6 +1106,7 @@
 
   function bufferPacket(pkt) {
     pkt._ts = packetTimestamp(pkt);
+    noteMediaMeshAnnouncement(pkt);
     const entry = { ts: pkt._ts, pkt };
     VCR.buffer.push(entry);
     // Keep buffer capped at ~2000 — adjust playhead to avoid stale indices (#63)
@@ -4732,9 +4781,9 @@
       updateMediaMeshTransfer(entry.transfer, pkt, hops, false, feed);
       return;
     }
-    const mmKind = pkt.mediamesh === true && !(hash && feedDedup.has(hash)) ? mediaMeshMediaKind(typeName, payload) : null;
-    if (mmKind) {
-      const t = mediaMeshTransferFor(mmKind, payload, hops, color, pkt, feed);
+    const mmClip = pkt.mediamesh === true && !(hash && feedDedup.has(hash)) ? mediaMeshClipOf(typeName, payload) : null;
+    if (mmClip) {
+      const t = mediaMeshTransferFor(mmClip, payload, hops, color, pkt, feed);
       updateMediaMeshTransfer(t, pkt, hops, true, feed);
       if (hash) feedDedup.set(hash, { element: t.el, count: incomingObs, pkt, packets: [pkt], createdAt: Date.now(), transfer: t });
       return;
@@ -4836,32 +4885,67 @@
     }
   }
 
-  // Open MediaMesh transfers, newest last.
+  // Open MediaMesh transfers, newest last, and the clips announced lately
+  // (session id -> announcement), from any packet whose text could be read.
   let mmTransfers = [];
+  const mmAnnounced = new Map();
+
+  function noteMediaMeshAnnouncement(pkt) {
+    const d = pkt && pkt.decoded;
+    const text = d && d.payload && d.payload.text;
+    if (!text) return;
+    const a = mediaMeshParseAnnouncement(text);
+    if (!a) return;
+    a.at = Date.now();
+    mmAnnounced.set(a.sid, a);
+    if (mmAnnounced.size > 200) mmAnnounced.delete(mmAnnounced.keys().next().value);
+    // a card already running for it learns what it is
+    for (let i = mmTransfers.length - 1; i >= 0; i--) {
+      const t = mmTransfers[i];
+      if (t.sid === a.sid) { applyMediaMeshAnnouncement(t, a); t.el.innerHTML = mediaMeshTransferHtml(t, Date.now()); }
+    }
+  }
+
+  function applyMediaMeshAnnouncement(t, a) {
+    t.kind = a.kind; t.total = a.total; t.seconds = a.seconds; t.caption = a.caption;
+  }
 
   // The transfer this packet belongs to: an open one with the same key, or a
-  // new card at the top of the feed.
-  function mediaMeshTransferFor(kind, payload, hops, color, pkt, feed) {
+  // new card at the top of the feed. A parity packet joins its clip.
+  function mediaMeshTransferFor(clip, payload, hops, color, pkt, feed) {
     const now = Date.now();
-    const key = mediaMeshTransferKey(kind, payload, hops);
-    let t = null;
-    for (let i = mmTransfers.length - 1; i >= 0; i--) {
-      if (mmTransfers[i].key === key && now - mmTransfers[i].last < MEDIAMESH_TRANSFER_IDLE_MS) { t = mmTransfers[i]; break; }
+    const open = (key) => {
+      for (let i = mmTransfers.length - 1; i >= 0; i--) {
+        if (mmTransfers[i].key === key && now - mmTransfers[i].last < MEDIAMESH_TRANSFER_IDLE_MS) return mmTransfers[i];
+      }
+      return null;
+    };
+    let sid = clip.sid, parity = false;
+    if (sid && !mmAnnounced.has(sid) && !open('sid|' + sid)) {
+      const data = mediaMeshParitySid(sid);
+      if (mmAnnounced.has(data) || open('sid|' + data)) { sid = data; parity = true; }
     }
-    if (t) return t;
-    const el = document.createElement('div');
-    el.className = 'live-feed-item live-mm-transfer live-feed-enter';
-    el.setAttribute('tabindex', '0');
-    el.setAttribute('role', 'button');
-    el.style.cursor = 'pointer';
-    t = { key, kind, el, chunks: 0, maxHops: 0, observers: [], hashes: new Set(), first: now, last: now, pkt, color, timer: null };
-    el.addEventListener('click', () => showFeedCard(el, t.pkt, t.color));
-    requestAnimationFrame(() => requestAnimationFrame(() => el.classList.remove('live-feed-enter')));
-    mmTransfers.push(t);
-    if (mmTransfers.length > 12) {
-      const gone = mmTransfers.shift();
-      if (gone.timer) clearTimeout(gone.timer);
+    const key = mediaMeshTransferKey(sid, payload, hops);
+    let t = open(key);
+    if (!t) {
+      const el = document.createElement('div');
+      el.className = 'live-feed-item live-mm-transfer live-feed-enter';
+      el.setAttribute('tabindex', '0');
+      el.setAttribute('role', 'button');
+      el.style.cursor = 'pointer';
+      t = { key, sid, kind: clip.talk ? 'voice' : '', total: 0, seconds: 0, caption: '', el, chunks: 0, repair: 0, maxHops: 0,
+        observers: [], hashes: new Set(), first: now, last: now, pkt, color, timer: null };
+      const a = sid ? mmAnnounced.get(sid) : null;
+      if (a) applyMediaMeshAnnouncement(t, a);
+      el.addEventListener('click', () => showFeedCard(el, t.pkt, t.color));
+      requestAnimationFrame(() => requestAnimationFrame(() => el.classList.remove('live-feed-enter')));
+      mmTransfers.push(t);
+      if (mmTransfers.length > 12) {
+        const gone = mmTransfers.shift();
+        if (gone.timer) clearTimeout(gone.timer);
+      }
     }
+    t.nextIsParity = parity;
     return t;
   }
 
@@ -4869,8 +4953,11 @@
   // redraws the card at the top of the feed.
   function updateMediaMeshTransfer(t, pkt, hops, isNew, feed) {
     const now = Date.now();
-    if (pkt.hash && !t.hashes.has(pkt.hash)) { t.hashes.add(pkt.hash); t.chunks++; }
-    else if (isNew && !pkt.hash) t.chunks++;
+    if (pkt.hash && !t.hashes.has(pkt.hash)) {
+      t.hashes.add(pkt.hash);
+      if (isNew && t.nextIsParity) t.repair++; else t.chunks++;
+    } else if (isNew && !pkt.hash) t.chunks++;
+    t.nextIsParity = false;
     t.maxHops = Math.max(t.maxHops, (hops || []).length);
     const ob = pkt.observer_name || pkt.observer || '';
     if (ob && t.observers.indexOf(ob) < 0) t.observers.push(ob);
@@ -4962,6 +5049,7 @@
     activeGhosts.length = 0;
     mmTransfers.forEach((t) => { if (t.timer) clearTimeout(t.timer); });
     mmTransfers = [];
+    mmAnnounced.clear();
     isAnimating = false;
     isFading = false;
     if (mediaMeshZoomMap) { try { mediaMeshZoomMap.off('zoomend', respaceMediaMeshRings); } catch (_) {} }

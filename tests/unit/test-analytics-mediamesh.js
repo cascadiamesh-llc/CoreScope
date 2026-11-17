@@ -210,7 +210,7 @@ test('headline tiles: longest link heard, photo and voice packets, coverage fill
   assert.ok(ls[0].from === 'Skyline' && Math.abs(ls[0].km - 12.6) < 0.3, JSON.stringify(ls[0]));
   const h = A.mediaMeshHeadlineHtml(mm);
   assert.ok(/<div class="stat-value">12\.\d km<\/div><div class="stat-label">Longest link heard<\/div><div class="stat-detail">Skyline → Rainier View/.test(h), h);
-  assert.ok(h.includes('<div class="stat-value">735</div><div class="stat-label">Photo &amp; voice packets</div><div class="stat-detail">median 2.5 hops, up to 6</div>'), h);
+  assert.ok(h.includes('<div class="stat-value">735</div><div class="stat-label">Photo, video &amp; voice packets</div><div class="stat-detail">median 2.5 hops, up to 6</div>'), h);
   assert.ok(h.includes('id="mmStatArea">…<'), 'coverage waits for the map');
   assert.ok(A.mediaMeshHeadlineHtml(MM).includes('none heard directly yet'));
 });
@@ -279,43 +279,79 @@ const lctx = {};
 vm.createContext(lctx);
 lctx.escapeHtml = (v) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 lctx.formatLiveTimestampHtml = (ts) => 'T' + ts;
-vm.runInContext('const MEDIAMESH_TRANSFER_IDLE_MS = 8000; const MEDIAMESH_TRANSFER_BOXES = 16;\n'
-  + extract(live, ['mediaMeshFeedBadgeHtml', 'groupIsMediaMesh', 'mediaMeshHopBadgeHtml', 'mediaMeshMediaKind', 'mediaMeshHopId', 'mediaMeshTransferKey', 'mediaMeshTransferHtml'])
-  + '\nthis.api = { mediaMeshFeedBadgeHtml, groupIsMediaMesh, mediaMeshHopBadgeHtml, mediaMeshMediaKind, mediaMeshTransferKey, mediaMeshTransferHtml };', lctx);
+vm.runInContext('const MEDIAMESH_TRANSFER_IDLE_MS = 8000; const MEDIAMESH_TRANSFER_BOXES = 16; const MEDIAMESH_FEC_SID_XOR = 0xFEC0FEC0;\n'
+  + "const MEDIAMESH_CLIP_PREFIXES = { VI1: 'photo', VV1: 'video', VE3: 'voice', VM1: 'voice' };\n"
+  + "const MEDIAMESH_CLIP_TITLES = { photo: 'Photo', video: 'Video', voice: 'Voice clip' };\n"
+  + "const MEDIAMESH_CLIP_ICONS = { photo: 'ph-camera', video: 'ph-video-camera', voice: 'ph-microphone' };\n"
+  + extract(live, ['mediaMeshFeedBadgeHtml', 'groupIsMediaMesh', 'mediaMeshHopBadgeHtml', 'mediaMeshSidHex', 'mediaMeshParitySid', 'mediaMeshParseAnnouncement', 'mediaMeshClipOf', 'mediaMeshHopId', 'mediaMeshTransferKey', 'mediaMeshTransferHtml'])
+  + '\nthis.api = { mediaMeshFeedBadgeHtml, groupIsMediaMesh, mediaMeshHopBadgeHtml, mediaMeshParitySid, mediaMeshParseAnnouncement, mediaMeshClipOf, mediaMeshTransferKey, mediaMeshTransferHtml };', lctx);
 
-test('MediaMesh transfers: which packets are photos or voice, and which belong together', () => {
+test('MediaMesh clips: announcements name them, packets carry the session id', () => {
   const A = lctx.api;
-  assert.strictEqual(A.mediaMeshMediaKind('RAW_CUSTOM', { raw: '56a1b2c3d401aabb' }), 'voice');
-  assert.strictEqual(A.mediaMeshMediaKind('RAW_CUSTOM', { raw: '57A1B2C3D401' }), 'voice');
-  assert.strictEqual(A.mediaMeshMediaKind('RAW_CUSTOM', { raw: '72a1b2c3d4' }), null, 'a fetch request is not the clip');
-  assert.strictEqual(A.mediaMeshMediaKind('GRP_DATA', {}), 'media');
-  assert.strictEqual(A.mediaMeshMediaKind('GRP_TXT', {}), null);
-  // voice: the session id; channel data: channel and first repeater
-  assert.strictEqual(A.mediaMeshTransferKey('voice', { raw: '56A1B2C3D401' }, ['ab']), 'voice|a1b2c3d4');
-  assert.strictEqual(A.mediaMeshTransferKey('media', { channelHash: 17 }, ['5d01', 'ab']), 'media|17|5D01');
-  assert.strictEqual(A.mediaMeshTransferKey('media', {}, [{ prefix: 'c267' }]), 'media||C267');
+  // sid 0x1a2b3c4d = 439041101 = "79dcbh" in base 36; 12 packets = "c"; 9 s = "9"
+  const sid36 = (0x1a2b3c4d).toString(36);
+  let a = A.mediaMeshParseAnnouncement('Jade: VV1:' + sid36 + ':15:c:9 Video Ferry at sunset');
+  assert.strictEqual(JSON.stringify(a), JSON.stringify({ sid: '1a2b3c4d', kind: 'video', total: 12, seconds: 9, caption: 'Ferry at sunset' }));
+  a = A.mediaMeshParseAnnouncement('VI1:' + sid36 + ':14:5:96 Photo');
+  assert.ok(a.kind === 'photo' && a.total === 5 && a.seconds === 0 && a.caption === '', JSON.stringify(a));
+  assert.strictEqual(A.mediaMeshParseAnnouncement('VE3:' + sid36 + ':1:3:4').kind, 'voice');
+  assert.strictEqual(A.mediaMeshParseAnnouncement('VM1:' + sid36 + ':2:3:4').kind, 'voice');
+  assert.strictEqual(A.mediaMeshParseAnnouncement('hello VV1 world'), null);
+  assert.strictEqual(A.mediaMeshParseAnnouncement('VV1:zzzzzzzzz:1:1:1'), null, 'a session id past 32 bits');
+  // packets: raw, channel data (key held), push-to-talk, unreadable
+  assert.strictEqual(JSON.stringify(A.mediaMeshClipOf('RAW_CUSTOM', { raw: '561A2B3C4D00ffee' })), JSON.stringify({ sid: '1a2b3c4d', talk: false }));
+  assert.strictEqual(JSON.stringify(A.mediaMeshClipOf('RAW_CUSTOM', { raw: '571a2b3c4d01' })), JSON.stringify({ sid: '1a2b3c4d', talk: false }));
+  assert.strictEqual(A.mediaMeshClipOf('RAW_CUSTOM', { raw: '721a2b3c4d' }), null, 'a fetch request is not the clip');
+  assert.strictEqual(JSON.stringify(A.mediaMeshClipOf('GRP_DATA', { dataType: 0x5643, decryptedBlob: '561a2b3c4d03aa' })), JSON.stringify({ sid: '1a2b3c4d', talk: false }));
+  assert.strictEqual(JSON.stringify(A.mediaMeshClipOf('GRP_DATA', { dataType: 0x5643, decryptedBlob: '541a2b3c4d0081' })), JSON.stringify({ sid: '1a2b3c4d', talk: true }));
+  assert.strictEqual(JSON.stringify(A.mediaMeshClipOf('GRP_DATA', { channelHash: 17 })), JSON.stringify({ sid: '', talk: false }));
+  assert.strictEqual(A.mediaMeshClipOf('GRP_TXT', {}), null);
+  // parity packets: the session id XOR 0xFEC0FEC0, both ways
+  assert.strictEqual(A.mediaMeshParitySid('1a2b3c4d'), 'e4ebc28d');
+  assert.strictEqual(A.mediaMeshParitySid('e4ebc28d'), '1a2b3c4d');
+  // grouping
+  assert.strictEqual(A.mediaMeshTransferKey('1a2b3c4d', {}, ['ab']), 'sid|1a2b3c4d');
+  assert.strictEqual(A.mediaMeshTransferKey('', { channelHash: 17 }, ['5d01', 'ab']), 'ch|17|5D01');
+  assert.strictEqual(A.mediaMeshTransferKey('', {}, [{ prefix: 'c267' }]), 'ch||C267');
   assert.strictEqual(A.mediaMeshHopBadgeHtml(3), '<span>3</span>');
 });
 
-test('MediaMesh transfer card: packets so far while it runs, a summary once quiet', () => {
+test('MediaMesh transfer card: named and counted against the announcement when known', () => {
   const A = lctx.api;
-  const t = { kind: 'media', chunks: 5, maxHops: 3, observers: ['First Hill', 'Rainier <View>', 'N1TJT', 'd1'], first: 1000, last: 4800 };
-  let h = A.mediaMeshTransferHtml(t, 5000);
-  assert.ok(h.includes('#ph-camera') && h.includes('Photo or voice') && h.includes('badge-mediamesh'));
+  const base = { chunks: 5, repair: 0, maxHops: 3, observers: ['First Hill', 'Rainier <View>', 'N1TJT', 'd1'], first: 1000, last: 4800 };
+  // unknown kind: "Media clip", a box per packet
+  let h = A.mediaMeshTransferHtml(Object.assign({ kind: '', total: 0 }, base), 5000);
+  assert.ok(h.includes('#ph-film-strip') && h.includes('Media clip') && h.includes('badge-mediamesh'), h);
   assert.ok(h.includes('Heard by First Hill, Rainier &lt;View&gt; and 2 more'), h);
   assert.strictEqual((h.match(/<i class="done"><\/i>/g) || []).length, 5);
   assert.ok(h.includes('<i class="next"></i>') && h.includes('5 packets in · up to 3 hops'), h);
-  h = A.mediaMeshTransferHtml(t, 4800 + 8000);
+  h = A.mediaMeshTransferHtml(Object.assign({ kind: '', total: 0 }, base), 4800 + 8000);
   assert.ok(!h.includes('class="next"') && h.includes('Done: 5 packets · up to 3 hops · over 3.8 s'), h);
-  h = A.mediaMeshTransferHtml({ kind: 'voice', chunks: 20, maxHops: 1, observers: [], first: 0, last: 0 }, 99999);
-  assert.ok(h.includes('#ph-microphone') && h.includes('Voice clip') && h.includes('<b>+4</b>') && h.includes('up to 1 hop ·') && !h.includes('Heard by'), h);
+  // a video announced as 12 packets, 9 s, with a caption
+  const v = Object.assign({ kind: 'video', total: 12, seconds: 9, caption: 'Ferry <at> sunset' }, base);
+  h = A.mediaMeshTransferHtml(v, 5000);
+  assert.ok(h.includes('#ph-video-camera') && h.includes('Video, 9 s') && h.includes('“Ferry &lt;at&gt; sunset”'), h);
+  assert.strictEqual((h.match(/<i class="done"><\/i>/g) || []).length, 5);
+  assert.strictEqual((h.match(/<i class="next"><\/i>/g) || []).length, 7);
+  assert.ok(h.includes('5 of 12 packets in'), h);
+  h = A.mediaMeshTransferHtml(Object.assign({}, v, { repair: 2 }), 99999);
+  assert.ok(h.includes('Done: 5 of 12 packets heard + 2 repair') && (h.match(/<i class="missing"><\/i>/g) || []).length === 7, h);
+  h = A.mediaMeshTransferHtml(Object.assign({}, v, { chunks: 12 }), 99999);
+  assert.ok(h.includes('Done: 12 of 12 packets ·'), h);
+  // photo: no length; voice; long clips scale to 16 boxes
+  assert.ok(A.mediaMeshTransferHtml(Object.assign({}, base, { kind: 'photo', total: 6, seconds: 0 }), 5000).includes('>Photo<'));
+  h = A.mediaMeshTransferHtml(Object.assign({}, base, { kind: 'voice', total: 40, seconds: 12, chunks: 20, observers: [] }), 5000);
+  assert.ok(h.includes('#ph-microphone') && h.includes('Voice clip, 12 s') && !h.includes('Heard by'), h);
+  assert.strictEqual((h.match(/<i class="(done|next)"><\/i>/g) || []).length, 16);
+  assert.strictEqual((h.match(/<i class="done"><\/i>/g) || []).length, 8);
 });
 
 test('MediaMesh on Live: glowing ring head, numbered hops, one feed card per transfer', () => {
   assert.ok(live.includes('if (anim.isMediaMesh) {\n          // MediaMesh head'));
   assert.ok(live.includes("icon: L.divIcon({ className: 'live-mm-hop', html: mediaMeshHopBadgeHtml(anim.hopNo)"));
   assert.ok(live.includes('mediaMesh ? Object.assign({}, mediaMesh, { hop: hopIndex + 1 }) : null'));
-  assert.ok(live.includes('const t = mediaMeshTransferFor(mmKind, payload, hops, color, pkt, feed);'));
+  assert.ok(live.includes('const t = mediaMeshTransferFor(mmClip, payload, hops, color, pkt, feed);'));
+  assert.ok(live.includes('pkt._ts = packetTimestamp(pkt);\n    noteMediaMeshAnnouncement(pkt);'), 'announcements read before any filter');
   assert.ok(live.includes('if (f.badge) pathsLayer.removeLayer(f.badge);'), 'badges fade out with their hop');
 });
 

@@ -640,7 +640,7 @@
       <div class="mm-cov-head">
         <div>
           <h3>MediaMesh coverage estimate</h3>
-          <p class="text-muted mm-cov-intro">Where photos and voice on 911.150 MHz should get through, from each MediaMesh repeater's position and the terrain. Conservative: 22 dBm, antennas 10 m up, a 10 dB safety margin. Click the map for the terrain profile to any point.</p>
+          <p class="text-muted mm-cov-intro">Where photos, video and voice on 911.150 MHz should get through, from each MediaMesh repeater's position and the terrain. Conservative: 22 dBm, antennas 10 m up, a 10 dB safety margin. Click the map for the terrain profile to any point.</p>
         </div>
         <div class="mm-cov-toggle">
           <button type="button" class="tab-btn active" data-mm-cov="ground">People on the ground</button>
@@ -748,7 +748,7 @@
     const hops = packets ? `median ${sf(Number(media.median_hops || 0), Number.isInteger(media.median_hops) ? 0 : 1)} hops, up to ${Number(media.max_hops || 0)}` : 'none in this period';
     return `<div class="stat-card stat-card-mediamesh"><div class="stat-value" id="mmStatArea">…</div><div class="stat-label">km² covered</div><div class="stat-detail" id="mmStatAreaDetail">for people on the ground (estimate)</div></div>
         <div class="stat-card stat-card-mediamesh"><div class="stat-value">${longest ? mmKm(longest.km) + ' km' : '—'}</div><div class="stat-label">Longest link heard</div><div class="stat-detail">${longest ? `${esc(longest.from)} → ${esc(longest.to)}` : 'none heard directly yet'}</div></div>
-        <div class="stat-card stat-card-mediamesh"><div class="stat-value">${packets.toLocaleString()}</div><div class="stat-label">Photo &amp; voice packets</div><div class="stat-detail">${hops}</div></div>`;
+        <div class="stat-card stat-card-mediamesh"><div class="stat-value">${packets.toLocaleString()}</div><div class="stat-label">Photo, video &amp; voice packets</div><div class="stat-detail">${hops}</div></div>`;
   }
 
   // Who's doing the most: relayed media this week, the longest links heard,
@@ -771,7 +771,7 @@
     return `<div class="analytics-row"><div class="analytics-card flex-1">
       <h3>MediaMesh leaderboard</h3>
       <div class="mm-lb">
-        <section><h4>Most photos &amp; voice relayed <span class="text-muted">(7 days)</span></h4>${list(relayed)}</section>
+        <section><h4>Most photos, video &amp; voice relayed <span class="text-muted">(7 days)</span></h4>${list(relayed)}</section>
         <section><h4>Best placed <span class="text-muted">(km² it covers alone)</span></h4><div id="mmLeaderPlaced"><p class="text-muted mm-lb-empty">Waiting for the coverage map…</p></div></section>
         <section><h4>Longest links heard</h4>${list(longest)}</section>
         <section><h4>Newest on MediaMesh</h4>${list(newest)}</section>
@@ -804,7 +804,7 @@
     const obs = Array.isArray(mm.observers) ? mm.observers : [];
     const hours = Array.isArray(mm.per_hour) ? mm.per_hour : [];
     const n = Number(mm.mediamesh_transmissions || 0);
-    const intro = '<p class="text-muted" style="margin:0 0 12px">MediaMesh is the second LoRa profile (radio2) that Keymind Cascade repeaters, Wadamesh TAK standalones and MeshCore Open TAK use for photos and voice. A transmission counts here when an observer heard it on radio2.</p>';
+    const intro = '<p class="text-muted" style="margin:0 0 12px">MediaMesh is the second LoRa profile (radio2) that Keymind Cascade repeaters, Wadamesh TAK standalones and MeshCore Open TAK use for photos, video and voice. A transmission counts here when an observer heard it on radio2.</p>';
     if (n === 0 && reps.length === 0 && unknown.length === 0) {
       return intro + '<div class="text-center text-muted" style="padding:40px">No MediaMesh traffic or repeaters in this period. Observers need firmware that tags radio2.</div>';
     }

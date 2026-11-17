@@ -1552,6 +1552,8 @@ input.live-node-filter-input:focus {
 .live-mm-transfer-chunks { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; margin-top: 6px; }
 .live-mm-transfer-chunks i { width: 14px; height: 6px; border-radius: 2px; background: var(--mediamesh-path-color, #d946ef); }
 .live-mm-transfer-chunks i.next { background: transparent; border: 1px dashed var(--mediamesh-path-color, #d946ef); box-sizing: border-box; animation: live-mm-next 1s ease-in-out infinite alternate; }
+.live-mm-transfer-chunks i.missing { background: transparent; border: 1px solid color-mix(in srgb, var(--mediamesh-path-color, #d946ef) 45%, transparent); box-sizing: border-box; }
+.live-mm-transfer-caption { font-size: 0.9em; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .live-mm-transfer-chunks b { font-size: 0.75em; font-weight: 600; color: var(--text-muted); margin-left: 2px; }
 @keyframes live-mm-next { from { opacity: 0.35; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .live-mm-transfer-chunks i.next { animation: none; } }
