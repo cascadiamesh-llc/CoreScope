@@ -379,6 +379,10 @@
   --mediamesh-node-color: #d946ef;
   /* A repeater only seen relaying MediaMesh (weaker evidence): greyer pink. */
   --mediamesh-node-weak-color: #bd70d2;
+  /* MediaMesh pink for TEXT: dark enough to read on light backgrounds
+   * (#a21caf is 6.3:1 on white), light on dark ones. Lines, rings and icons
+   * keep --mediamesh-path-color. */
+  --mediamesh-text-color: #a21caf;
 
   /* #1128: documented z-index scale. Use these custom props for any new
    * stacking context decision. Existing legacy z-index values that work are
@@ -465,6 +469,7 @@
     --mediamesh-path-color: #e879f9;
     --mediamesh-node-color: #e879f9;
     --mediamesh-node-weak-color: #c68cd8;
+    --mediamesh-text-color: #f0abfc;
     --section-bg: #1e1e34;
   }
 }
@@ -528,6 +533,7 @@
   --mediamesh-path-color: #e879f9;
   --mediamesh-node-color: #e879f9;
   --mediamesh-node-weak-color: #c68cd8;
+  --mediamesh-text-color: #f0abfc;
   --section-bg: #1e1e34;
 }
 
@@ -6048,12 +6054,12 @@ body.embed #app.app-fixed {
 .mm-milestone-close { flex: none; border: 0; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 1.1em; padding: 4px; }
 .mm-milestone-burst { position: absolute; inset: 0; pointer-events: none; }
 .mm-milestone-burst i { position: absolute; left: 22px; top: 50%; width: 6px; height: 6px; border-radius: 1px; background: var(--mediamesh-node-color); opacity: 0;
-  animation: mm-burst 1.6s ease-out calc(var(--i) * 40ms) 2 both; transform-origin: center; }
+  animation: mm-burst 1.6s ease-out calc(var(--i, 0) * 40ms) 2 both; transform-origin: center; }
 .mm-milestone-burst i:nth-child(3n) { background: rgb(6, 182, 212); }
 .mm-milestone-burst i:nth-child(4n) { background: #facc15; border-radius: 50%; }
 @keyframes mm-burst {
   0% { opacity: 1; transform: translate(0, 0) rotate(0); }
-  100% { opacity: 0; transform: translate(calc(40px + var(--i) * 28px), calc((var(--i) - 7) * 4px - 18px)) rotate(calc(var(--i) * 70deg)); }
+  100% { opacity: 0; transform: translate(calc(40px + var(--i, 0) * 28px), calc((var(--i, 0) - 7) * 4px - 18px)) rotate(calc(var(--i, 0) * 70deg)); }
 }
 @media (prefers-reduced-motion: reduce) { .mm-milestone-burst { display: none; } }
 .mm-lb { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 24px; }
@@ -6075,8 +6081,7 @@ body.embed #app.app-fixed {
 .mm-cov-plan-head { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
 .mm-cov-plan-height select { font: inherit; margin-left: 4px; }
 .mm-cov-plan-big { margin: 8px 0 2px; font-size: 1.15em; }
-.mm-cov-plan-big strong { color: rgb(8, 145, 178); font-size: 1.25em; }
-[data-theme="dark"] .mm-cov-plan-big strong { color: rgb(34, 211, 238); }
+.mm-cov-plan-big strong { color: var(--text); font-size: 1.25em; text-decoration: underline; text-decoration-color: rgb(6, 182, 212); text-decoration-thickness: 3px; text-underline-offset: 3px; }
 .mm-cov-cal:empty { display: none; }
 .mm-next { font-size: 0.85em; color: var(--text-muted); margin-top: 2px; line-height: 1.4; }
 .mm-cov-reps { margin-top: 10px; font-size: 0.85em; }
@@ -6104,12 +6109,12 @@ body.embed #app.app-fixed {
 .mm-cov-chip { font: inherit; font-size: 1em; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); cursor: pointer; line-height: 1.5; }
 .mm-cov-chip.active { border-color: var(--mediamesh-node-color); color: var(--text); background: color-mix(in srgb, var(--mediamesh-node-color) 14%, transparent); }
 .mm-cov-chip--relayed.active { border-color: var(--mediamesh-node-weak-color); border-style: dashed; }
-.mm-cov-chip:not(.active):not(.mm-cov-chip--all) { text-decoration: line-through; }
 .mm-cov-chip--all { color: var(--text); }
 .mm-cov-chip:focus-visible { outline: 2px solid var(--mediamesh-node-color); outline-offset: 1px; }
 .mm-cov-chip-note { color: var(--text-muted); font-size: 0.9em; }
 .mm-cov-popup { font-size: 12px; line-height: 1.5; }
-.mm-cov-popup .mm-cov-chip { margin-top: 6px; color: #1a1a2e; border-color: #d946ef; }
+.mm-cov-popup .mm-cov-chip { margin-top: 6px; color: var(--text); border-color: var(--mediamesh-node-color); background: color-mix(in srgb, var(--mediamesh-node-color) 12%, transparent); }
+.mm-cov-popup .mm-cov-chip:hover { background: color-mix(in srgb, var(--mediamesh-node-color) 24%, transparent); }
 .mm-cov-sw--link { width: 18px; height: 0; border-radius: 0; border-top: 2px dashed var(--text); vertical-align: 3px; }
 .mm-cov-links-key { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
 .mm-cov-links-key[hidden], .mm-cov-details[hidden], .mm-cov-profile[hidden] { display: none; }
@@ -6160,7 +6165,7 @@ body.embed #app.app-fixed {
   bottom: 0;
   background: var(--mediamesh-path-color);
 }
-.mm-value { color: var(--mediamesh-path-color); font-weight: 600; }
+.mm-value { color: var(--mediamesh-text-color); font-weight: 600; }
 .mm-legend { font-size: 11px; margin-top: 6px; }
 .mm-legend-swatch {
   display: inline-block;
@@ -6190,5 +6195,5 @@ body.embed #app.app-fixed {
 }
 .stat-card-mediamesh { border-top: 3px solid var(--mediamesh-path-color); }
 a.stat-card-mediamesh { color: inherit; text-decoration: none; }
-.stat-card-mediamesh .stat-label { color: var(--mediamesh-path-color); }
+.stat-card-mediamesh .stat-label { color: var(--mediamesh-text-color); }
 .mm-chart rect { fill: var(--mediamesh-path-color); }
