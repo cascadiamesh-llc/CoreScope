@@ -1538,3 +1538,20 @@ input.live-node-filter-input:focus {
 .leaflet-zoom-anim .leaflet-liveAnimPane-pane {
   display: none !important;
 }
+
+/* MediaMesh: a hop number at the middle of each hop, and one feed card per
+   photo or voice transfer instead of a row per packet. */
+.live-mm-hop span { display: flex; align-items: center; justify-content: center; width: 18px; height: 18px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid var(--mediamesh-path-color, #d946ef); background: var(--surface-1, #1e1630); color: var(--text, #f5d0fe); font-size: 10px; font-weight: 700; line-height: 1; }
+.live-feed-item.live-mm-transfer { display: block; border: 1px solid var(--mediamesh-path-color, #d946ef); border-radius: 8px; margin: 4px 0; padding: 7px 9px; box-shadow: 0 0 10px color-mix(in srgb, var(--mediamesh-path-color, #d946ef) 22%, transparent); }
+.live-mm-transfer-head { display: flex; align-items: center; gap: 6px; }
+.live-mm-transfer-icon { color: var(--mediamesh-path-color, #d946ef); display: inline-flex; }
+.live-mm-transfer-title { font-weight: 600; }
+.live-mm-transfer-head .feed-time { margin-left: auto; }
+.live-mm-transfer-route, .live-mm-transfer-status { font-size: 0.85em; color: var(--text-muted); margin-top: 3px; }
+.live-mm-transfer-status { color: var(--text); }
+.live-mm-transfer-chunks { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; margin-top: 6px; }
+.live-mm-transfer-chunks i { width: 14px; height: 6px; border-radius: 2px; background: var(--mediamesh-path-color, #d946ef); }
+.live-mm-transfer-chunks i.next { background: transparent; border: 1px dashed var(--mediamesh-path-color, #d946ef); box-sizing: border-box; animation: live-mm-next 1s ease-in-out infinite alternate; }
+.live-mm-transfer-chunks b { font-size: 0.75em; font-weight: 600; color: var(--text-muted); margin-left: 2px; }
+@keyframes live-mm-next { from { opacity: 0.35; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .live-mm-transfer-chunks i.next { animation: none; } }

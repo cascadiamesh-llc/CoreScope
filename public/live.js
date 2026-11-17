@@ -44,6 +44,8 @@
   const MEDIAMESH_RING_WEIGHT = 1.6;
   const MEDIAMESH_RINGS_PER_HOP = 40;
   const MEDIAMESH_RINGS_PER_PATH = 200;
+  const MEDIAMESH_HEAD_RADIUS = 5;     // the hollow ring leading a MediaMesh hop
+  const MEDIAMESH_HEAD_GLOW_PX = 13;
   let mediaMeshRenderer = null;   // one shared L.canvas for the fading rings
   let mediaMeshZoomMap = null;    // the map the zoomend re-spacing is hooked to
 
@@ -75,7 +77,8 @@
     return getComputedStyle(document.documentElement).getPropertyValue('--mediamesh-path-color').trim() || 'currentColor';
   }
   if (typeof window !== 'undefined') {
-    window._liveMediaMesh = { ringCap: mediaMeshRingCap, ringFractions: mediaMeshRingFractions, hopStyle: pathHopStyle };
+    window._liveMediaMesh = { ringCap: mediaMeshRingCap, ringFractions: mediaMeshRingFractions, hopStyle: pathHopStyle,
+      mediaKind: mediaMeshMediaKind, transferKey: mediaMeshTransferKey, transferHtml: function (t, now) { return mediaMeshTransferHtml(t, now); } };
   }
   let clickablePaths = [];
   const CLICKABLE_PATH_TTL_MS = 30000;
@@ -145,6 +148,64 @@
   // local helper for now (live.js and packets.js are separate IIFEs with no
   // shared module). TODO: extract `obsIataBadge` into shared packet-helpers.js
   // and have both surfaces import it.
+  // MediaMesh hop number, drawn at the middle of each hop of a MediaMesh path.
+  function mediaMeshHopBadgeHtml(n) { return '<span>' + (n | 0) + '</span>'; }
+
+  // What a MediaMesh packet carries, as far as can be read without the
+  // channel key: 'voice' for an Open TAK raw voice packet (RAW_CUSTOM led by
+  // 0x56 or 0x57), 'media' for channel data (GRP_DATA: a photo or voice, its
+  // type is encrypted), else null.
+  function mediaMeshMediaKind(typeName, payload) {
+    if (typeName === 'RAW_CUSTOM') {
+      const raw = String((payload && payload.raw) || '').toLowerCase();
+      return /^5[67]/.test(raw) ? 'voice' : null;
+    }
+    return typeName === 'GRP_DATA' ? 'media' : null;
+  }
+
+  function mediaMeshHopId(h) {
+    return String(typeof h === 'string' ? h : (h && (h.prefix || h.id)) || '').toUpperCase();
+  }
+
+  // Packets of one transfer share this: a raw voice clip its session id
+  // (bytes 1-4), channel data its channel and the first repeater it took.
+  function mediaMeshTransferKey(kind, payload, hops) {
+    if (kind === 'voice') return 'voice|' + String((payload && payload.raw) || '').slice(2, 10).toLowerCase();
+    const ch = payload && payload.channelHash != null ? String(payload.channelHash) : '';
+    return 'media|' + ch + '|' + (hops && hops.length ? mediaMeshHopId(hops[0]) : '');
+  }
+
+  const MEDIAMESH_TRANSFER_IDLE_MS = 8000;
+  const MEDIAMESH_TRANSFER_BOXES = 16;
+
+  // The feed card for a transfer t: { kind, chunks, maxHops, observers
+  // (names), first, last (ms) }. Done once nothing has arrived for
+  // MEDIAMESH_TRANSFER_IDLE_MS.
+  function mediaMeshTransferHtml(t, now) {
+    const done = now - t.last >= MEDIAMESH_TRANSFER_IDLE_MS;
+    const voice = t.kind === 'voice';
+    const icon = '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#' + (voice ? 'ph-microphone' : 'ph-camera') + '"/></svg>';
+    const n = t.chunks;
+    let boxes = '';
+    for (let i = 0; i < Math.min(n, MEDIAMESH_TRANSFER_BOXES); i++) boxes += '<i class="done"></i>';
+    if (n > MEDIAMESH_TRANSFER_BOXES) boxes += '<b>+' + (n - MEDIAMESH_TRANSFER_BOXES) + '</b>';
+    if (!done) boxes += '<i class="next"></i>';
+    const obs = t.observers.slice(0, 2).map(escapeHtml).join(', ') + (t.observers.length > 2 ? ' and ' + (t.observers.length - 2) + ' more' : '');
+    const hops = t.maxHops + ' hop' + (t.maxHops === 1 ? '' : 's');
+    const packets = n + ' packet' + (n === 1 ? '' : 's');
+    const secs = Math.max(0, (t.last - t.first) / 1000);
+    const status = done
+      ? 'Done: ' + packets + ' · up to ' + hops + ' · over ' + (secs < 10 ? secs.toFixed(1) : Math.round(secs)) + ' s'
+      : packets + ' in · up to ' + hops;
+    return '<div class="live-mm-transfer-head"><span class="live-mm-transfer-icon">' + icon + '</span>'
+      + '<span class="live-mm-transfer-title">' + (voice ? 'Voice clip' : 'Photo or voice') + '</span>'
+      + '<span class="badge-mediamesh">MediaMesh</span>'
+      + '<span class="feed-time" data-ts="' + t.last + '">' + formatLiveTimestampHtml(t.last) + '</span></div>'
+      + (obs ? '<div class="live-mm-transfer-route">Heard by ' + obs + '</div>' : '')
+      + '<div class="live-mm-transfer-chunks" aria-hidden="true">' + boxes + '</div>'
+      + '<div class="live-mm-transfer-status">' + status + '</div>';
+  }
+
   // MediaMesh (radio2): a fuchsia badge on feed rows carried on radio2.
   function mediaMeshFeedBadgeHtml(pkt) {
     if (!pkt || pkt.mediamesh !== true) return '';
@@ -3820,7 +3881,8 @@
         const nextGhost = hopPositions[hopIndex + 1].ghost;
         const lineColor = (isGhost || nextGhost) ? '#94a3b8' : color;
         const lineOpacity = (isGhost || nextGhost) ? 0.3 : undefined;
-        drawAnimatedLine(hp.pos, nextPos, lineColor, () => { hopIndex++; nextHop(); }, lineOpacity, rawHex, pktMeta?.hash, mediaMesh);
+        drawAnimatedLine(hp.pos, nextPos, lineColor, () => { hopIndex++; nextHop(); }, lineOpacity, rawHex, pktMeta?.hash,
+          mediaMesh ? Object.assign({}, mediaMesh, { hop: hopIndex + 1 }) : null);
       } else {
         if (!isGhost) pulseNode(hp.key, hp.pos, typeName);
         hopIndex++; nextHop();
@@ -4331,6 +4393,23 @@
         animCtx.setLineDash([]); // Reset for next draw
         }
 
+        if (anim.isMediaMesh) {
+          // MediaMesh head: a soft glow round a hollow ring, like the path
+          const glow = animCtx.createRadialGradient(currentX, currentY, 0, currentX, currentY, MEDIAMESH_HEAD_GLOW_PX);
+          glow.addColorStop(0, anim.ringColor);
+          glow.addColorStop(1, 'rgba(0,0,0,0)');
+          animCtx.globalAlpha = anim.opacity * 0.55;
+          animCtx.fillStyle = glow;
+          animCtx.beginPath();
+          animCtx.arc(currentX, currentY, MEDIAMESH_HEAD_GLOW_PX, 0, Math.PI * 2);
+          animCtx.fill();
+          animCtx.globalAlpha = anim.opacity;
+          animCtx.beginPath();
+          animCtx.arc(currentX, currentY, MEDIAMESH_HEAD_RADIUS, 0, Math.PI * 2);
+          animCtx.lineWidth = 2;
+          animCtx.strokeStyle = anim.ringColor;
+          animCtx.stroke();
+        } else {
         // Draw Leading Dot
         animCtx.beginPath();
         animCtx.arc(currentX, currentY, 3.5, 0, Math.PI * 2);
@@ -4339,6 +4418,7 @@
         animCtx.lineWidth = 1.5;
         animCtx.strokeStyle = anim.hashOutline;
         animCtx.stroke();
+        }
         animCtx.globalAlpha = 1.0; // Reset
       }
 
@@ -4379,12 +4459,13 @@
         f.lastFade = now;
         f.opacity -= 0.1 * fadeTicks;
         if (f.opacity <= 0) {
-          if (pathsLayer) { pathsLayer.removeLayer(f.line); pathsLayer.removeLayer(f.contrail); }
+          if (pathsLayer) { pathsLayer.removeLayer(f.line); pathsLayer.removeLayer(f.contrail); if (f.badge) pathsLayer.removeLayer(f.badge); }
           recentPaths = recentPaths.filter(p => p.line !== f.line);
           activeFades.splice(i, 1);
         } else {
           f.line.setStyle({ opacity: f.opacity });
           f.contrail.setStyle({ opacity: f.opacity * (f.mediaMesh ? 0.12 : 0.15) });
+          if (f.badge) f.badge.setOpacity(Math.min(1, f.opacity / 0.8));
         }
       }
     }
@@ -4441,11 +4522,19 @@
       color: anim.contrailColor, weight: 6, opacity: anim.opacity * (anim.isMediaMesh ? 0.15 : 0.2), lineCap: 'round'
     }).addTo(pathsLayer);
 
-    let line, ringInfo = null;
+    let line, ringInfo = null, badge = null;
     if (anim.isMediaMesh) {
       const rings = createFadingMediaMeshRings(anim);
       line = rings.group.addTo(pathsLayer);
       ringInfo = rings.ring;
+      // MediaMesh: the hop's number at its middle, fading with it
+      if (anim.hopNo > 0) {
+        const mid = L.latLng((L.latLng(anim.from).lat + L.latLng(anim.to).lat) / 2, (L.latLng(anim.from).lng + L.latLng(anim.to).lng) / 2);
+        badge = L.marker(mid, {
+          pane: 'animationsPane', interactive: false, keyboard: false,
+          icon: L.divIcon({ className: 'live-mm-hop', html: mediaMeshHopBadgeHtml(anim.hopNo), iconSize: [18, 18], iconAnchor: [9, 9] })
+        }).addTo(pathsLayer);
+      }
     } else {
       line = L.polyline([anim.from, anim.to], {
         pane: 'animationsPane', // #1514 M2 — fades stack with the moving phase (z=625).
@@ -4454,10 +4543,10 @@
       }).addTo(pathsLayer);
     }
 
-          recentPaths.push({ line, glowLine: contrail, time: Date.now() });
+          recentPaths.push({ line, glowLine: contrail, badge: badge, time: Date.now() });
           while (recentPaths.length > 5) {
             const old = recentPaths.shift();
-            if (pathsLayer) { pathsLayer.removeLayer(old.line); pathsLayer.removeLayer(old.glowLine); }
+            if (pathsLayer) { pathsLayer.removeLayer(old.line); pathsLayer.removeLayer(old.glowLine); if (old.badge) pathsLayer.removeLayer(old.badge); }
       activeFades = activeFades.filter(f => f.line !== old.line);
     }
 
@@ -4466,6 +4555,7 @@
       contrail: contrail,
       opacity: anim.opacity,
       mediaMesh: ringInfo,
+      badge: badge,
       lastFade: performance.now()
     });
 
@@ -4516,6 +4606,7 @@
       isMediaMesh: style === 'rings',
       ringColor: style === 'rings' ? ((colorByHash && hash && window.HashColor) ? hashFill : mediaMesh.color) : null,
       ringCap: style === 'rings' ? mediaMesh.cap : 0,
+      hopNo: style === 'rings' ? (mediaMesh.hop || 0) : 0,
       onComplete: onComplete
     });
 
@@ -4634,6 +4725,21 @@
     const hash = pkt.hash;
     const incomingObs = pkt.observation_count || 1;
 
+    // MediaMesh photos and voice: one card per transfer, not a row per packet.
+    if (hash && feedDedup.has(hash) && feedDedup.get(hash).transfer) {
+      const entry = feedDedup.get(hash);
+      entry.packets.push(pkt);
+      updateMediaMeshTransfer(entry.transfer, pkt, hops, false, feed);
+      return;
+    }
+    const mmKind = pkt.mediamesh === true && !(hash && feedDedup.has(hash)) ? mediaMeshMediaKind(typeName, payload) : null;
+    if (mmKind) {
+      const t = mediaMeshTransferFor(mmKind, payload, hops, color, pkt, feed);
+      updateMediaMeshTransfer(t, pkt, hops, true, feed);
+      if (hash) feedDedup.set(hash, { element: t.el, count: incomingObs, pkt, packets: [pkt], createdAt: Date.now(), transfer: t });
+      return;
+    }
+
     // Dedup: same hash within window → update existing entry
     if (hash && feedDedup.has(hash)) {
       const entry = feedDedup.get(hash);
@@ -4730,6 +4836,59 @@
     }
   }
 
+  // Open MediaMesh transfers, newest last.
+  let mmTransfers = [];
+
+  // The transfer this packet belongs to: an open one with the same key, or a
+  // new card at the top of the feed.
+  function mediaMeshTransferFor(kind, payload, hops, color, pkt, feed) {
+    const now = Date.now();
+    const key = mediaMeshTransferKey(kind, payload, hops);
+    let t = null;
+    for (let i = mmTransfers.length - 1; i >= 0; i--) {
+      if (mmTransfers[i].key === key && now - mmTransfers[i].last < MEDIAMESH_TRANSFER_IDLE_MS) { t = mmTransfers[i]; break; }
+    }
+    if (t) return t;
+    const el = document.createElement('div');
+    el.className = 'live-feed-item live-mm-transfer live-feed-enter';
+    el.setAttribute('tabindex', '0');
+    el.setAttribute('role', 'button');
+    el.style.cursor = 'pointer';
+    t = { key, kind, el, chunks: 0, maxHops: 0, observers: [], hashes: new Set(), first: now, last: now, pkt, color, timer: null };
+    el.addEventListener('click', () => showFeedCard(el, t.pkt, t.color));
+    requestAnimationFrame(() => requestAnimationFrame(() => el.classList.remove('live-feed-enter')));
+    mmTransfers.push(t);
+    if (mmTransfers.length > 12) {
+      const gone = mmTransfers.shift();
+      if (gone.timer) clearTimeout(gone.timer);
+    }
+    return t;
+  }
+
+  // Counts a packet (or another observation of one) into its transfer and
+  // redraws the card at the top of the feed.
+  function updateMediaMeshTransfer(t, pkt, hops, isNew, feed) {
+    const now = Date.now();
+    if (pkt.hash && !t.hashes.has(pkt.hash)) { t.hashes.add(pkt.hash); t.chunks++; }
+    else if (isNew && !pkt.hash) t.chunks++;
+    t.maxHops = Math.max(t.maxHops, (hops || []).length);
+    const ob = pkt.observer_name || pkt.observer || '';
+    if (ob && t.observers.indexOf(ob) < 0) t.observers.push(ob);
+    t.last = now;
+    t.pkt = pkt;
+    t.el.innerHTML = mediaMeshTransferHtml(t, now);
+    if (feed && feed.firstElementChild !== t.el) feed.prepend(t.el);
+    if (feed) {
+      while (feed.querySelectorAll('.live-feed-item').length > 25) {
+        const items = feed.querySelectorAll('.live-feed-item');
+        feed.removeChild(items[items.length - 1]);
+      }
+    }
+    // Redraw as done once it goes quiet.
+    if (t.timer) clearTimeout(t.timer);
+    t.timer = setTimeout(() => { t.timer = null; t.el.innerHTML = mediaMeshTransferHtml(t, Date.now()); }, MEDIAMESH_TRANSFER_IDLE_MS + 50);
+  }
+
   function showFeedCard(anchor, pkt, color) {
     document.querySelector('.feed-detail-card')?.remove();
     const decoded = pkt.decoded || {};
@@ -4801,6 +4960,8 @@
     activePulses.length = 0;
     activeFades.length = 0;
     activeGhosts.length = 0;
+    mmTransfers.forEach((t) => { if (t.timer) clearTimeout(t.timer); });
+    mmTransfers = [];
     isAnimating = false;
     isFading = false;
     if (mediaMeshZoomMap) { try { mediaMeshZoomMap.off('zoomend', respaceMediaMeshRings); } catch (_) {} }
