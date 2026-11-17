@@ -1032,8 +1032,11 @@
         });
       }
 
-      // MediaMesh: shown only for a MediaMesh repeater (mediamesh-node.js)
-      if (window.MediaMeshNode) window.MediaMeshNode.load(document.getElementById('node-mediamesh'), n.public_key, n);
+      // MediaMesh: only for a node with a MediaMesh mark (mediamesh-node.js),
+      // so other nodes' pages make no extra request.
+      if (window.MediaMeshNode && window.MediaMesh && window.MediaMesh.info(n)) {
+        window.MediaMeshNode.load(document.getElementById('node-mediamesh'), n.public_key, n);
+      }
 
       // Fetch neighbors for this node (full-screen view)
       fetchAndRenderNeighbors(n.public_key, 'fullNeighborsContent', {
