@@ -48,3 +48,32 @@ func TestInRingHole(t *testing.T) {
 		t.Error("hole test wrong")
 	}
 }
+
+// A neighbourhood the node's name mentions wins when the saved position is
+// in it or just over its edge.
+func TestNearPlaceNamed(t *testing.T) {
+	cases := []struct {
+		name     string
+		lat, lon float64
+		want     string
+	}{
+		// 20 m west of MLK Jr Way S, the Mid-Beacon Hill / Columbia City line.
+		{"ColumbiaCity-MLK✊🏾", 47.554988, -122.290161, "Columbia City, Seattle"},
+		{"Some Repeater", 47.554988, -122.290161, "Mid-Beacon Hill, Seattle"},
+		// Named after a neighbourhood it isn't near: position wins.
+		{"Ballard Backup", 47.554988, -122.290161, "Mid-Beacon Hill, Seattle"},
+		// Name agrees with the position: unchanged.
+		{"Rainier View SolarPtr", 47.502494, -122.254413, "Rainier View, Seattle"},
+		{"First Hill 🏥", 47.60992, -122.32489, "First Hill, Seattle"},
+		{"d1-rptr", 47.770496, -122.163162, "Woodinville, WA"},
+		{"Columbia City", 0, 0, ""},
+	}
+	for _, c := range cases {
+		if got := nearPlaceNamed(c.lat, c.lon, c.name); got != c.want {
+			t.Errorf("%s: nearPlaceNamed = %q, want %q", c.name, got, c.want)
+		}
+	}
+	if placeKey("ColumbiaCity-MLK✊🏾") != "columbiacitymlk" {
+		t.Errorf("placeKey = %q", placeKey("ColumbiaCity-MLK✊🏾"))
+	}
+}

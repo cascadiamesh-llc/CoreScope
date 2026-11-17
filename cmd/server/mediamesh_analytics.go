@@ -390,7 +390,7 @@ func nodeNear(nodes map[string]nodeInfo, pubkey string) string {
 	if !ok || (n.Lat == 0 && n.Lon == 0) {
 		return ""
 	}
-	return nearPlace(n.Lat, n.Lon)
+	return nearPlaceNamed(n.Lat, n.Lon, n.Name)
 }
 
 // observerRunsMediaMesh reports whether an observer's own status says its

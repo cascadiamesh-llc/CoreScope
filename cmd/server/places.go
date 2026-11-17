@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"math"
+	"strings"
 	"sync"
+	"unicode"
 )
 
 // Place names for "Near": the neighbourhood a node is in (Seattle and
@@ -114,23 +116,89 @@ func hoodNear(lat, lon float64) *hood {
 		if lat < h.minLat-padLat || lat > h.maxLat+padLat || lon < h.minLon-padLon || lon > h.maxLon+padLon {
 			continue
 		}
-		r := h.rings[0]
-		n := len(r) / 2
-		for a, b := n-1, 0; b < n; a, b = b, b+1 {
-			// Distance to the segment, on a local flat projection in metres.
-			ax, ay := (r[2*a+1]-lon)*mPerDegLon, (r[2*a]-lat)*mPerDegLat
-			bx, by := (r[2*b+1]-lon)*mPerDegLon, (r[2*b]-lat)*mPerDegLat
-			dx, dy := bx-ax, by-ay
-			t := 0.0
-			if l2 := dx*dx + dy*dy; l2 > 0 {
-				t = math.Max(0, math.Min(1, -(ax*dx+ay*dy)/l2))
-			}
-			if d := math.Hypot(ax+t*dx, ay+t*dy); d <= bestM {
-				best, bestM = h, d
-			}
+		if d := hoodEdgeM(h, lat, lon); d <= bestM {
+			best, bestM = h, d
 		}
 	}
 	return best
+}
+
+// hoodEdgeM is the distance in metres from lat/lon to the outline of h, on a
+// local flat projection (fine at these distances).
+func hoodEdgeM(h *hood, lat, lon float64) float64 {
+	const mPerDegLat = 111320.0
+	mPerDegLon := mPerDegLat * math.Cos(lat*math.Pi/180)
+	best := math.MaxFloat64
+	r := h.rings[0]
+	n := len(r) / 2
+	for a, b := n-1, 0; b < n; a, b = b, b+1 {
+		ax, ay := (r[2*a+1]-lon)*mPerDegLon, (r[2*a]-lat)*mPerDegLat
+		bx, by := (r[2*b+1]-lon)*mPerDegLon, (r[2*b]-lat)*mPerDegLat
+		dx, dy := bx-ax, by-ay
+		t := 0.0
+		if l2 := dx*dx + dy*dy; l2 > 0 {
+			t = math.Max(0, math.Min(1, -(ax*dx+ay*dy)/l2))
+		}
+		best = math.Min(best, math.Hypot(ax+t*dx, ay+t*dy))
+	}
+	return best
+}
+
+// placeKey is a name reduced to lower-case letters and digits, so
+// "ColumbiaCity-MLK" contains "columbiacity".
+func placeKey(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// hoodNamed is the neighbourhood the node's own name mentions, when the node
+// is in it or within hoodEdgeSlackM of its edge: the longest such name, so
+// "North Beacon Hill" wins over "Beacon Hill". Nil otherwise. A saved
+// position a few metres over a boundary (often a street, like MLK Jr Way
+// between Mid-Beacon Hill and Columbia City) shouldn't overrule the owner.
+func hoodNamed(lat, lon float64, name string) *hood {
+	key := placeKey(name)
+	if len(key) < 4 {
+		return nil
+	}
+	hoodBoundsOnce.Do(hoodBounds)
+	const mPerDegLat = 111320.0
+	padLat := hoodEdgeSlackM / mPerDegLat
+	padLon := hoodEdgeSlackM / (mPerDegLat * math.Cos(lat*math.Pi/180))
+	var best *hood
+	bestLen := 0
+	for i := range hoodList {
+		h := &hoodList[i]
+		hk := placeKey(h.name)
+		if len(hk) < 4 || len(hk) <= bestLen || !strings.Contains(key, hk) {
+			continue
+		}
+		if lat < h.minLat-padLat || lat > h.maxLat+padLat || lon < h.minLon-padLon || lon > h.maxLon+padLon {
+			continue
+		}
+		if hoodAt(lat, lon) != h && hoodEdgeM(h, lat, lon) > hoodEdgeSlackM {
+			continue
+		}
+		best, bestLen = h, len(hk)
+	}
+	return best
+}
+
+// nearPlaceNamed is nearPlace, except that a neighbourhood the node's name
+// mentions wins when the node is in it or just outside it (hoodNamed).
+func nearPlaceNamed(lat, lon float64, name string) string {
+	if (lat == 0 && lon == 0) || math.IsNaN(lat) || math.IsNaN(lon) {
+		return ""
+	}
+	if h := hoodNamed(lat, lon, name); h != nil {
+		return h.name + ", " + h.city
+	}
+	return nearPlace(lat, lon)
 }
 
 // nearPlace names where lat/lon is: the Seattle or Portland neighbourhood
