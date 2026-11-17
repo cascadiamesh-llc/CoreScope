@@ -53,6 +53,7 @@ var (
 	mediaMeshObs      = map[int]struct{}{}
 	mediaMeshMainObs  = map[int]struct{}{} // MediaMesh rows also heard on the main radio
 	mediaMeshUnknown  atomic.Pointer[[]MediaMeshUnknown]
+	mediaMeshStats    atomic.Pointer[map[string]mediaMeshNodeStat]
 	mediaMeshMaxObsID int64
 	mediaMeshNodes    atomic.Pointer[map[string]MediaMeshNode]
 	mediaMeshNodesTS  string     // newest last_seen loaded (incremental watermark)
@@ -153,6 +154,43 @@ func withNeighbourNames(in []MediaMeshUnknown, nodes map[string]nodeInfo) []Medi
 		}
 	}
 	return out
+}
+
+// mediaMeshNodeStat is one node's MediaMesh history (the ingestor's
+// mediamesh_node_stats): first seen, and photo or voice packets relayed in
+// the last week.
+type mediaMeshNodeStat struct {
+	FirstSeen string
+	Relayed7d int
+}
+
+func loadMediaMeshNodeStats(conn *sql.DB) (map[string]mediaMeshNodeStat, error) {
+	out := map[string]mediaMeshNodeStat{}
+	if !tableExists(conn, "mediamesh_node_stats") {
+		return out, nil
+	}
+	rows, err := conn.Query(`SELECT public_key, first_seen, relayed_7d FROM mediamesh_node_stats`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var pk string
+		var st mediaMeshNodeStat
+		if err := rows.Scan(&pk, &st.FirstSeen, &st.Relayed7d); err != nil {
+			return nil, err
+		}
+		out[strings.ToLower(pk)] = st
+	}
+	return out, rows.Err()
+}
+
+// mediaMeshNodeStatOf is one node's history, zero without one.
+func mediaMeshNodeStatOf(pk string) mediaMeshNodeStat {
+	if p := mediaMeshStats.Load(); p != nil {
+		return (*p)[strings.ToLower(pk)]
+	}
+	return mediaMeshNodeStat{}
 }
 
 // mediaMeshUnknownAt lists the unknown MediaMesh repeaters with current
@@ -366,6 +404,11 @@ func refreshMediaMesh(conn *sql.DB, full bool) {
 		log.Printf("[mediamesh] unknown repeaters: %v", err)
 	} else {
 		mediaMeshUnknown.Store(&unknown)
+	}
+	if stats, err := loadMediaMeshNodeStats(conn); err != nil {
+		log.Printf("[mediamesh] node stats: %v", err)
+	} else {
+		mediaMeshStats.Store(&stats)
 	}
 	nodes, newest, err := loadMediaMeshNodes(conn, sinceTS)
 	if err != nil {

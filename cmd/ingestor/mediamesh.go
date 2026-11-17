@@ -458,6 +458,96 @@ func (s *Store) UpdateMediaMeshPrefixNeighbours(now time.Time) int {
 	return written
 }
 
+// UpdateMediaMeshNodeStats rebuilds mediamesh_node_stats from the stored
+// MediaMesh photo and voice packets (GRP_DATA, RAW_CUSTOM): for every node
+// that relayed one (a resolved hop of its path) or heard one (the observer),
+// the earliest time, kept if earlier than the stored one; and the number of
+// different packets each relayed in the last week. Nodes marked MediaMesh
+// some other way (a status report) get first_seen = their mark's time the
+// first time round. Returns the number of nodes with a row.
+func (s *Store) UpdateMediaMeshNodeStats(now time.Time) int {
+	rows, err := s.db.Query(`SELECT t.hash, COALESCE(o.path_json, ''), COALESCE(o.resolved_path, ''),
+			COALESCE(obs.id, ''), o.timestamp
+		FROM observation_mediamesh m
+		JOIN observations o ON o.id = m.observation_id
+		JOIN transmissions t ON t.id = o.transmission_id
+		LEFT JOIN observers obs ON obs.rowid = o.observer_idx
+		WHERE o.timestamp >= ? AND t.payload_type IN (?, ?)`,
+		now.Add(-mediaMeshNodeRetention).Unix(), payloadGrpData, payloadRawCustom)
+	if err != nil {
+		log.Printf("[mediamesh] node stats: %v", err)
+		return 0
+	}
+	first := map[string]int64{}
+	relayed := map[string]map[string]bool{}
+	weekAgo := now.Add(-7 * 24 * time.Hour).Unix()
+	see := func(pk string, ts int64) {
+		pk = strings.ToLower(pk)
+		if !targetPubkeyRe.MatchString(pk) {
+			return
+		}
+		if f, ok := first[pk]; !ok || ts < f {
+			first[pk] = ts
+		}
+	}
+	for rows.Next() {
+		var hash, pj, rj, observer string
+		var ts int64
+		if rows.Scan(&hash, &pj, &rj, &observer, &ts) != nil {
+			continue
+		}
+		see(observer, ts)
+		hops := parsePathArray(pj)
+		var resolved []*string
+		if rj == "" || json.Unmarshal([]byte(rj), &resolved) != nil || len(resolved) != len(hops) {
+			continue
+		}
+		for _, r := range resolved {
+			if r == nil {
+				continue
+			}
+			see(*r, ts)
+			if ts >= weekAgo {
+				pk := strings.ToLower(*r)
+				if relayed[pk] == nil {
+					relayed[pk] = map[string]bool{}
+				}
+				relayed[pk][hash] = true
+			}
+		}
+	}
+	rows.Close()
+	writerMu.Lock()
+	defer writerMu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0
+	}
+	fail := func() int { tx.Rollback(); return 0 }
+	if _, err := tx.Exec(`UPDATE mediamesh_node_stats SET relayed_7d = 0`); err != nil {
+		return fail()
+	}
+	for pk, ts := range first {
+		if _, err := tx.Exec(`INSERT INTO mediamesh_node_stats (public_key, first_seen, relayed_7d) VALUES (?, ?, ?)
+			ON CONFLICT(public_key) DO UPDATE SET
+				first_seen = MIN(mediamesh_node_stats.first_seen, excluded.first_seen),
+				relayed_7d = excluded.relayed_7d`,
+			pk, time.Unix(ts, 0).UTC().Format(time.RFC3339), len(relayed[pk])); err != nil {
+			return fail()
+		}
+	}
+	if _, err := tx.Exec(`INSERT OR IGNORE INTO mediamesh_node_stats (public_key, first_seen, relayed_7d)
+		SELECT public_key, last_seen, 0 FROM node_mediamesh`); err != nil {
+		return fail()
+	}
+	if err := tx.Commit(); err != nil {
+		return 0
+	}
+	var n int
+	s.db.QueryRow(`SELECT COUNT(*) FROM mediamesh_node_stats`).Scan(&n)
+	return n
+}
+
 // mediaMeshPrefixKeys runs a "public_key LIKE prefix%" query and returns the
 // keys, lowercased; nil on error.
 func (s *Store) mediaMeshPrefixKeys(query, prefix string) []string {

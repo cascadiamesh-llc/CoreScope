@@ -63,6 +63,16 @@ func ensureMediaMesh(rw *sql.DB) error {
 			packets    INTEGER NOT NULL,
 			PRIMARY KEY (prefix, public_key, side)
 		);
+		-- Per node: when it was first seen on MediaMesh (the earliest photo or
+		-- voice packet it relayed or heard; first_seen only ever moves
+		-- earlier, so history outlives packet retention) and how many photo
+		-- and voice packets it relayed in the last week. Rebuilt by the
+		-- ingestor every half hour.
+		CREATE TABLE IF NOT EXISTS mediamesh_node_stats (
+			public_key TEXT PRIMARY KEY,
+			first_seen TEXT NOT NULL,
+			relayed_7d INTEGER NOT NULL DEFAULT 0
+		);
 		CREATE TABLE IF NOT EXISTS node_mediamesh (
 			public_key TEXT PRIMARY KEY,
 			mode       TEXT NOT NULL,

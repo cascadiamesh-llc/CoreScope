@@ -56,6 +56,11 @@ type MediaMeshRepeater struct {
 	// Position for the coverage estimate; absent when the node never sent one.
 	Lat *float64 `json:"lat,omitempty"`
 	Lon *float64 `json:"lon,omitempty"`
+	// FirstSeen: when it first relayed or heard a MediaMesh photo or voice
+	// packet (or was first marked); RelayedWeek: photo and voice packets it
+	// relayed in the last week. From the ingestor's mediamesh_node_stats.
+	FirstSeen   string `json:"first_seen,omitempty"`
+	RelayedWeek int    `json:"media_relayed_7d"`
 	MediaMeshNode
 }
 
@@ -80,6 +85,12 @@ type MediaMeshLink struct {
 	AvgRSSI      *float64 `json:"avg_rssi,omitempty"`
 	LastHeard    string   `json:"last_heard"`
 }
+
+// The payload types that carry MediaMesh photos and voice.
+const (
+	mediaPayloadGrpData   = 6
+	mediaPayloadRawCustom = 15
+)
 
 // mediaMeshMaxLinks caps the links list (busiest first).
 const mediaMeshMaxLinks = 200
@@ -156,6 +167,31 @@ func mediaMeshLinks(aggs map[string]*mediaMeshLinkAgg, nodes map[string]nodeInfo
 	return out
 }
 
+// MediaMeshMediaStats sums up the photo and voice packets: how many, and how
+// many hops they travelled (the longest MediaMesh path any observer saw
+// each one arrive by).
+type MediaMeshMediaStats struct {
+	Packets    int     `json:"packets"`
+	MedianHops float64 `json:"median_hops"`
+	MaxHops    int     `json:"max_hops"`
+}
+
+// mediaMeshMediaStatsOf turns per-packet hop counts into the summary.
+func mediaMeshMediaStatsOf(hops []int) MediaMeshMediaStats {
+	out := MediaMeshMediaStats{Packets: len(hops)}
+	if len(hops) == 0 {
+		return out
+	}
+	sort.Ints(hops)
+	out.MaxHops = hops[len(hops)-1]
+	if m := len(hops) / 2; len(hops)%2 == 1 {
+		out.MedianHops = float64(hops[m])
+	} else {
+		out.MedianHops = float64(hops[m-1]+hops[m]) / 2
+	}
+	return out
+}
+
 // MediaMeshAnalytics is the /api/analytics/mediamesh response.
 type MediaMeshAnalytics struct {
 	TotalTransmissions     int                  `json:"total_transmissions"`
@@ -168,6 +204,8 @@ type MediaMeshAnalytics struct {
 	// UnknownRepeaters: MediaMesh repeaters known only by their path hash
 	// (no advert heard yet), so no name or position.
 	UnknownRepeaters []MediaMeshUnknown `json:"unknown_repeaters"`
+	// Media: the photo and voice packets (GRP_DATA, RAW_CUSTOM) in scope.
+	Media MediaMeshMediaStats `json:"media"`
 	// Links: who was heard directly on radio2 by which observer, in scope.
 	Links  []MediaMeshLink `json:"links"`
 	Window string          `json:"window,omitempty"`
@@ -235,6 +273,7 @@ func (s *PacketStore) computeMediaMeshAnalytics(region string, window TimeWindow
 	hours := map[string]int{}
 	observers := map[string]*obsAgg{}
 	links := map[string]*mediaMeshLinkAgg{}
+	var mediaHops []int
 	_, pm := s.getCachedNodesAndPM()
 
 	s.mu.RLock()
@@ -254,6 +293,7 @@ func (s *PacketStore) computeMediaMeshAnalytics(region string, window TimeWindow
 		inScope := regionObs == nil
 		mm := false
 		firstMM := ""
+		mmHops := -1
 		for _, o := range tx.Observations {
 			if regionObs != nil && !regionObs[o.ObserverID] {
 				continue
@@ -279,6 +319,9 @@ func (s *PacketStore) computeMediaMeshAnalytics(region string, window TimeWindow
 				continue
 			}
 			mm = true
+			if n := len(parsePathJSON(o.PathJSON)); n > mmHops {
+				mmHops = n
+			}
 			if heard {
 				a.mm++
 				if o.Timestamp > a.last {
@@ -327,6 +370,9 @@ func (s *PacketStore) computeMediaMeshAnalytics(region string, window TimeWindow
 			if len(firstMM) >= 13 {
 				hours[firstMM[:13]]++
 			}
+			if tx.PayloadType != nil && (*tx.PayloadType == mediaPayloadGrpData || *tx.PayloadType == mediaPayloadRawCustom) && mmHops >= 0 {
+				mediaHops = append(mediaHops, mmHops)
+			}
 		}
 	}
 	mediaMeshMu.RUnlock()
@@ -371,6 +417,7 @@ func (s *PacketStore) computeMediaMeshAnalytics(region string, window TimeWindow
 	out.Repeaters = s.mediaMeshRepeaters(now, nodes)
 	out.UnknownRepeaters = withNeighbourNames(mediaMeshUnknownAt(now), nodes)
 	out.Links = mediaMeshLinks(links, nodes, now)
+	out.Media = mediaMeshMediaStatsOf(mediaHops)
 	return out
 }
 
@@ -419,6 +466,8 @@ func (s *PacketStore) mediaMeshRepeaters(now time.Time, names map[string]nodeInf
 			rep.Name, rep.Role = info.Name, info.Role
 		}
 		rep.Near = nodeNear(names, pk)
+		st := mediaMeshNodeStatOf(pk)
+		rep.FirstSeen, rep.RelayedWeek = st.FirstSeen, st.Relayed7d
 		if info, ok := names[pk]; ok && !(info.Lat == 0 && info.Lon == 0) {
 			lat, lon := info.Lat, info.Lon
 			rep.Lat, rep.Lon = &lat, &lon

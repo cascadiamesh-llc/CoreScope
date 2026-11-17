@@ -20,6 +20,7 @@ func withMediaMesh(t testing.TB) {
 		mediaMeshMu.Unlock()
 		mediaMeshNodes.Store(nil)
 		mediaMeshUnknown.Store(nil)
+		mediaMeshStats.Store(nil)
 	}
 	reset()
 	t.Cleanup(reset)

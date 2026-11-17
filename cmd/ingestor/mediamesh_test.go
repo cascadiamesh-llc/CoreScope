@@ -1014,3 +1014,84 @@ func TestMediaMeshHopMatches(t *testing.T) {
 		}
 	}
 }
+
+// Per-node MediaMesh history: first seen (only ever earlier) and photo or
+// voice packets relayed in the last week.
+func TestUpdateMediaMeshNodeStats(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Now()
+	a := "aa11" + strings.Repeat("1", 60)
+	b := "bb22" + strings.Repeat("2", 60)
+	obsKey := "cc33" + strings.Repeat("3", 60)
+	status := "dd44" + strings.Repeat("4", 60)
+	if _, err := s.db.Exec(`INSERT INTO observers (id, name) VALUES (?, 'Obs')`, obsKey); err != nil {
+		t.Fatal(err)
+	}
+	var obsIdx int64
+	if err := s.db.QueryRow(`SELECT rowid FROM observers WHERE id = ?`, obsKey).Scan(&obsIdx); err != nil {
+		t.Fatal(err)
+	}
+	add := func(hash string, ptype int, path, resolved string, at time.Time) {
+		t.Helper()
+		if _, err := s.InsertTransmission(&PacketData{Hash: hash, RawHex: "1900", RouteType: 1, PayloadType: ptype,
+			PathJSON: `[]`, Timestamp: at.UTC().Format(time.RFC3339)}); err != nil {
+			t.Fatal(err)
+		}
+		var txID int64
+		if err := s.db.QueryRow(`SELECT id FROM transmissions WHERE hash = ?`, hash).Scan(&txID); err != nil {
+			t.Fatal(err)
+		}
+		res, err := s.db.Exec(`INSERT INTO observations (transmission_id, observer_idx, direction, path_json, resolved_path, timestamp)
+			VALUES (?, ?, 'rx', ?, ?, ?)`, txID, obsIdx, path, resolved, at.Unix())
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, _ := res.LastInsertId()
+		if _, err := s.db.Exec(`INSERT INTO observation_mediamesh (observation_id) VALUES (?)`, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := now.Add(-10 * 24 * time.Hour)
+	add("p1", 6, `["aa11","bb22"]`, `["`+a+`","`+b+`"]`, old)
+	add("p2", 6, `["aa11"]`, `["`+a+`"]`, now.Add(-time.Hour))
+	add("p3", 15, `["aa11"]`, `["`+a+`"]`, now.Add(-2*time.Hour))
+	// Not photo or voice: ignored.
+	add("p4", 2, `["bb22"]`, `["`+b+`"]`, now.Add(-time.Hour))
+	if err := s.RecordMediaMesh(MediaMeshReport{PubKey: status, Mode: mediaMeshModeRxTx, Source: "status"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if n := s.UpdateMediaMeshNodeStats(now); n != 4 {
+		t.Fatalf("%d nodes, want 4", n)
+	}
+	row := func(pk string) (string, int) {
+		t.Helper()
+		var f string
+		var r int
+		if err := s.db.QueryRow(`SELECT first_seen, relayed_7d FROM mediamesh_node_stats WHERE public_key = ?`, pk).Scan(&f, &r); err != nil {
+			t.Fatalf("%s: %v", pk[:4], err)
+		}
+		return f, r
+	}
+	oldTS := old.UTC().Format(time.RFC3339)
+	if f, r := row(a); f != oldTS || r != 2 {
+		t.Errorf("a: first %s relayed %d, want %s and 2", f, r, oldTS)
+	}
+	if f, r := row(b); f != oldTS || r != 0 {
+		t.Errorf("b: first %s relayed %d, want %s and 0 (its only recent packet isn't media)", f, r, oldTS)
+	}
+	if f, _ := row(obsKey); f != oldTS {
+		t.Errorf("observer first %s, want %s", f, oldTS)
+	}
+	if f, _ := row(status); f == "" {
+		t.Error("status-only node has no first_seen")
+	}
+	// The old packet is gone from storage: first_seen stays where it was.
+	if _, err := s.db.Exec(`DELETE FROM observation_mediamesh WHERE observation_id IN
+		(SELECT o.id FROM observations o JOIN transmissions t ON t.id = o.transmission_id WHERE t.hash = 'p1')`); err != nil {
+		t.Fatal(err)
+	}
+	s.UpdateMediaMeshNodeStats(now)
+	if f, r := row(a); f != oldTS || r != 2 {
+		t.Errorf("a after retention: first %s relayed %d, want %s and 2", f, r, oldTS)
+	}
+}

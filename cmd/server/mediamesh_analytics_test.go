@@ -373,3 +373,34 @@ func TestMediaMeshAnalyticsUnknownNeighbours(t *testing.T) {
 		t.Errorf("unnamed neighbour = %+v", next[1])
 	}
 }
+
+func TestMediaMeshMediaStatsOf(t *testing.T) {
+	if got := mediaMeshMediaStatsOf(nil); got != (MediaMeshMediaStats{}) {
+		t.Errorf("empty = %+v", got)
+	}
+	if got := mediaMeshMediaStatsOf([]int{3, 1, 2}); got.Packets != 3 || got.MedianHops != 2 || got.MaxHops != 3 {
+		t.Errorf("odd = %+v", got)
+	}
+	if got := mediaMeshMediaStatsOf([]int{4, 1, 2, 3}); got.MedianHops != 2.5 || got.MaxHops != 4 {
+		t.Errorf("even = %+v", got)
+	}
+}
+
+// A repeater carries its MediaMesh history: first seen and media relayed.
+func TestMediaMeshAnalyticsRepeaterHistory(t *testing.T) {
+	srv, router := setupTestServer(t)
+	seedMediaMesh(t, srv,
+		`CREATE TABLE IF NOT EXISTS mediamesh_node_stats (public_key TEXT PRIMARY KEY, first_seen TEXT NOT NULL,
+			relayed_7d INTEGER NOT NULL DEFAULT 0)`,
+		`INSERT INTO node_mediamesh VALUES ('aabbccdd11223344', 'rxtx', '911.15,250,7,5', 'status', '`+mmRecentTS()+`')`,
+		`INSERT INTO mediamesh_node_stats VALUES ('aabbccdd11223344', '2026-10-20T08:00:00Z', 37)`,
+	)
+	var got MediaMeshAnalytics
+	getJSON(t, router, "/api/analytics/mediamesh", &got)
+	if len(got.Repeaters) != 1 {
+		t.Fatalf("repeaters = %+v", got.Repeaters)
+	}
+	if r := got.Repeaters[0]; r.FirstSeen != "2026-10-20T08:00:00Z" || r.RelayedWeek != 37 {
+		t.Errorf("history = %q, %d; want 2026-10-20T08:00:00Z, 37", r.FirstSeen, r.RelayedWeek)
+	}
+}
