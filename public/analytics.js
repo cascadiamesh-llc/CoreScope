@@ -627,7 +627,7 @@
     if (_mmCoverageDestroy) { try { _mmCoverageDestroy(); } catch (_) { /* ignore */ } _mmCoverageDestroy = null; }
     const card = el.querySelector('#mmCoverageCard');
     if (!card || !window.MediaMeshCoverage) return;
-    _mmCoverageDestroy = window.MediaMeshCoverage.init(card, reps, { links: links || [] });
+    _mmCoverageDestroy = window.MediaMeshCoverage.init(card, reps, { links: links || [], onStats: (st) => mediaMeshOnCoverageStats(el, st) });
   }
 
   // The coverage estimate card (mediamesh-coverage.js draws the map into it).
@@ -645,6 +645,7 @@
         <div class="mm-cov-toggle">
           <button type="button" class="tab-btn active" data-mm-cov="ground">People on the ground</button>
           <button type="button" class="tab-btn" data-mm-cov="repeater">Repeater to repeater</button>
+          <button type="button" class="tab-btn mm-cov-plan-btn" data-mm-cov-plan aria-pressed="false">＋ Plan a repeater</button>
         </div>
       </div>
       <div class="mm-cov-reps" id="mmCovReps"><div id="mmCovRepSummary"></div><div class="mm-cov-rep-panel" id="mmCovRepPanel" hidden></div></div>
@@ -660,13 +661,20 @@
         <label class="mm-cov-links-key" id="mmCovLinksKey" hidden><input type="checkbox" id="mmCovLinksToggle" checked> <span class="mm-cov-sw mm-cov-sw--link"></span>Heard on radio2</label>
         <label class="mm-cov-opacity">Opacity <input type="range" id="mmCovOpacity" min="0" max="100" value="100" aria-label="Coverage opacity"></label>
       </div>
+      <div class="mm-cov-time" id="mmCovTime" hidden>
+        <button type="button" class="tab-btn mm-cov-play" data-mm-cov-play><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-play"/></svg> Play growth</button>
+        <input type="range" id="mmCovTimeRange" min="0" max="0" value="0" aria-label="Day shown">
+        <span class="mm-cov-time-label" id="mmCovTimeLabel" aria-live="polite"></span>
+      </div>
+      <div class="mm-cov-plan" id="mmCovPlan" hidden aria-live="polite"></div>
       <p class="mm-cov-readout" id="mmCovReadout" aria-live="polite"></p>
       <p class="text-muted mm-cov-note" id="mmCovStatus" aria-live="polite"></p>
+      <p class="mm-cov-note mm-cov-cal" id="mmCovCal"></p>
       <div class="mm-cov-profile" id="mmCovProfile" hidden></div>
       <p class="text-muted mm-cov-note">Estimate, not a measurement: bare terrain only, so street level among buildings and trees will be worse.${missing} <span id="mmCovMode">People on the ground: a companion or standalone radio at 1.5 m.</span></p>
       <details class="mm-cov-details" id="mmCovLinksWrap" hidden>
         <summary>Model against what was heard</summary>
-        <p class="text-muted mm-cov-note">Packets an observer received on radio2 straight from the node named, with the signal the model expects over the same path (no safety margin taken off). Observers and repeaters are taken as 10 m up; a real antenna, height or power moves the difference either way.</p>
+        <p class="text-muted mm-cov-note">Packets an observer received on radio2 straight from the node named, with the signal the model expects over the same path (no safety margin taken off, the correction above included). Observers and repeaters are taken as 10 m up; a real antenna, height or power moves the difference either way. The correction is the middle of these differences, from links heard at least 5 times, limited to +6 or −12 dB: links that were heard at all are the ones strong enough to get through, so they flatter the model a little.</p>
         <div id="mmCovLinks"></div>
       </details>
       <details class="mm-cov-details">
@@ -713,6 +721,80 @@
     const title = 'Named nodes next to this repeater in MediaMesh paths over the last week: "from" handed it packets, "to" received them from it, "heard by" heard it directly.';
     return `<td data-value="${esc(place.toLowerCase())}">${place ? `Probably near ${esc(place)}` : 'Area unknown'}`
       + `<div class="mm-next" title="${esc(title)}">${items}</div></td>`;
+  }
+
+  // Links heard on radio2 with both ends placed, longest first:
+  // [{ from, to, km, count }].
+  function mediaMeshLinksByLength(mm) {
+    const rad = Math.PI / 180;
+    const links = Array.isArray(mm && mm.links) ? mm.links : [];
+    return links.filter((l) => [l.from_lat, l.from_lon, l.to_lat, l.to_lon].every(Number.isFinite)).map((l) => {
+      const dLat = (l.to_lat - l.from_lat) * rad, dLon = (l.to_lon - l.from_lon) * rad;
+      const a = Math.sin(dLat / 2) ** 2 + Math.cos(l.from_lat * rad) * Math.cos(l.to_lat * rad) * Math.sin(dLon / 2) ** 2;
+      return { from: l.from_name || String(l.from || '').slice(0, 8), fromKey: l.from || '', to: l.observer_name || String(l.observer_id || '').slice(0, 8),
+        km: 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)), count: Number(l.count || 0) };
+    }).sort((x, y) => y.km - x.km);
+  }
+
+  function mmKm(v) { return v < 100 ? v.toFixed(1).replace(/\.0$/, '') : Math.round(v).toLocaleString(); }
+
+  // The headline tiles beside the counts: coverage (filled in once the map
+  // has worked it out), the longest link heard, and the photo and voice
+  // packets with how far they travelled.
+  function mediaMeshHeadlineHtml(mm) {
+    const longest = mediaMeshLinksByLength(mm)[0];
+    const media = (mm && mm.media) || {};
+    const packets = Number(media.packets || 0);
+    const hops = packets ? `median ${sf(Number(media.median_hops || 0), Number.isInteger(media.median_hops) ? 0 : 1)} hops, up to ${Number(media.max_hops || 0)}` : 'none in this period';
+    return `<div class="stat-card stat-card-mediamesh"><div class="stat-value" id="mmStatArea">…</div><div class="stat-label">km² covered</div><div class="stat-detail" id="mmStatAreaDetail">for people on the ground (estimate)</div></div>
+        <div class="stat-card stat-card-mediamesh"><div class="stat-value">${longest ? mmKm(longest.km) + ' km' : '—'}</div><div class="stat-label">Longest link heard</div><div class="stat-detail">${longest ? `${esc(longest.from)} → ${esc(longest.to)}` : 'none heard directly yet'}</div></div>
+        <div class="stat-card stat-card-mediamesh"><div class="stat-value">${packets.toLocaleString()}</div><div class="stat-label">Photo &amp; voice packets</div><div class="stat-detail">${hops}</div></div>`;
+  }
+
+  // Who's doing the most: relayed media this week, the longest links heard,
+  // the newest repeaters, and the best-placed (most ground coverage on its
+  // own, filled in by the coverage map).
+  function mediaMeshLeaderboardHtml(mm) {
+    const reps = Array.isArray(mm && mm.repeaters) ? mm.repeaters : [];
+    const name = (r) => r.name || String(r.public_key || '').slice(0, 8);
+    const link = (r) => `<a href="#/nodes/${encodeURIComponent(r.public_key || '')}">${esc(name(r))}</a>`;
+    const list = (items) => (items.length ? `<ol class="mm-lb-list">${items.join('')}</ol>` : '<p class="text-muted mm-lb-empty">Nothing yet.</p>');
+    const relayed = reps.filter((r) => Number(r.media_relayed_7d || 0) > 0)
+      .sort((a, b) => b.media_relayed_7d - a.media_relayed_7d || name(a).localeCompare(name(b))).slice(0, 5)
+      .map((r) => `<li>${link(r)} <span class="mm-lb-num">${Number(r.media_relayed_7d).toLocaleString()}</span></li>`);
+    const longest = mediaMeshLinksByLength(mm).slice(0, 5)
+      .map((l) => `<li>${esc(l.from)} → ${esc(l.to)} <span class="mm-lb-num">${mmKm(l.km)} km</span></li>`);
+    const newest = reps.filter((r) => mediaMeshTime(r.first_seen))
+      .sort((a, b) => mediaMeshTime(b.first_seen).localeCompare(mediaMeshTime(a.first_seen))).slice(0, 5)
+      .map((r) => `<li>${link(r)} <span class="mm-lb-num">${typeof timeAgo === 'function' ? timeAgo(r.first_seen) : esc(r.first_seen)}</span></li>`);
+    if (!reps.length) return '';
+    return `<div class="analytics-row"><div class="analytics-card flex-1">
+      <h3>MediaMesh leaderboard</h3>
+      <div class="mm-lb">
+        <section><h4>Most photos &amp; voice relayed <span class="text-muted">(7 days)</span></h4>${list(relayed)}</section>
+        <section><h4>Best placed <span class="text-muted">(km² it covers alone)</span></h4><div id="mmLeaderPlaced"><p class="text-muted mm-lb-empty">Waiting for the coverage map…</p></div></section>
+        <section><h4>Longest links heard</h4>${list(longest)}</section>
+        <section><h4>Newest on MediaMesh</h4>${list(newest)}</section>
+      </div>
+    </div></div>`;
+  }
+
+  // Fills the tiles and the leaderboard from the coverage map's figures. Only
+  // the people-on-the-ground view counts, so the numbers don't jump with the
+  // view.
+  function mediaMeshOnCoverageStats(el, st) {
+    if (!st || st.modeKey !== 'ground') return;
+    const area = el.querySelector('#mmStatArea');
+    if (area) area.textContent = mmKm(st.areaKm2 || 0);
+    const detail = el.querySelector('#mmStatAreaDetail');
+    if (detail && st.calibration && st.calibration.used) detail.textContent = `for people on the ground, checked against ${st.calibration.n} real links`;
+    const placed = el.querySelector('#mmLeaderPlaced');
+    if (placed) {
+      const top = (st.repAreas || []).filter((x) => x.km2 > 0).sort((a, b) => b.km2 - a.km2).slice(0, 5);
+      placed.innerHTML = top.length
+        ? `<ol class="mm-lb-list">${top.map((x) => `<li><a href="#/nodes/${encodeURIComponent(x.rep.public_key || '')}">${esc(x.rep.name || String(x.rep.public_key || '').slice(0, 8))}</a> <span class="mm-lb-num">${mmKm(x.km2)} km²</span></li>`).join('')}</ol>`
+        : '<p class="text-muted mm-lb-empty">Nothing yet.</p>';
+    }
   }
 
   function renderMediaMeshTabHtml(mm, windowVal) {
@@ -779,9 +861,11 @@
         <div class="stat-card stat-card-mediamesh"><div class="stat-value">${n.toLocaleString()}</div><div class="stat-label">radio2 transmissions</div><div class="stat-detail">${sf(mm.share_pct || 0, 1)}% of ${Number(mm.total_transmissions || 0).toLocaleString()}</div></div>
         <div class="stat-card stat-card-mediamesh"><div class="stat-value">${reps.length + unknown.length}</div><div class="stat-label">MediaMesh repeaters</div><div class="stat-detail">${reps.filter((r) => r.mode === 'rxtx').length} send, ${reps.filter((r) => r.mode !== 'rxtx').length} listen only${unknown.length ? `, ${unknown.length} not yet identified` : ''}</div></div>
         <div class="stat-card stat-card-mediamesh"><div class="stat-value">${obs.length}</div><div class="stat-label">MediaMesh observers</div><div class="stat-detail">${obs.filter((o) => Number(o.mediamesh_observations || 0) > 0).length} heard radio2</div></div>
+        ${mediaMeshHeadlineHtml(mm)}
       </div>
       <div class="analytics-row"><div class="analytics-card flex-1 mm-chart">${chart.html.replace('Packets /', 'radio2 packets /')}</div></div>
       ${mediaMeshCoverageCardHtml(reps)}
+      ${mediaMeshLeaderboardHtml(mm)}
       <div class="analytics-row">
         <div class="analytics-card flex-1">
           <h3>MediaMesh repeaters</h3>

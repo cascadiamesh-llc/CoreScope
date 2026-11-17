@@ -415,6 +415,104 @@ function cellAt(cov, lat, lon) {
     assert.strictEqual(M.repAction('bogus', reps), null);
   });
 
+  await test('areas: per cell, covered, union and per repeater', () => {
+    // a 10 x 10 grid of 100 m cells near the equator: 0.01 km² each
+    const cov = { width: 10, height: 10, bounds: { north: 0.0045, south: -0.0045, west: -0.0045, east: 0.0045 },
+      margins: new Float32Array(100).fill(-1e9) };
+    const a = M.cellAreaKm2(cov);
+    assert.ok(Math.abs(a - 0.01) < 0.0005, String(a));
+    for (let i = 0; i < 30; i++) cov.margins[i] = 3;
+    assert.ok(Math.abs(M.coveredKm2(cov) - 30 * a) < 1e-9);
+    // two rasters overlapping by one row: union counts each cell once
+    const r = (row0, v) => ({ col0: 0, row0, w: 10, h: 2, data: new Int16Array(20).fill(v) });
+    cov.rasters = [r(0, 50), r(1, 20), r(5, -40)];
+    assert.ok(Math.abs(M.unionKm2(cov) - 30 * a) < 1e-9);
+    const per = M.repAreasKm2(cov);
+    assert.ok(Math.abs(per[0] - 20 * a) < 1e-9 && Math.abs(per[1] - 20 * a) < 1e-9 && per[2] === 0, JSON.stringify(per));
+  });
+
+  await test('planned repeater: new against already-covered area, and the repeaters it links to', async () => {
+    const elev = () => 0;
+    const planned = { lat: 47.6, lon: -122.33 };
+    const planCov = await M.computeCoverage([planned], elev, 'repeater');
+    // nothing there before: all new
+    let g = M.planGain(planCov, null);
+    assert.ok(g.newKm2 > 100 && g.overlapKm2 === 0 && Math.abs(g.totalKm2 - g.newKm2) < 1e-9, JSON.stringify({ n: g.newKm2, o: g.overlapKm2 }));
+    // the same repeater already counted: all overlap
+    const same = await M.computeCoverage([{ lat: 47.6, lon: -122.33 }], elev, 'repeater');
+    g = M.planGain(planCov, same);
+    assert.ok(g.newKm2 === 0 && g.overlapKm2 > 100, JSON.stringify({ n: g.newKm2, o: g.overlapKm2 }));
+    // links: within reach on flat ground, best first; out of the radius left out
+    const reps = [{ name: 'Far', lat: 48.4, lon: -122.33 }, { name: 'Mid', lat: 47.75, lon: -122.33 }, { name: 'Close', lat: 47.62, lon: -122.33 }];
+    const links = M.planLinks(planned, reps, elev);
+    assert.deepStrictEqual(links.map((l) => l.rep.name), ['Close', 'Mid']);
+    assert.ok(links[0].marginDb > links[1].marginDb && links[1].index === 1);
+    // a higher antenna gets further
+    assert.strictEqual(M.antennaHeight({}), 10);
+    assert.strictEqual(M.antennaHeight({ heightM: 30 }), 30);
+    const hill = (lat) => (lat > 47.605 && lat < 47.607 ? 60 : 0);
+    const low = M.pathProfile(planned, 47.62, -122.33, hill, 'repeater');
+    const high = M.pathProfile(Object.assign({ heightM: 50 }, planned), 47.62, -122.33, hill, 'repeater');
+    assert.ok(high.marginDb > low.marginDb + 3, `${low.marginDb} -> ${high.marginDb}`);
+    // the panel
+    const html = M.planHtml(Object.assign({ heightM: 20 }, planned), { newKm2: 14.23, overlapKm2: 3, totalKm2: 17.23 }, links, 'ground', false);
+    assert.ok(html.includes('<strong>+14.2 km²</strong> of new coverage for people on the ground'), html);
+    assert.ok(html.includes('<option value="20" selected>20 m</option>'));
+    assert.ok(html.includes('Links to: Close') && html.includes('data-mm-cov-plan-remove'));
+    assert.ok(M.planHtml(planned, { newKm2: 0, overlapKm2: 0, totalKm2: 0 }, [], 'repeater', false).includes('it would be on its own'));
+    assert.ok(M.planHtml(planned, null, [], 'ground', true).includes('Working it out'));
+  });
+
+  await test('growth time-lapse: one step per day, counting the repeaters there by then', () => {
+    const now = Date.parse('2026-11-17T18:00:00Z');
+    const first = ['2026-11-10T09:00:00Z', '2026-11-12T23:30:00Z', '', '2026-11-17T08:00:00Z'];
+    const steps = M.growthSteps(first, now);
+    assert.strictEqual(steps.length, 8);
+    assert.deepStrictEqual(steps.map((s) => s.count), [2, 2, 3, 3, 3, 3, 3, 4]);
+    assert.deepStrictEqual(M.presentAt(first, steps[2].t), [true, true, true, false]);
+    // under two days of history: no time-lapse
+    assert.deepStrictEqual(M.growthSteps(['2026-11-17T01:00:00Z'], now), []);
+    assert.deepStrictEqual(M.growthSteps(['', 'junk'], now), []);
+  });
+
+  await test('calibration: fitted to links heard often enough, limited, and applied to every budget', () => {
+    const row = (rawDelta, count) => ({ rawDelta, count });
+    // too few links: nothing applied
+    assert.deepStrictEqual(M.fitCalibration([row(5, 10), row(3, 10)]), { n: 2, offsetDb: 0, fitDb: null, spreadDb: null, used: false });
+    // links heard fewer than 5 times don't count
+    assert.strictEqual(M.fitCalibration([row(5, 10), row(3, 10), row(40, 2)]).n, 2);
+    // the median, and how far the links sit from it
+    let c = M.fitCalibration([row(-4, 10), row(-6, 10), row(-2, 10), row(-10, 50)]);
+    assert.ok(c.used && c.offsetDb === -5 && c.fitDb === -5 && c.spreadDb === 2, JSON.stringify(c));
+    assert.ok(M.calibrationText(c).includes('Checked against 4 real links heard on radio2: lowered by 5 dB to match, and typically within ±2 dB'), M.calibrationText(c));
+    // limited upwards to +6 (heard links flatter the model), downwards to -12
+    c = M.fitCalibration([row(20, 10), row(18, 10), row(22, 10)]);
+    assert.strictEqual(c.offsetDb, 6);
+    assert.ok(M.calibrationText(c).includes('raised by 6 dB to match (the links suggest +20 dB; capped)'), M.calibrationText(c));
+    assert.strictEqual(M.fitCalibration([row(-30, 10), row(-30, 10), row(-30, 10)]).offsetDb, -12);
+    assert.ok(M.calibrationText({ used: false, n: 1 }).includes('(1 so far)'));
+    // applied: the budget, the profile and the link model all move with it
+    const mode = M.CONFIG.modes.repeater;
+    const before = M.budgetDb(mode);
+    const rep = { lat: 47.6, lon: -122.33 };
+    const p0 = M.pathProfile(rep, 47.61, -122.33, () => 0, 'repeater');
+    M.setCalibration(-5);
+    try {
+      assert.strictEqual(M.budgetDb(mode), before - 5);
+      const p1 = M.pathProfile(rep, 47.61, -122.33, () => 0, 'repeater');
+      assert.ok(Math.abs(p1.rxDbm - (p0.rxDbm - 5)) < 1e-9 && p1.calibrationDb === -5);
+      assert.ok(M.budgetRows(p1).some((r) => r[0] === 'Correction from links heard on radio2' && r[1] === '−5 dB'));
+      const rows = M.linkRows([{ from_name: 'A', from_role: 'repeater', observer_name: 'B', from_lat: 47.6, from_lon: -122.33,
+        to_lat: 47.61, to_lon: -122.33, count: 9, avg_rssi: -80 }], () => 0);
+      // the raw figures are before the correction, the shown ones after
+      assert.ok(Math.abs(rows[0].rawModelRssi - p0.rxDbm) < 1e-9 && Math.abs(rows[0].modelRssi - (p0.rxDbm - 5)) < 1e-9);
+      assert.ok(Math.abs(rows[0].rawDelta - (rows[0].delta - 5)) < 1e-9);
+    } finally {
+      M.setCalibration(0);
+    }
+    assert.strictEqual(M.budgetDb(mode), before);
+  });
+
   await test('the assumptions list states the numbers in use, and the limits', () => {
     const radios = [M.radioFor({ radio: '911.15,250,7,5' }), M.radioFor({ radio: '911.15,125,9,5' }), M.radioFor({})];
     const g = M.assumptionsHtml('ground', radios), r = M.assumptionsHtml('repeater', radios);
@@ -426,7 +524,8 @@ function cellAt(cov, lat, lon) {
     assert.ok(g.includes('ITU-R P.526-11') && g.includes('k = 4/3') && g.includes('Fresnel'));
     assert.ok(g.includes('30 km from each repeater') && r.includes('60 km from each repeater'));
     assert.ok(/Not modelled:<\/strong> buildings and trees/.test(g) && g.includes('interference'));
-    assert.strictEqual((g.match(/<li>/g) || []).length, 6);
+    assert.strictEqual((g.match(/<li>/g) || []).length, 7);
+    assert.ok(g.includes('<strong>Checked:</strong> Not yet checked against real links'));
   });
 
   await test('heard links: paired with the model\'s figure for the same path', () => {

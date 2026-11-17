@@ -71,6 +71,12 @@
     terrainAttribution: 'Terrain: Mapzen terrain tiles (SRTM, USGS NED and others)',
   };
 
+  // Correction fitted to the links actually heard on radio2 (fitCalibration),
+  // added to every link budget. 0 until there are enough links.
+  let calibrationDb = 0;
+  function setCalibration(db) { calibrationDb = Number.isFinite(db) ? db : 0; }
+  function getCalibration() { return calibrationDb; }
+
   const NO_DATA = -1e9;
   const NO_DATA_I16 = -32768;
   const M_PER_DEG_LAT = 111320;
@@ -113,6 +119,11 @@
 
   const DEFAULT_RADIO = radioFor(null);
 
+  /** A repeater's antenna height: its own (a planned one's) or the default. */
+  function antennaHeight(rep) {
+    return rep && rep.heightM > 0 && rep.heightM <= 300 ? rep.heightM : CONFIG.txHeightM;
+  }
+
   /** Free-space path loss in dB for a distance in km. */
   function fspl(dKm, freqMHz) {
     return 32.44 + 20 * Math.log10(Math.max(dKm, 0.001)) + 20 * Math.log10(freqMHz || CONFIG.freqMHz);
@@ -128,7 +139,7 @@
   function budgetDb(mode, radio) {
     const c = CONFIG;
     return c.txDbm + c.txGainDbi - c.cableDb + mode.rxGainDbi
-      - (radio || DEFAULT_RADIO).sensitivityDbm - c.fadeMarginDb - mode.clutterDb;
+      - (radio || DEFAULT_RADIO).sensitivityDbm - c.fadeMarginDb - mode.clutterDb + calibrationDb;
   }
 
   /** dB to spare at the receiver for a path loss, in one mode. */
@@ -282,7 +293,7 @@
     const row1 = Math.min(g.height - 1, Math.floor((g.bounds.north - rep.lat + padLat) / g.cellLat));
     return {
       rays, n, dist, elev, peak, txGround,
-      txHeightM: c.txHeightM, rxHeightM: mode.rxHeightM,
+      txHeightM: antennaHeight(rep), rxHeightM: mode.rxHeightM,
       lambdaM: radio.lambdaM, freqMHz: radio.freqMHz, effR: effRadius(),
       budgetDb: budgetDb(mode, radio), radiusM: mode.radiusKm * 1000,
       lat: rep.lat, lon: rep.lon, mPerDegLon,
@@ -577,7 +588,7 @@
       terrain[i] = e;
       curved[i] = e - d[i] * d[i] / (2 * effR);
     }
-    const ht = txGround + c.txHeightM;
+    const ht = txGround + antennaHeight(rep);
     const hr = rxGround - D * D / (2 * effR) + mode.rxHeightM;
     const diff = cascadedKnifeEdge(d, curved, n, ht, D, hr, r.lambdaM);
     const edges = [];
@@ -589,12 +600,12 @@
     const fsplDb = fspl(D / 1000, r.freqMHz);
     const pathLossDb = fsplDb + diff.loss;
     const eirpDbm = c.txDbm + c.txGainDbi - c.cableDb;
-    const rxDbm = eirpDbm + mode.rxGainDbi - pathLossDb - mode.clutterDb;
+    const rxDbm = eirpDbm + mode.rxGainDbi - pathLossDb - mode.clutterDb + calibrationDb;
     return {
-      distM: D, d, terrain, txGround, rxGround, txHeightM: c.txHeightM, rxHeightM: mode.rxHeightM,
+      distM: D, d, terrain, txGround, rxGround, txHeightM: antennaHeight(rep), rxHeightM: mode.rxHeightM,
       lambdaM: r.lambdaM, effR, radio: r, fsplDb, diff, edges,
       lineOfSight: !(diff.vp > 0), fresnelClear: !(diff.vp > -0.78),
-      clutterDb: mode.clutterDb, pathLossDb, eirpDbm, rxDbm,
+      clutterDb: mode.clutterDb, calibrationDb, pathLossDb, eirpDbm, rxDbm,
       sensitivityDbm: r.sensitivityDbm, fadeMarginDb: c.fadeMarginDb,
       marginDb: rxDbm - r.sensitivityDbm - c.fadeMarginDb, modeKey,
     };
@@ -634,6 +645,10 @@
     ];
     if (mode.clutterDb) rows.push(['Buildings and trees (flat allowance)', fmtLoss(mode.clutterDb), 'loss']);
     if (mode.rxGainDbi) rows.push(['Receiving antenna', '+' + fmtDb(mode.rxGainDbi) + ' dB', 'gain']);
+    if (p.calibrationDb) {
+      rows.push(['Correction from links heard on radio2', (p.calibrationDb > 0 ? '+' : '−') + fmtDb(Math.abs(p.calibrationDb)) + ' dB',
+        p.calibrationDb > 0 ? 'gain' : 'loss']);
+    }
     rows.push(['Arrives at', fmtDb(p.rxDbm) + ' dBm', 'sum']);
     rows.push(['Receiver needs (SF' + p.radio.sf + ', ' + p.radio.bwKHz + ' kHz)', fmtDb(p.sensitivityDbm) + ' dBm', 'loss']);
     rows.push(['Safety margin', fmtLoss(p.fadeMarginDb), 'loss']);
@@ -978,6 +993,182 @@
     return { margin: cov.margins[i], rep: cov.best[i] };
   }
 
+  // ---- Areas, planned repeaters ----------------------------------------------
+
+  /** The area of one grid cell in km², at the grid's middle latitude. */
+  function cellAreaKm2(cov) {
+    const b = cov.bounds;
+    const midLat = (b.north + b.south) / 2;
+    const hKm = ((b.north - b.south) / cov.height) * M_PER_DEG_LAT / 1000;
+    const wKm = ((b.east - b.west) / cov.width) * M_PER_DEG_LAT * Math.cos(midLat * Math.PI / 180) / 1000;
+    return hKm * wKm;
+  }
+
+  /** km² with something to spare, over the repeaters counted (cov.margins). */
+  function coveredKm2(cov) {
+    if (!cov || !cov.margins) return 0;
+    let n = 0;
+    for (let i = 0; i < cov.margins.length; i++) if (cov.margins[i] >= 0) n++;
+    return n * cellAreaKm2(cov);
+  }
+
+  /** km² covered by all the repeaters together, whatever is counted on the
+   * map: from the rasters, leaving cov.margins alone. */
+  function unionKm2(cov) {
+    if (!cov || !cov.rasters) return 0;
+    const hit = new Uint8Array(cov.width * cov.height);
+    let n = 0;
+    cov.rasters.forEach((r) => {
+      if (!r || !r.data) return;
+      for (let y = 0; y < r.h; y++) {
+        let i = (r.row0 + y) * cov.width + r.col0, k = y * r.w;
+        for (let x = 0; x < r.w; x++, i++, k++) {
+          const t = r.data[k];
+          if (t !== NO_DATA_I16 && t >= 0 && !hit[i]) { hit[i] = 1; n++; }
+        }
+      }
+    });
+    return n * cellAreaKm2(cov);
+  }
+
+  /** km² each repeater covers on its own, by index into cov.reps. */
+  function repAreasKm2(cov) {
+    if (!cov || !cov.rasters) return [];
+    const a = cellAreaKm2(cov);
+    return cov.rasters.map((r) => {
+      if (!r || !r.data) return 0;
+      let n = 0;
+      for (let k = 0; k < r.data.length; k++) if (r.data[k] !== NO_DATA_I16 && r.data[k] >= 0) n++;
+      return n * a;
+    });
+  }
+
+  /**
+   * What a planned repeater adds: { newKm2 (covered by it and by nothing
+   * counted before), overlapKm2, totalKm2, isNew (Uint8Array over planCov's
+   * cells: 1 new, 2 already covered) }. planCov is computeCoverage for the
+   * planned repeater alone; cov the existing coverage (may be null).
+   */
+  function planGain(planCov, cov) {
+    const out = { newKm2: 0, overlapKm2: 0, totalKm2: 0, isNew: new Uint8Array(planCov ? planCov.margins.length : 0) };
+    if (!planCov) return out;
+    const a = cellAreaKm2(planCov);
+    let fresh = 0, over = 0;
+    for (let row = 0, i = 0; row < planCov.height; row++) {
+      for (let col = 0; col < planCov.width; col++, i++) {
+        if (!(planCov.margins[i] >= 0)) continue;
+        const ll = cellCenter(planCov, col, row);
+        const c = cellAt(cov, ll[0], ll[1]);
+        if (c && c.margin >= 0) { over++; out.isNew[i] = 2; } else { fresh++; out.isNew[i] = 1; }
+      }
+    }
+    out.newKm2 = fresh * a; out.overlapKm2 = over * a; out.totalKm2 = (fresh + over) * a;
+    return out;
+  }
+
+  /**
+   * The counted repeaters a planned one would link to, repeater to repeater
+   * (both ways the same path), best first: [{ rep, index, distM, marginDb }]
+   * with something to spare, within the repeater view's radius.
+   */
+  function planLinks(planned, reps, elevAt) {
+    const radiusM = CONFIG.modes.repeater.radiusKm * 1000;
+    const out = [];
+    reps.forEach((r, index) => {
+      const distM = distanceM(planned.lat, planned.lon, r.lat, r.lon);
+      if (!(distM > 1) || distM > radiusM) return;
+      const p = pathProfile(planned, r.lat, r.lon, elevAt, 'repeater', radioFor(r));
+      if (p && p.marginDb >= 0) out.push({ rep: r, index, distM, marginDb: p.marginDb });
+    });
+    return out.sort((a, b) => b.marginDb - a.marginDb);
+  }
+
+  // ---- Growth time-lapse ------------------------------------------------------
+
+  const DAY_MS = 86400000;
+  const ICON = (id) => `<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#${id}"/></svg>`;
+  const PLAY_HTML = ICON('ph-play') + ' Play growth';
+  const PAUSE_HTML = ICON('ph-pause') + ' Pause';
+
+  /**
+   * The days the time-lapse steps through: from the day the first repeater
+   * appeared to today, each { t (end of that day, ms), count (repeaters by
+   * then) }. first: each repeater's first-seen time (ISO; unknown counts from
+   * the start). Empty with under two days of history.
+   */
+  function growthSteps(first, nowMs) {
+    const ts = first.map((f) => Date.parse(f)).filter(Number.isFinite);
+    if (!ts.length) return [];
+    const start = Math.floor(Math.min(...ts) / DAY_MS) * DAY_MS;
+    const end = Math.floor(nowMs / DAY_MS) * DAY_MS;
+    if (end - start < 2 * DAY_MS) return [];
+    const out = [];
+    for (let d = start; d <= end; d += DAY_MS) {
+      const t = d + DAY_MS - 1;
+      out.push({ t, count: first.filter((f) => { const v = Date.parse(f); return !Number.isFinite(v) || v <= t; }).length });
+    }
+    return out;
+  }
+
+  /** Whether each repeater was there by time t (ms); unknown first-seen: yes. */
+  function presentAt(first, t) {
+    return first.map((f) => { const v = Date.parse(f); return !Number.isFinite(v) || v <= t; });
+  }
+
+  const PLAN_RGB = [6, 182, 212]; // cyan, apart from the MediaMesh pink
+
+  /** The planned repeater's overlay: new coverage strong, overlap faint. */
+  function planImage(planCov, gain) {
+    const cv = document.createElement('canvas');
+    cv.width = planCov.width; cv.height = planCov.height;
+    const ctx = cv.getContext('2d');
+    const img = ctx.createImageData(planCov.width, planCov.height);
+    const radiusM = CONFIG.modes[planCov.modeKey].radiusKm * 1000;
+    const rep = planCov.reps[0];
+    for (let row = 0, i = 0; row < planCov.height; row++) {
+      for (let col = 0; col < planCov.width; col++, i++) {
+        const kind = gain.isNew[i];
+        if (!kind) continue;
+        const c = rampColor(planCov.margins[i], PLAN_RGB);
+        if (!c) continue;
+        const ll = cellCenter(planCov, col, row);
+        const fade = edgeFade(distanceM(rep.lat, rep.lon, ll[0], ll[1]), radiusM);
+        img.data[i * 4] = c[0]; img.data[i * 4 + 1] = c[1]; img.data[i * 4 + 2] = c[2];
+        img.data[i * 4 + 3] = Math.round((kind === 1 ? Math.max(0.22, c[3] * 1.3) : 0.08) * fade * 255);
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    return cv.toDataURL();
+  }
+
+  /** The planned repeater's panel. */
+  function planHtml(planned, gain, links, modeKey, busy) {
+    const where = `${planned.lat.toFixed(4)}, ${planned.lon.toFixed(4)}`;
+    const heights = [5, 10, 20, 30, 50].map((h) => `<option value="${h}"${h === antennaHeight(planned) ? ' selected' : ''}>${h} m</option>`).join('');
+    const who = modeKey === 'ground' ? 'people on the ground' : 'other repeaters';
+    let body;
+    if (busy) {
+      body = '<p class="text-muted mm-cov-note">Working it out…</p>';
+    } else if (!gain) {
+      body = '<p class="text-muted mm-cov-note">No terrain data there.</p>';
+    } else {
+      const km = (v) => (v < 100 ? v.toFixed(1).replace(/\.0$/, '') : Math.round(v).toLocaleString());
+      const linkText = links.length
+        ? links.slice(0, 6).map((l) => `${esc(repName(l.rep))} <span class="text-muted">(${fmtKm(l.distM)}, +${fmtDb(l.marginDb)} dB)</span>`).join(', ')
+          + (links.length > 6 ? ` and ${links.length - 6} more` : '')
+        : 'none of the repeaters counted: it would be on its own';
+      body = `<p class="mm-cov-plan-big"><strong>+${km(gain.newKm2)} km²</strong> of new coverage for ${who}`
+        + ` <span class="text-muted">(${km(gain.totalKm2)} km² in all, ${km(gain.overlapKm2)} km² already covered)</span></p>`
+        + `<p class="mm-cov-note">Links to: ${linkText}</p>`;
+    }
+    return '<div class="mm-cov-plan-head"><strong>Planned repeater</strong>'
+      + ` <span class="text-muted">${where}</span>`
+      + ` <label class="mm-cov-plan-height">Antenna <select data-mm-cov-plan-height aria-label="Planned antenna height above ground">${heights}</select></label>`
+      + ' <button type="button" class="mm-cov-chip mm-cov-chip--all" data-mm-cov-plan-remove>Remove</button></div>'
+      + body
+      + '<p class="text-muted mm-cov-note">Drag the cyan marker to try other spots. Same assumptions as the map: 22 dBm, 2 dBi, the radio2 preset.</p>';
+  }
+
   /** "≈ 12 dB to spare (fair), 4.2 km from First Hill" for the cell at lat/lon. */
   function readout(cov, lat, lon) {
     const cell = cellAt(cov, lat, lon);
@@ -1086,7 +1277,7 @@
   }
 
   /** What the estimate assumes, as list items, with the numbers in use. */
-  function assumptionsHtml(modeKey, radios) {
+  function assumptionsHtml(modeKey, radios, cal) {
     const c = CONFIG, mode = c.modes[modeKey], t = c.terrain;
     const def = DEFAULT_RADIO;
     const reported = (radios || []).filter((r) => r.reported).length;
@@ -1099,6 +1290,7 @@
       `<strong>Radio:</strong> each repeater's reported radio2 setting where it has sent one (${reported} of ${(radios || []).length} here${other ? `, ${other} not on the default preset` : ''}), otherwise ${def.freqMHz} MHz, ${def.bwKHz} kHz, SF${def.sf}. That preset needs ${fmtDb(def.sensitivityDbm)} dBm at the receiver (SX1262 datasheet); the estimate asks for ${c.fadeMarginDb} dB more as a safety margin against fading.`,
       `<strong>Path:</strong> free-space loss, the earth's curve (k = 4/3), and diffraction over up to three ridges (ITU-R P.526-11, cascaded knife edges). Ground that only comes close to the line of sight costs signal too: a path has to clear its first Fresnel zone to count as clean.`,
       `<strong>Terrain:</strong> Mapzen elevation tiles (SRTM, USGS), about ${t.nearZoom === 12 ? '25' : '50'} m per pixel next to a repeater and 50 to 100 m further out, worked out to ${mode.radiusKm} km from each repeater.`,
+      `<strong>Checked:</strong> ${esc(calibrationText(cal))}${cal && cal.used && cal.offsetDb ? ' The correction is added to every path, for both views.' : ''}`,
       '<strong>Not modelled:</strong> buildings and trees (the terrain data is bare ground), being indoors, interference and local noise, reflections, each site\'s real antenna, height and power. Downtown streets and inside buildings will be worse than drawn; a rooftop or a window facing the repeater can be better. Repeaters that only listen can hear you but won\'t send back.',
     ];
     return items.map((i) => `<li>${i}</li>`).join('');
@@ -1123,7 +1315,7 @@
         avgSnr: Number.isFinite(l.avg_snr) ? l.avg_snr : null,
         avgRssi: Number.isFinite(l.avg_rssi) ? l.avg_rssi : null,
         distM: distanceM(l.from_lat, l.from_lon, l.to_lat, l.to_lon),
-        modelRssi: null, delta: null,
+        modelRssi: null, delta: null, rawModelRssi: null, rawDelta: null,
       };
       if (elevAt) {
         const radio = radioFor({ radio: l.radio });
@@ -1134,11 +1326,56 @@
           : pathProfile({ lat: l.to_lat, lon: l.to_lon }, l.from_lat, l.from_lon, elevAt, 'ground', radio);
         if (p) {
           row.modelRssi = p.rxDbm;
-          if (row.avgRssi !== null) row.delta = row.avgRssi - p.rxDbm;
+          row.rawModelRssi = p.rxDbm - p.calibrationDb;
+          if (row.avgRssi !== null) {
+            row.delta = row.avgRssi - p.rxDbm;
+            row.rawDelta = row.avgRssi - row.rawModelRssi;
+          }
         }
       }
       return row;
     }).sort((a, b) => b.count - a.count || a.from.localeCompare(b.from));
+  }
+
+  // The fit: enough links, each heard often enough to trust its average,
+  // and a correction kept within limits. Links that were heard at all are
+  // the ones strong enough to get through, so the heard signal leans high;
+  // the upward limit is the tighter one for that reason.
+  const CAL = { minLinks: 3, minPackets: 5, maxUpDb: 6, maxDownDb: 12 };
+
+  function median(xs) {
+    const v = xs.slice().sort((a, b) => a - b);
+    const m = v.length >> 1;
+    return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
+  }
+
+  /**
+   * Fits the correction to the heard links (linkRows rows): the median of
+   * heard minus model, before any correction, over links heard at least
+   * CAL.minPackets times, limited to +CAL.maxUpDb / -CAL.maxDownDb.
+   * Returns { n, offsetDb, fitDb (unlimited), spreadDb (median distance of
+   * the corrected links from the model), used } — used false (offset 0)
+   * below CAL.minLinks links.
+   */
+  function fitCalibration(rows) {
+    const d = (rows || []).filter((r) => r.rawDelta !== null && r.rawDelta !== undefined && r.count >= CAL.minPackets)
+      .map((r) => r.rawDelta);
+    if (d.length < CAL.minLinks) return { n: d.length, offsetDb: 0, fitDb: null, spreadDb: null, used: false };
+    const fitDb = median(d);
+    const offsetDb = Math.round(Math.max(-CAL.maxDownDb, Math.min(CAL.maxUpDb, fitDb)) * 10) / 10;
+    const spreadDb = Math.round(median(d.map((x) => Math.abs(x - offsetDb))) * 10) / 10;
+    return { n: d.length, offsetDb, fitDb, spreadDb, used: true };
+  }
+
+  /** One line on how the model compares with what was heard. */
+  function calibrationText(cal) {
+    if (!cal || !cal.used) {
+      return `Not yet checked against real links: it needs ${CAL.minLinks} links heard on radio2 at least ${CAL.minPackets} times each${cal && cal.n ? ` (${cal.n} so far)` : ''}.`;
+    }
+    const adj = cal.offsetDb === 0 ? 'no correction needed'
+      : `${cal.offsetDb > 0 ? 'raised' : 'lowered'} by ${fmtDb(Math.abs(cal.offsetDb))} dB to match`;
+    const limited = cal.fitDb !== null && Math.abs(cal.fitDb - cal.offsetDb) > 0.05 ? ` (the links suggest ${cal.fitDb > 0 ? '+' : '−'}${fmtDb(Math.abs(cal.fitDb))} dB; capped)` : '';
+    return `Checked against ${cal.n} real links heard on radio2: ${adj}${limited}, and typically within ±${fmtDb(cal.spreadDb)} dB of them.`;
   }
 
   /** The heard-links table. */
@@ -1155,7 +1392,7 @@
       + `</tr></thead><tbody>${body}</tbody></table></div>`;
   }
 
-  const session = { key: '', loader: null, modes: {} };
+  const session = { key: '', loader: null, linksSig: '', modes: {}, cal: null };
 
   /**
    * Draws the coverage card's map in el (which holds #mmCovMap, the mode
@@ -1221,7 +1458,10 @@
     // (a new time window, say) doesn't work them out again.
     const loader = opts && opts.loadTile;
     const key = JSON.stringify(placed.map((r) => [r.lat, r.lon, r.radio || '']));
-    if (session.key !== key || session.loader !== loader) { session.key = key; session.loader = loader; session.modes = {}; }
+    const linksSig = JSON.stringify(((opts && opts.links) || []).map((l) => [l.from, l.observer_id]).sort());
+    if (session.key !== key || session.loader !== loader || session.linksSig !== linksSig) {
+      session.key = key; session.loader = loader; session.linksSig = linksSig; session.modes = {}; session.cal = null;
+    }
     const cache = session.modes;
     let overlay = null, current = null, destroyed = false, shown = null, shownTerrain = null;
     let opacity = 1;
@@ -1270,6 +1510,12 @@
       if (any && (!linksToggle || linksToggle.checked)) linkLayer.addTo(map); else map.removeLayer(linkLayer);
     }
     const onLinksToggle = () => drawLinks();
+    const calEl = el.querySelector('#mmCovCal');
+    function drawCalibration() {
+      if (calEl) calEl.textContent = session.cal ? calibrationText(session.cal) : '';
+      if (howEl && current) howEl.innerHTML = assumptionsHtml(current, placed.map(radioFor), session.cal);
+    }
+    if (session.cal) { setCalibration(session.cal.offsetDb); drawCalibration(); }
     if (linksToggle) linksToggle.addEventListener('change', onLinksToggle);
 
     // The clicked point and its profile.
@@ -1306,7 +1552,81 @@
       const cw = chart ? Math.round(chart.clientWidth) : 0;
       if (cw > 100 && cw !== 640) profEl.innerHTML = profileHtml(p, rep, cw);
     }
-    map.on('click', (e) => { if (shown) { picked = e.latlng; drawProfile(); } });
+    map.on('click', (e) => {
+      if (planArmed) { placePlan(e.latlng); return; }
+      if (shown) { picked = e.latlng; drawProfile(); }
+    });
+
+    // ---- Plan a repeater: a hypothetical one, its new coverage in cyan ----
+    const planBtn = el.querySelector('[data-mm-cov-plan]');
+    const planEl = el.querySelector('#mmCovPlan');
+    let planArmed = false, planned = null, planMarker = null, planOverlay = null, planToken = 0;
+    function armPlan(on) {
+      planArmed = on;
+      if (planBtn) {
+        planBtn.classList.toggle('active', on);
+        planBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        planBtn.textContent = on ? 'Click the map to place it' : (planned ? 'Move the planned repeater' : '＋ Plan a repeater');
+      }
+      mapEl.classList.toggle('mm-cov-map--plan', on);
+    }
+    function clearPlan() {
+      planToken++;
+      planned = null;
+      if (planMarker) { map.removeLayer(planMarker); planMarker = null; }
+      if (planOverlay) { map.removeLayer(planOverlay); planOverlay = null; }
+      if (planEl) { planEl.innerHTML = ''; planEl.hidden = true; }
+      armPlan(false);
+    }
+    function placePlan(latlng) {
+      const heightM = planned ? planned.heightM : CONFIG.txHeightM;
+      planned = { name: 'Planned repeater', lat: latlng.lat, lon: latlng.lng, heightM, radio: '' };
+      if (!planMarker) {
+        planMarker = L.marker(latlng, {
+          draggable: true, keyboard: true, title: 'Planned repeater (drag to move)',
+          icon: L.divIcon({ className: 'mm-cov-plan-pin', html: '<span></span>', iconSize: [18, 18], iconAnchor: [9, 9] }),
+        }).addTo(map);
+        planMarker.on('dragend', () => placePlan(planMarker.getLatLng()));
+      } else {
+        planMarker.setLatLng(latlng);
+      }
+      armPlan(false);
+      computePlan();
+    }
+    async function computePlan() {
+      if (!planned || !planEl) return;
+      const token = ++planToken;
+      planEl.hidden = false;
+      planEl.innerHTML = planHtml(planned, null, [], current || 'ground', true);
+      const modeKey = current || 'ground';
+      try {
+        const cover = await loadTerrainLevels(terrainPlan([planned], CONFIG.modes[modeKey]), loader);
+        const reach = modeKey === 'repeater' ? cover
+          : await loadTerrainLevels(terrainPlan([planned], CONFIG.modes.repeater), loader);
+        if (token !== planToken || destroyed) return;
+        const planCov = await computeCoverage([planned], cover.elevAt, modeKey, null, null);
+        if (token !== planToken || destroyed) return;
+        const gain = planCov ? planGain(planCov, shown) : null;
+        const counted = placed.filter((_, i) => enabled[i]);
+        const links = planLinks(planned, counted, reach.elevAt);
+        if (planOverlay) { map.removeLayer(planOverlay); planOverlay = null; }
+        if (planCov && gain) {
+          const b = planCov.bounds;
+          planOverlay = L.imageOverlay(planImage(planCov, gain), [[b.south, b.west], [b.north, b.east]],
+            { pane: 'mmCoverage', opacity: Math.max(opacity, 0.35), className: 'mm-cov-overlay' }).addTo(map);
+        }
+        planEl.innerHTML = planHtml(planned, gain, links, modeKey, false);
+      } catch (_) {
+        if (token === planToken) planEl.innerHTML = planHtml(planned, null, [], modeKey, false);
+      }
+    }
+    const onPlanChange = (e) => {
+      if (e.target.matches('[data-mm-cov-plan-height]') && planned) {
+        planned.heightM = Number(e.target.value) || CONFIG.txHeightM;
+        computePlan();
+      }
+    };
+    if (planEl) planEl.addEventListener('change', onPlanChange);
 
     // The repeater picker: drawn once, then kept in step with `enabled`, so
     // the search text and which groups are open survive every change.
@@ -1328,7 +1648,10 @@
           if (n) n.textContent = on === idx.length ? `${idx.length}` : `${on} of ${idx.length}`;
         });
       }
-      markers.forEach((m, i) => m.setStyle({ opacity: enabled[i] ? 1 : 0.35, fillOpacity: enabled[i] ? 1 : 0.35 }));
+      markers.forEach((m, i) => {
+        const o = timeMask && !timeMask[i] ? 0 : (enabled[i] ? 1 : 0.35);
+        m.setStyle({ opacity: o, fillOpacity: o });
+      });
     }
     function setFold(g, open) {
       const t = g && g.querySelector('[data-mm-cov-fold]');
@@ -1373,12 +1696,30 @@
       overlay = L.imageOverlay(coverageImage(shown), [[b.south, b.west], [b.north, b.east]],
         { pane: 'mmCoverage', opacity, className: 'mm-cov-overlay' }).addTo(map);
     }
+    // The repeaters drawn: those counted in the picker, and during the
+    // time-lapse only those already there.
+    let timeMask = null;
+    function counted() { return timeMask ? enabled.map((on, i) => on && timeMask[i]) : enabled; }
     function applyEnabled() {
       drawReps();
       if (!shown) return;
-      merge(shown, enabled);
+      merge(shown, counted());
       drawOverlay();
       drawProfile();
+      if (planned && !timeMask) computePlan();
+    }
+    // The figures the tab shows around the map: area covered by everything,
+    // and by each repeater on its own (for the leaderboard).
+    function reportStats() {
+      if (!shown || !(opts && typeof opts.onStats === 'function')) return;
+      const areas = repAreasKm2(shown);
+      try {
+        opts.onStats({
+          modeKey: shown.modeKey, areaKm2: unionKm2(shown),
+          repAreas: shown.reps.map((r, i) => ({ rep: r, km2: areas[i] || 0 })),
+          calibration: session.cal,
+        });
+      } catch (_) { /* the tab's business */ }
     }
     drawReps();
 
@@ -1386,7 +1727,7 @@
       current = modeKey;
       el.querySelectorAll('[data-mm-cov]').forEach((b) => b.classList.toggle('active', b.dataset.mmCov === modeKey));
       if (noteEl) noteEl.textContent = CONFIG.modes[modeKey].note;
-      if (howEl) howEl.innerHTML = assumptionsHtml(modeKey, placed.map(radioFor));
+      if (howEl) howEl.innerHTML = assumptionsHtml(modeKey, placed.map(radioFor), session.cal);
       shown = null; shownTerrain = null;
       drawOverlay();
       pick.clearLayers();
@@ -1398,6 +1739,14 @@
           if (status) status.textContent = 'Loading terrain…';
           const terrain = await loadTerrainLevels(terrainPlan(placed, mode), loader);
           if (terrain.total && terrain.failed === terrain.total) throw new Error('terrain');
+          // Check the model against the links heard on radio2 once, before
+          // any correction, and use the fitted correction from then on.
+          if (!session.cal) {
+            setCalibration(0);
+            session.cal = fitCalibration(linkRows(links, terrain.elevAt));
+          }
+          setCalibration(session.cal.offsetDb);
+          drawCalibration();
           const pool = (opts && opts.workers === false) ? null : workerPool();
           try {
             const cov = await computeCoverage(placed, terrain.elevAt, modeKey, (done, total) => {
@@ -1412,11 +1761,16 @@
       try {
         const res = await entry;
         if (destroyed || current !== modeKey) return;
-        shown = merge(res.cov, enabled);
+        // The entry may have been started by an earlier drawing of the card
+        // (the tab re-renders): show the fit here too.
+        drawCalibration();
+        shown = merge(res.cov, counted());
         shownTerrain = res.elevAt;
         drawOverlay();
         drawProfile();
         drawLinks();
+        reportStats();
+        if (planned) computePlan();
         if (status) status.textContent = res.failed ? 'Some terrain could not be loaded; those areas are left blank.' : '';
         if (readoutEl && !readoutEl.textContent) readoutEl.textContent = hint;
       } catch (_) {
@@ -1425,11 +1779,65 @@
       }
     }
 
+    // ---- Growth time-lapse: replay the network day by day ----
+    const timeEl = el.querySelector('#mmCovTime');
+    const timeRange = el.querySelector('#mmCovTimeRange');
+    const timeLabel = el.querySelector('#mmCovTimeLabel');
+    const playBtn = el.querySelector('[data-mm-cov-play]');
+    const firstSeen = placed.map((r) => r.first_seen || '');
+    const steps = growthSteps(firstSeen, (opts && opts.now) || Date.now());
+    let playing = null;
+    const fmtDay = (t) => new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    function setTime(k) {
+      if (!steps.length) return;
+      k = Math.max(0, Math.min(steps.length - 1, k));
+      const last = k === steps.length - 1;
+      timeMask = last ? null : presentAt(firstSeen, steps[k].t);
+      if (timeRange) timeRange.value = String(k);
+      applyEnabled();
+      // Today's heard links would give the past away: back at the end only.
+      if (timeMask) map.removeLayer(linkLayer); else drawLinks();
+      if (timeLabel) {
+        const area = shown ? coveredKm2(shown) : 0;
+        timeLabel.textContent = `${last ? 'Today' : fmtDay(steps[k].t)} · ${steps[k].count} repeater${steps[k].count === 1 ? '' : 's'}`
+          + (shown ? ` · ${Math.round(area).toLocaleString()} km² covered` : '');
+      }
+    }
+    function stopPlay() {
+      if (playing) { clearInterval(playing); playing = null; }
+      if (playBtn) playBtn.innerHTML = PLAY_HTML;
+    }
+    function startPlay() {
+      if (!steps.length) return;
+      let k = Number(timeRange && timeRange.value) || 0;
+      if (k >= steps.length - 1) k = 0;
+      setTime(k);
+      if (playBtn) playBtn.innerHTML = PAUSE_HTML;
+      playing = setInterval(() => {
+        if (destroyed) { stopPlay(); return; }
+        k++;
+        setTime(k);
+        if (k >= steps.length - 1) stopPlay();
+      }, Math.max(250, Math.min(700, 9000 / steps.length)));
+    }
+    const onTimeInput = () => { stopPlay(); setTime(Number(timeRange.value)); };
+    if (timeEl) {
+      timeEl.hidden = !steps.length;
+      if (steps.length && timeRange) {
+        timeRange.min = '0'; timeRange.max = String(steps.length - 1); timeRange.value = String(steps.length - 1);
+        timeRange.addEventListener('input', onTimeInput);
+        if (timeLabel) timeLabel.textContent = `${fmtDay(steps[0].t)} → today: ${steps[0].count} → ${steps[steps.length - 1].count} repeaters`;
+      }
+    }
+
     const onClick = (e) => {
+      if (e.target.closest('[data-mm-cov-play]')) { if (playing) stopPlay(); else startPlay(); return; }
       const b = e.target.closest('[data-mm-cov]');
       if (b) { show(b.dataset.mmCov); return; }
       if (e.target.closest('[data-mm-cov-close]')) { clearProfile(); return; }
       if (e.target.closest('[data-mm-cov-panel]')) { panelOpen = !panelOpen; drawReps(); return; }
+      if (e.target.closest('[data-mm-cov-plan]')) { armPlan(!planArmed); return; }
+      if (e.target.closest('[data-mm-cov-plan-remove]')) { clearPlan(); return; }
       const fold = e.target.closest('[data-mm-cov-fold]');
       if (fold) { setFold(fold.closest('.mm-cov-group'), fold.getAttribute('aria-expanded') !== 'true'); return; }
       const act = e.target.closest('[data-mm-cov-act]');
@@ -1448,6 +1856,9 @@
       el.removeEventListener('click', onClick);
       if (slider) slider.removeEventListener('input', onSlide);
       if (panelEl) { panelEl.removeEventListener('input', onSearch); panelEl.removeEventListener('change', onPanelChange); }
+      if (planEl) planEl.removeEventListener('change', onPlanChange);
+      if (timeRange) timeRange.removeEventListener('input', onTimeInput);
+      stopPlay();
       if (linksToggle) linksToggle.removeEventListener('change', onLinksToggle);
       map.remove();
     };
@@ -1458,6 +1869,8 @@
     worstEdge, cascadedKnifeEdge, sampleDistances, gridFor, buildJob, polarMargins, repRaster, merge,
     computeCoverage, workerPool, pathProfile, profileVerdict, budgetRows, profileSvg, profileHtml,
     terrainPlan, loadTerrainLevels, loadTerrain, rampColor, edgeFade, cellAt, readout,
+    fitCalibration, calibrationText, setCalibration, getCalibration, CAL,
+    growthSteps, presentAt, antennaHeight, cellAreaKm2, coveredKm2, unionKm2, repAreasKm2, planGain, planLinks, planHtml, PLAN_RGB,
     repNotes, repArea, repGroups, repSummaryHtml, repPanelHtml, repAction, assumptionsHtml, linkRows, linksTableHtml, init,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -6024,6 +6024,30 @@ body.embed #app.app-fixed {
 .mm-cov-sw--relayed { background: #fff; border: 2px solid var(--mediamesh-node-weak-color); border-radius: 50%; }
 .mm-cov-note { font-size: 0.8em; margin: 8px 0 0; }
 .mm-cov-note:empty { display: none; }
+.mm-cov-cal { color: var(--text); }
+.mm-cov-plan-btn { border-style: dashed; }
+.mm-lb { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 24px; }
+.mm-lb h4 { margin: 0 0 6px; font-size: 0.95em; }
+.mm-lb-list { margin: 0; padding-left: 1.4em; font-size: 0.9em; line-height: 1.7; }
+.mm-lb-list li::marker { color: var(--mediamesh-node-color); font-weight: var(--fw-medium, 500); }
+.mm-lb-num { color: var(--text-muted); font-variant-numeric: tabular-nums; margin-left: 4px; }
+.mm-lb-empty { font-size: 0.9em; margin: 0; }
+.mm-cov-time { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; margin-top: 8px; font-size: 0.9em; }
+.mm-cov-time[hidden] { display: none; }
+.mm-cov-time input[type="range"] { flex: 1 1 200px; min-width: 120px; accent-color: var(--mediamesh-node-color); }
+.mm-cov-time-label { font-variant-numeric: tabular-nums; color: var(--text); }
+.mm-cov-play { min-width: 9.5em; }
+.mm-cov-plan-btn.active { border-color: rgb(6, 182, 212); color: var(--text); background: rgba(6, 182, 212, 0.14); }
+.mm-cov-map--plan, .mm-cov-map--plan .leaflet-interactive { cursor: copy; }
+.mm-cov-plan-pin span { display: block; width: 18px; height: 18px; border-radius: 50%; background: rgb(6, 182, 212); border: 3px solid #fff; box-shadow: 0 0 0 2px rgb(6, 182, 212), 0 0 12px 4px rgba(6, 182, 212, 0.55); box-sizing: border-box; cursor: grab; }
+.mm-cov-plan { margin-top: 10px; padding: 10px 12px; border: 1px solid rgb(6, 182, 212); border-radius: 8px; background: rgba(6, 182, 212, 0.06); font-size: 0.9em; }
+.mm-cov-plan[hidden] { display: none; }
+.mm-cov-plan-head { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.mm-cov-plan-height select { font: inherit; margin-left: 4px; }
+.mm-cov-plan-big { margin: 8px 0 2px; font-size: 1.15em; }
+.mm-cov-plan-big strong { color: rgb(8, 145, 178); font-size: 1.25em; }
+[data-theme="dark"] .mm-cov-plan-big strong { color: rgb(34, 211, 238); }
+.mm-cov-cal:empty { display: none; }
 .mm-next { font-size: 0.85em; color: var(--text-muted); margin-top: 2px; line-height: 1.4; }
 .mm-cov-reps { margin-top: 10px; font-size: 0.85em; }
 .mm-cov-reps-toggle { font: inherit; padding: 4px 10px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer; }

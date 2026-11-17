@@ -44,8 +44,8 @@ const ctx = {
 ctx.escapeHtml = ctx.esc;
 vm.createContext(ctx);
 vm.runInContext(extract(analytics, ['renderPayloadPie', 'mediaMeshTypeShares', 'mediaMeshStatCard',
-  'mediaMeshRadioText', 'mediaMeshTime', 'mediaMeshUnknownNearHtml', 'mediaMeshCoverageCardHtml', 'renderMediaMeshTabHtml', 'renderRelayAirtimeDumbbell']) +
-  '\nthis.api = { renderPayloadPie, mediaMeshTypeShares, mediaMeshStatCard, renderMediaMeshTabHtml, renderRelayAirtimeDumbbell };', ctx);
+  'mediaMeshRadioText', 'mediaMeshTime', 'mediaMeshUnknownNearHtml', 'mediaMeshLinksByLength', 'mmKm', 'mediaMeshHeadlineHtml', 'mediaMeshLeaderboardHtml', 'mediaMeshOnCoverageStats', 'mediaMeshCoverageCardHtml', 'renderMediaMeshTabHtml', 'renderRelayAirtimeDumbbell']) +
+  '\nthis.api = { renderPayloadPie, mediaMeshTypeShares, mediaMeshStatCard, renderMediaMeshTabHtml, renderRelayAirtimeDumbbell, mediaMeshLinksByLength, mediaMeshHeadlineHtml, mediaMeshLeaderboardHtml, mediaMeshOnCoverageStats };', ctx);
 const A = ctx.api;
 
 const MM = {
@@ -196,6 +196,52 @@ test('an unknown repeater shows its likely area and the named nodes next to it',
   assert.ok(row('1B36').includes('<td data-value="">—</td>'), 'no neighbours: a dash');
 });
 
+test('headline tiles: longest link heard, photo and voice packets, coverage filled in later', () => {
+  const mm = Object.assign({}, MM, {
+    media: { packets: 735, median_hops: 2.5, max_hops: 6 },
+    links: [
+      { from: 'a', from_name: 'Skyline', observer_name: 'Rainier View', count: 89, from_lat: 47.606423, from_lon: -122.326254, to_lat: 47.502494, to_lon: -122.254413 },
+      { from: 'b', from_name: 'Near', observer_name: 'First Hill', count: 50, from_lat: 47.6, from_lon: -122.32, to_lat: 47.601, to_lon: -122.32 },
+      { from: 'c', from_name: 'No place', observer_name: 'X', count: 5, from_lat: 47.6, from_lon: -122.32 },
+    ],
+  });
+  const ls = A.mediaMeshLinksByLength(mm);
+  assert.strictEqual(ls.length, 2, 'links without both ends placed are left out');
+  assert.ok(ls[0].from === 'Skyline' && Math.abs(ls[0].km - 12.6) < 0.3, JSON.stringify(ls[0]));
+  const h = A.mediaMeshHeadlineHtml(mm);
+  assert.ok(/<div class="stat-value">12\.\d km<\/div><div class="stat-label">Longest link heard<\/div><div class="stat-detail">Skyline → Rainier View/.test(h), h);
+  assert.ok(h.includes('<div class="stat-value">735</div><div class="stat-label">Photo &amp; voice packets</div><div class="stat-detail">median 2.5 hops, up to 6</div>'), h);
+  assert.ok(h.includes('id="mmStatArea">…<'), 'coverage waits for the map');
+  assert.ok(A.mediaMeshHeadlineHtml(MM).includes('none heard directly yet'));
+});
+
+test('leaderboard: most relayed, longest links, newest, best placed from the map', () => {
+  const mm = Object.assign({}, MM, {
+    repeaters: [
+      { public_key: 'aa', name: 'Busy', media_relayed_7d: 300, first_seen: '2026-10-20T00:00:00Z' },
+      { public_key: 'bb', name: 'Quiet', media_relayed_7d: 0, first_seen: '2026-11-16T00:00:00Z' },
+      { public_key: 'cc', name: 'Middle <b>', media_relayed_7d: 40, first_seen: '2026-11-01T00:00:00Z' },
+    ],
+  });
+  const h = A.mediaMeshLeaderboardHtml(mm);
+  const relayed = h.split('<section>')[1];
+  assert.ok(relayed.indexOf('Busy') < relayed.indexOf('Middle &lt;b&gt;') && !relayed.includes('Quiet'), relayed);
+  const newest = h.split('<section>')[4];
+  assert.ok(newest.indexOf('Quiet') < newest.indexOf('Middle') && newest.indexOf('Middle') < newest.indexOf('Busy'), newest);
+  assert.strictEqual(A.mediaMeshLeaderboardHtml(Object.assign({}, MM, { repeaters: [] })), '');
+  // the map's figures fill the coverage tile and the best-placed list (ground view only)
+  const els = {};
+  const fake = { querySelector: (sel) => (els[sel] = els[sel] || { textContent: '', innerHTML: '' }) };
+  A.mediaMeshOnCoverageStats(fake, { modeKey: 'repeater', areaKm2: 999, repAreas: [] });
+  assert.strictEqual(els['#mmStatArea'], undefined, 'the repeater view is ignored');
+  A.mediaMeshOnCoverageStats(fake, { modeKey: 'ground', areaKm2: 412.4, calibration: { used: true, n: 12 },
+    repAreas: [{ rep: { public_key: 'aa', name: 'Small' }, km2: 3.24 }, { rep: { public_key: 'bb', name: 'Big' }, km2: 41 }, { rep: { name: 'None' }, km2: 0 }] });
+  assert.strictEqual(els['#mmStatArea'].textContent, '412');
+  assert.ok(els['#mmStatAreaDetail'].textContent.includes('checked against 12 real links'));
+  const placed = els['#mmLeaderPlaced'].innerHTML;
+  assert.ok(placed.indexOf('Big') < placed.indexOf('Small') && placed.includes('41 km²') && placed.includes('3.2 km²') && !placed.includes('None'), placed);
+});
+
 test('empty state explains what is needed', () => {
   const h = A.renderMediaMeshTabHtml({ mediamesh_transmissions: 0, repeaters: [], observers: [], per_hour: [] }, '');
   assert.ok(h.includes('No MediaMesh traffic or repeaters'));
@@ -204,7 +250,7 @@ test('empty state explains what is needed', () => {
 test('the coverage card has everything the map script fills in, and gets the heard links', () => {
   const html = A.renderMediaMeshTabHtml(MM, '');
   for (const id of ['mmCoverageCard', 'mmCovMap', 'mmCovReps', 'mmCovRepSummary', 'mmCovRepPanel', 'mmCovGradient', 'mmCovOpacity', 'mmCovReadout', 'mmCovStatus',
-    'mmCovProfile', 'mmCovMode', 'mmCovLinksKey', 'mmCovLinksToggle', 'mmCovLinksWrap', 'mmCovLinks', 'mmCovHow']) {
+    'mmCovProfile', 'mmCovMode', 'mmCovCal', 'mmCovPlan', 'mmCovTime', 'mmCovTimeRange', 'mmCovTimeLabel', 'mmStatArea', 'mmLeaderPlaced', 'mmCovLinksKey', 'mmCovLinksToggle', 'mmCovLinksWrap', 'mmCovLinks', 'mmCovHow']) {
     assert.strictEqual(html.split('id="' + id + '"').length, 2, id);
   }
   assert.ok(html.includes('data-mm-cov="ground"') && html.includes('data-mm-cov="repeater"'));
@@ -214,7 +260,7 @@ test('the coverage card has everything the map script fills in, and gets the hea
   assert.ok(html.includes('Estimate, not a measurement'));
   assert.ok(html.includes('Repeaters without a saved position (Peak, Valley)'));
   assert.ok(analytics.includes('initMediaMeshCoverage(el, Array.isArray(mm.repeaters) ? mm.repeaters : [], Array.isArray(mm.links) ? mm.links : [])'));
-  assert.ok(analytics.includes('window.MediaMeshCoverage.init(card, reps, { links: links || [] })'));
+  assert.ok(analytics.includes('window.MediaMeshCoverage.init(card, reps, { links: links || [], onStats: (st) => mediaMeshOnCoverageStats(el, st) })'));
   const css = fs.readFileSync('public/style.css', 'utf8');
   for (const cls of ['.mm-cov-chip', '.mm-cov-profile', '.mm-cov-prof-zone', '.mm-cov-prof-los', '.mm-cov-budget', '.mm-cov-how', '.mm-cov-links-table']) {
     assert.ok(css.includes(cls + ' {'), cls);
