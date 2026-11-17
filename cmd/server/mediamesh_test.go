@@ -21,6 +21,8 @@ func withMediaMesh(t testing.TB) {
 		mediaMeshNodes.Store(nil)
 		mediaMeshUnknown.Store(nil)
 		mediaMeshStats.Store(nil)
+		mediaMeshEdges.Store(nil)
+		mediaMeshDaily.Store(nil)
 	}
 	reset()
 	t.Cleanup(reset)

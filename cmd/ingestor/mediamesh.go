@@ -462,12 +462,14 @@ func (s *Store) UpdateMediaMeshPrefixNeighbours(now time.Time) int {
 // MediaMesh photo and voice packets (GRP_DATA, RAW_CUSTOM): for every node
 // that relayed one (a resolved hop of its path) or heard one (the observer),
 // the earliest time, kept if earlier than the stored one; and the number of
-// different packets each relayed in the last week. Nodes marked MediaMesh
+// different packets each relayed in the last week. Also rebuilds the
+// backbone (mediamesh_edge: who passed packets to whom this week) and the
+// per-day counts (mediamesh_node_daily, two weeks). Nodes marked MediaMesh
 // some other way (a status report) get first_seen = their mark's time the
 // first time round. Returns the number of nodes with a row.
 func (s *Store) UpdateMediaMeshNodeStats(now time.Time) int {
 	rows, err := s.db.Query(`SELECT t.hash, COALESCE(o.path_json, ''), COALESCE(o.resolved_path, ''),
-			COALESCE(obs.id, ''), o.timestamp
+			COALESCE(obs.id, ''), COALESCE(o.direction, ''), o.timestamp
 		FROM observation_mediamesh m
 		JOIN observations o ON o.id = m.observation_id
 		JOIN transmissions t ON t.id = o.transmission_id
@@ -481,6 +483,25 @@ func (s *Store) UpdateMediaMeshNodeStats(now time.Time) int {
 	first := map[string]int64{}
 	relayed := map[string]map[string]bool{}
 	weekAgo := now.Add(-7 * 24 * time.Hour).Unix()
+	fortnightAgo := now.Add(-14 * 24 * time.Hour).Unix()
+	type pair struct{ a, b string }
+	edges := map[pair]map[string]bool{}
+	type nodeDay struct{ pk, day string }
+	daily := map[nodeDay]map[string]bool{}
+	link := func(x, y, hash string) {
+		x, y = strings.ToLower(x), strings.ToLower(y)
+		if x == y || !targetPubkeyRe.MatchString(x) || !targetPubkeyRe.MatchString(y) {
+			return
+		}
+		if y < x {
+			x, y = y, x
+		}
+		k := pair{x, y}
+		if edges[k] == nil {
+			edges[k] = map[string]bool{}
+		}
+		edges[k][hash] = true
+	}
 	see := func(pk string, ts int64) {
 		pk = strings.ToLower(pk)
 		if !targetPubkeyRe.MatchString(pk) {
@@ -491,9 +512,9 @@ func (s *Store) UpdateMediaMeshNodeStats(now time.Time) int {
 		}
 	}
 	for rows.Next() {
-		var hash, pj, rj, observer string
+		var hash, pj, rj, observer, dir string
 		var ts int64
-		if rows.Scan(&hash, &pj, &rj, &observer, &ts) != nil {
+		if rows.Scan(&hash, &pj, &rj, &observer, &dir, &ts) != nil {
 			continue
 		}
 		see(observer, ts)
@@ -502,17 +523,31 @@ func (s *Store) UpdateMediaMeshNodeStats(now time.Time) int {
 		if rj == "" || json.Unmarshal([]byte(rj), &resolved) != nil || len(resolved) != len(hops) {
 			continue
 		}
-		for _, r := range resolved {
+		day := time.Unix(ts, 0).UTC().Format("2006-01-02")
+		for i, r := range resolved {
 			if r == nil {
 				continue
 			}
 			see(*r, ts)
+			pk := strings.ToLower(*r)
 			if ts >= weekAgo {
-				pk := strings.ToLower(*r)
 				if relayed[pk] == nil {
 					relayed[pk] = map[string]bool{}
 				}
 				relayed[pk][hash] = true
+				if i > 0 && resolved[i-1] != nil {
+					link(*resolved[i-1], pk, hash)
+				}
+				if i == len(resolved)-1 && observer != "" && !strings.EqualFold(dir, "tx") {
+					link(pk, observer, hash)
+				}
+			}
+			if ts >= fortnightAgo {
+				k := nodeDay{pk, day}
+				if daily[k] == nil {
+					daily[k] = map[string]bool{}
+				}
+				daily[k][hash] = true
 			}
 		}
 	}
@@ -539,6 +574,22 @@ func (s *Store) UpdateMediaMeshNodeStats(now time.Time) int {
 	if _, err := tx.Exec(`INSERT OR IGNORE INTO mediamesh_node_stats (public_key, first_seen, relayed_7d)
 		SELECT public_key, last_seen, 0 FROM node_mediamesh`); err != nil {
 		return fail()
+	}
+	if _, err := tx.Exec(`DELETE FROM mediamesh_edge`); err != nil {
+		return fail()
+	}
+	for k, hs := range edges {
+		if _, err := tx.Exec(`INSERT INTO mediamesh_edge (a, b, packets) VALUES (?, ?, ?)`, k.a, k.b, len(hs)); err != nil {
+			return fail()
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM mediamesh_node_daily`); err != nil {
+		return fail()
+	}
+	for k, hs := range daily {
+		if _, err := tx.Exec(`INSERT INTO mediamesh_node_daily (public_key, day, packets) VALUES (?, ?, ?)`, k.pk, k.day, len(hs)); err != nil {
+			return fail()
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return 0

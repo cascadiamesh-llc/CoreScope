@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/gorilla/mux"
 )
 
 // MediaMesh (radio2) analytics: how much traffic went over radio2, which
@@ -192,6 +194,48 @@ func mediaMeshMediaStatsOf(hops []int) MediaMeshMediaStats {
 	return out
 }
 
+// MediaMeshBackboneEdge is one hop photos, video or voice took this week.
+type MediaMeshBackboneEdge struct {
+	A       string  `json:"a"`
+	B       string  `json:"b"`
+	AName   string  `json:"a_name,omitempty"`
+	BName   string  `json:"b_name,omitempty"`
+	ALat    float64 `json:"a_lat"`
+	ALon    float64 `json:"a_lon"`
+	BLat    float64 `json:"b_lat"`
+	BLon    float64 `json:"b_lon"`
+	Packets int     `json:"packets"`
+}
+
+// mediaMeshMaxBackbone caps the backbone list (busiest first).
+const mediaMeshMaxBackbone = 400
+
+// mediaMeshBackbone turns the stored edges into the API list: both ends
+// with a position, names from the node list, keep(pk) false drops an edge.
+func mediaMeshBackbone(nodes map[string]nodeInfo, keep func(string) bool) []MediaMeshBackboneEdge {
+	out := []MediaMeshBackboneEdge{}
+	p := mediaMeshEdges.Load()
+	if p == nil {
+		return out
+	}
+	for _, e := range *p {
+		if keep != nil && (!keep(e.A) || !keep(e.B)) {
+			continue
+		}
+		a, okA := nodes[e.A]
+		b, okB := nodes[e.B]
+		if !okA || !okB || (a.Lat == 0 && a.Lon == 0) || (b.Lat == 0 && b.Lon == 0) {
+			continue
+		}
+		out = append(out, MediaMeshBackboneEdge{A: e.A, B: e.B, AName: a.Name, BName: b.Name,
+			ALat: a.Lat, ALon: a.Lon, BLat: b.Lat, BLon: b.Lon, Packets: e.Packets})
+		if len(out) >= mediaMeshMaxBackbone {
+			break
+		}
+	}
+	return out
+}
+
 // MediaMeshAnalytics is the /api/analytics/mediamesh response.
 type MediaMeshAnalytics struct {
 	TotalTransmissions     int                  `json:"total_transmissions"`
@@ -206,6 +250,9 @@ type MediaMeshAnalytics struct {
 	UnknownRepeaters []MediaMeshUnknown `json:"unknown_repeaters"`
 	// Media: the photo and voice packets (GRP_DATA, RAW_CUSTOM) in scope.
 	Media MediaMeshMediaStats `json:"media"`
+	// Backbone: who passed photos, video and voice to whom this week, busiest
+	// first, both ends placed (not scoped to the region or window).
+	Backbone []MediaMeshBackboneEdge `json:"backbone"`
 	// Links: who was heard directly on radio2 by which observer, in scope.
 	Links  []MediaMeshLink `json:"links"`
 	Window string          `json:"window,omitempty"`
@@ -218,14 +265,116 @@ func (s *Server) handleAnalyticsMediaMesh(w http.ResponseWriter, r *http.Request
 		writeJSON(w, emptyMediaMeshAnalytics())
 		return
 	}
-	writeJSON(w, s.store.GetMediaMeshAnalytics(region, window))
+	res := s.store.GetMediaMeshAnalytics(region, window)
+	// The backbone names nodes by key: leave out blacklisted and hidden ones
+	// (a copy, the cached result stays whole).
+	if len(res.Backbone) > 0 {
+		cp := *res
+		cp.Backbone = make([]MediaMeshBackboneEdge, 0, len(res.Backbone))
+		for _, e := range res.Backbone {
+			if s.mediaMeshNodeShown(e.A) && s.mediaMeshNodeShown(e.B) {
+				cp.Backbone = append(cp.Backbone, e)
+			}
+		}
+		res = &cp
+	}
+	writeJSON(w, res)
+}
+
+// mediaMeshNodeShown: not blacklisted and not hidden by name prefix.
+func (s *Server) mediaMeshNodeShown(pk string) bool {
+	if s.cfg != nil && s.cfg.IsBlacklisted(pk) {
+		return false
+	}
+	return !s.isPubkeyHidden(pk)
+}
+
+// MediaMeshNodeReport is /api/nodes/{pubkey}/mediamesh: one node's part in
+// MediaMesh, for its page.
+type MediaMeshNodeReport struct {
+	PublicKey string `json:"public_key"`
+	// Repeater: its MediaMesh mark, nil when it isn't a MediaMesh repeater.
+	Repeater *MediaMeshRepeater `json:"repeater,omitempty"`
+	// Rank among the repeaters by photos, video and voice relayed this week
+	// (1 = most), 0 when it relayed none; out of RankOf.
+	Rank   int `json:"rank"`
+	RankOf int `json:"rank_of"`
+	// Daily: packets relayed per day, the last 14 days, oldest first.
+	Daily []MediaMeshDay `json:"daily"`
+	// Backbone: its hops this week, busiest first.
+	Backbone []MediaMeshBackboneEdge `json:"backbone"`
+}
+
+// MediaMeshDay is one day's relay count.
+type MediaMeshDay struct {
+	Day     string `json:"day"`
+	Packets int    `json:"packets"`
+}
+
+func (s *Server) handleNodeMediaMesh(w http.ResponseWriter, r *http.Request) {
+	pk := strings.ToLower(mux.Vars(r)["pubkey"])
+	if !s.mediaMeshNodeShown(pk) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	out := MediaMeshNodeReport{PublicKey: pk, Daily: []MediaMeshDay{}, Backbone: []MediaMeshBackboneEdge{}}
+	if s.store == nil {
+		writeJSON(w, out)
+		return
+	}
+	now := time.Now()
+	nodes := s.store.mediaMeshNodeInfo()
+	reps := s.store.mediaMeshRepeaters(now, nodes)
+	for i := range reps {
+		if reps[i].RelayedWeek > 0 {
+			out.RankOf++
+		}
+	}
+	sort.SliceStable(reps, func(i, j int) bool { return reps[i].RelayedWeek > reps[j].RelayedWeek })
+	for i := range reps {
+		if reps[i].PublicKey == pk {
+			rep := reps[i]
+			out.Repeater = &rep
+			if rep.RelayedWeek > 0 {
+				out.Rank = 1
+				for j := 0; j < i; j++ {
+					if reps[j].RelayedWeek > rep.RelayedWeek {
+						out.Rank++
+					}
+				}
+			}
+			break
+		}
+	}
+	out.Daily = mediaMeshDailyOf(pk, now)
+	for _, e := range mediaMeshBackbone(nodes, s.mediaMeshNodeShown) {
+		if e.A == pk || e.B == pk {
+			out.Backbone = append(out.Backbone, e)
+		}
+	}
+	writeJSON(w, out)
+}
+
+// mediaMeshDailyOf is a node's relay count for each of the last 14 UTC days,
+// oldest first, zero on days without any.
+func mediaMeshDailyOf(pk string, now time.Time) []MediaMeshDay {
+	var days map[string]int
+	if p := mediaMeshDaily.Load(); p != nil {
+		days = (*p)[strings.ToLower(pk)]
+	}
+	out := make([]MediaMeshDay, 0, 14)
+	for i := 13; i >= 0; i-- {
+		d := now.UTC().AddDate(0, 0, -i).Format("2006-01-02")
+		out = append(out, MediaMeshDay{Day: d, Packets: days[d]})
+	}
+	return out
 }
 
 func emptyMediaMeshAnalytics() *MediaMeshAnalytics {
 	return &MediaMeshAnalytics{
 		ByType: []MediaMeshTypeCount{}, PerHour: []MediaMeshHour{},
 		Observers: []MediaMeshObserver{}, Repeaters: []MediaMeshRepeater{},
-		UnknownRepeaters: []MediaMeshUnknown{}, Links: []MediaMeshLink{},
+		UnknownRepeaters: []MediaMeshUnknown{}, Links: []MediaMeshLink{}, Backbone: []MediaMeshBackboneEdge{},
 	}
 }
 
@@ -418,6 +567,7 @@ func (s *PacketStore) computeMediaMeshAnalytics(region string, window TimeWindow
 	out.UnknownRepeaters = withNeighbourNames(mediaMeshUnknownAt(now), nodes)
 	out.Links = mediaMeshLinks(links, nodes, now)
 	out.Media = mediaMeshMediaStatsOf(mediaHops)
+	out.Backbone = mediaMeshBackbone(nodes, nil)
 	return out
 }
 

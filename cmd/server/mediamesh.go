@@ -54,6 +54,8 @@ var (
 	mediaMeshMainObs  = map[int]struct{}{} // MediaMesh rows also heard on the main radio
 	mediaMeshUnknown  atomic.Pointer[[]MediaMeshUnknown]
 	mediaMeshStats    atomic.Pointer[map[string]mediaMeshNodeStat]
+	mediaMeshEdges    atomic.Pointer[[]mediaMeshEdge]
+	mediaMeshDaily    atomic.Pointer[map[string]map[string]int]
 	mediaMeshMaxObsID int64
 	mediaMeshNodes    atomic.Pointer[map[string]MediaMeshNode]
 	mediaMeshNodesTS  string     // newest last_seen loaded (incremental watermark)
@@ -183,6 +185,56 @@ func loadMediaMeshNodeStats(conn *sql.DB) (map[string]mediaMeshNodeStat, error) 
 		out[strings.ToLower(pk)] = st
 	}
 	return out, rows.Err()
+}
+
+// mediaMeshEdge is one pair of nodes photos, video or voice went between
+// directly this week (the ingestor's mediamesh_edge), a < b.
+type mediaMeshEdge struct {
+	A, B    string
+	Packets int
+}
+
+// loadMediaMeshBackbone reads the week's backbone and the per-day relay
+// counts (public key -> "2006-01-02" -> packets).
+func loadMediaMeshBackbone(conn *sql.DB) ([]mediaMeshEdge, map[string]map[string]int, error) {
+	edges := []mediaMeshEdge{}
+	daily := map[string]map[string]int{}
+	if tableExists(conn, "mediamesh_edge") {
+		rows, err := conn.Query(`SELECT a, b, packets FROM mediamesh_edge ORDER BY packets DESC, a, b`)
+		if err != nil {
+			return nil, nil, err
+		}
+		for rows.Next() {
+			var e mediaMeshEdge
+			if err := rows.Scan(&e.A, &e.B, &e.Packets); err != nil {
+				rows.Close()
+				return nil, nil, err
+			}
+			e.A, e.B = strings.ToLower(e.A), strings.ToLower(e.B)
+			edges = append(edges, e)
+		}
+		rows.Close()
+	}
+	if tableExists(conn, "mediamesh_node_daily") {
+		rows, err := conn.Query(`SELECT public_key, day, packets FROM mediamesh_node_daily`)
+		if err != nil {
+			return nil, nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var pk, day string
+			var n int
+			if err := rows.Scan(&pk, &day, &n); err != nil {
+				return nil, nil, err
+			}
+			pk = strings.ToLower(pk)
+			if daily[pk] == nil {
+				daily[pk] = map[string]int{}
+			}
+			daily[pk][day] = n
+		}
+	}
+	return edges, daily, nil
 }
 
 // mediaMeshNodeStatOf is one node's history, zero without one.
@@ -409,6 +461,12 @@ func refreshMediaMesh(conn *sql.DB, full bool) {
 		log.Printf("[mediamesh] node stats: %v", err)
 	} else {
 		mediaMeshStats.Store(&stats)
+	}
+	if edges, daily, err := loadMediaMeshBackbone(conn); err != nil {
+		log.Printf("[mediamesh] backbone: %v", err)
+	} else {
+		mediaMeshEdges.Store(&edges)
+		mediaMeshDaily.Store(&daily)
 	}
 	nodes, newest, err := loadMediaMeshNodes(conn, sinceTS)
 	if err != nil {

@@ -1055,6 +1055,7 @@ func TestUpdateMediaMeshNodeStats(t *testing.T) {
 	add("p1", 6, `["aa11","bb22"]`, `["`+a+`","`+b+`"]`, old)
 	add("p2", 6, `["aa11"]`, `["`+a+`"]`, now.Add(-time.Hour))
 	add("p3", 15, `["aa11"]`, `["`+a+`"]`, now.Add(-2*time.Hour))
+	add("p5", 6, `["bb22","aa11"]`, `["`+b+`","`+a+`"]`, now.Add(-3*time.Hour))
 	// Not photo or voice: ignored.
 	add("p4", 2, `["bb22"]`, `["`+b+`"]`, now.Add(-time.Hour))
 	if err := s.RecordMediaMesh(MediaMeshReport{PubKey: status, Mode: mediaMeshModeRxTx, Source: "status"}, now); err != nil {
@@ -1073,11 +1074,11 @@ func TestUpdateMediaMeshNodeStats(t *testing.T) {
 		return f, r
 	}
 	oldTS := old.UTC().Format(time.RFC3339)
-	if f, r := row(a); f != oldTS || r != 2 {
-		t.Errorf("a: first %s relayed %d, want %s and 2", f, r, oldTS)
+	if f, r := row(a); f != oldTS || r != 3 {
+		t.Errorf("a: first %s relayed %d, want %s and 3", f, r, oldTS)
 	}
-	if f, r := row(b); f != oldTS || r != 0 {
-		t.Errorf("b: first %s relayed %d, want %s and 0 (its only recent packet isn't media)", f, r, oldTS)
+	if f, r := row(b); f != oldTS || r != 1 {
+		t.Errorf("b: first %s relayed %d, want %s and 1 (p4 isn't media)", f, r, oldTS)
 	}
 	if f, _ := row(obsKey); f != oldTS {
 		t.Errorf("observer first %s, want %s", f, oldTS)
@@ -1085,13 +1086,34 @@ func TestUpdateMediaMeshNodeStats(t *testing.T) {
 	if f, _ := row(status); f == "" {
 		t.Error("status-only node has no first_seen")
 	}
+	// The backbone: a-b from p1 is 10 days old, so only a-observer (from
+	// p2 and p3, a is their last hop) counts this week.
+	edge := func(x, y string) int {
+		if y < x {
+			x, y = y, x
+		}
+		var n int
+		s.db.QueryRow(`SELECT packets FROM mediamesh_edge WHERE a = ? AND b = ?`, x, y).Scan(&n)
+		return n
+	}
+	if n := edge(a, obsKey); n != 3 {
+		t.Errorf("a-observer edge: %d packets, want 3", n)
+	}
+	if n := edge(a, b); n != 1 {
+		t.Errorf("a-b edge: %d packets, want 1 (p5; p1 is older than a week)", n)
+	}
+	// Per day: a relayed p1 (10 days ago), p2, p3 and p5 within two weeks.
+	var dayN int
+	if err := s.db.QueryRow(`SELECT COALESCE(SUM(packets), 0) FROM mediamesh_node_daily WHERE public_key = ?`, a).Scan(&dayN); err != nil || dayN != 4 {
+		t.Errorf("a per day: %d (%v), want 4", dayN, err)
+	}
 	// The old packet is gone from storage: first_seen stays where it was.
 	if _, err := s.db.Exec(`DELETE FROM observation_mediamesh WHERE observation_id IN
 		(SELECT o.id FROM observations o JOIN transmissions t ON t.id = o.transmission_id WHERE t.hash = 'p1')`); err != nil {
 		t.Fatal(err)
 	}
 	s.UpdateMediaMeshNodeStats(now)
-	if f, r := row(a); f != oldTS || r != 2 {
-		t.Errorf("a after retention: first %s relayed %d, want %s and 2", f, r, oldTS)
+	if f, r := row(a); f != oldTS || r != 3 {
+		t.Errorf("a after retention: first %s relayed %d, want %s and 3", f, r, oldTS)
 	}
 }

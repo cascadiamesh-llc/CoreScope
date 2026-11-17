@@ -404,3 +404,59 @@ func TestMediaMeshAnalyticsRepeaterHistory(t *testing.T) {
 		t.Errorf("history = %q, %d; want 2026-10-20T08:00:00Z, 37", r.FirstSeen, r.RelayedWeek)
 	}
 }
+
+// The week's backbone: placed pairs only, names attached; and one node's
+// report with its rank, days and hops.
+func TestMediaMeshBackboneAndNodeReport(t *testing.T) {
+	srv, router := setupTestServer(t)
+	a := "aa11" + strings.Repeat("1", 60)
+	b := "bb22" + strings.Repeat("2", 60)
+	c := "cc33" + strings.Repeat("3", 60) // no position
+	for _, n := range []struct {
+		pk, name string
+		lat, lon float64
+	}{{a, "Alpha", 47.6, -122.3}, {b, "Bravo", 47.5, -122.25}, {c, "Charlie", 0, 0}} {
+		if _, err := srv.db.conn.Exec(`INSERT INTO nodes (public_key, name, role, lat, lon, last_seen, first_seen, advert_count)
+			VALUES (?, ?, 'repeater', ?, ?, ?, '2026-01-01T00:00:00Z', 1)`, n.pk, n.name, n.lat, n.lon, mmRecentTS()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	srv.store.InvalidateNodeCache()
+	today := time.Now().UTC().Format("2006-01-02")
+	seedMediaMesh(t, srv,
+		`CREATE TABLE IF NOT EXISTS mediamesh_node_stats (public_key TEXT PRIMARY KEY, first_seen TEXT NOT NULL, relayed_7d INTEGER NOT NULL DEFAULT 0)`,
+		`CREATE TABLE IF NOT EXISTS mediamesh_edge (a TEXT NOT NULL, b TEXT NOT NULL, packets INTEGER NOT NULL, PRIMARY KEY (a, b))`,
+		`CREATE TABLE IF NOT EXISTS mediamesh_node_daily (public_key TEXT NOT NULL, day TEXT NOT NULL, packets INTEGER NOT NULL, PRIMARY KEY (public_key, day))`,
+		`INSERT INTO node_mediamesh VALUES ('`+a+`', 'rxtx', NULL, 'heard', '`+mmRecentTS()+`')`,
+		`INSERT INTO node_mediamesh VALUES ('`+b+`', 'rxtx', NULL, 'heard', '`+mmRecentTS()+`')`,
+		`INSERT INTO mediamesh_node_stats VALUES ('`+a+`', '2026-10-20T00:00:00Z', 12)`,
+		`INSERT INTO mediamesh_node_stats VALUES ('`+b+`', '2026-11-01T00:00:00Z', 40)`,
+		`INSERT INTO mediamesh_edge VALUES ('`+a+`', '`+b+`', 9)`,
+		`INSERT INTO mediamesh_edge VALUES ('`+a+`', '`+c+`', 30)`,
+		`INSERT INTO mediamesh_node_daily VALUES ('`+a+`', '`+today+`', 5)`,
+	)
+	var got MediaMeshAnalytics
+	getJSON(t, router, "/api/analytics/mediamesh", &got)
+	if len(got.Backbone) != 1 {
+		t.Fatalf("backbone = %+v, want only the placed pair", got.Backbone)
+	}
+	if e := got.Backbone[0]; e.AName != "Alpha" || e.BName != "Bravo" || e.Packets != 9 || e.ALat != 47.6 || e.BLon != -122.25 {
+		t.Errorf("edge = %+v", e)
+	}
+	var rep MediaMeshNodeReport
+	getJSON(t, router, "/api/nodes/"+a+"/mediamesh", &rep)
+	if rep.Repeater == nil || rep.Repeater.Name != "Alpha" || rep.Rank != 2 || rep.RankOf != 2 {
+		t.Errorf("report = %+v (repeater %+v)", rep, rep.Repeater)
+	}
+	if len(rep.Daily) != 14 || rep.Daily[13].Day != today || rep.Daily[13].Packets != 5 || rep.Daily[0].Packets != 0 {
+		t.Errorf("daily = %+v", rep.Daily)
+	}
+	if len(rep.Backbone) != 1 || rep.Backbone[0].Packets != 9 {
+		t.Errorf("node backbone = %+v", rep.Backbone)
+	}
+	var none MediaMeshNodeReport
+	getJSON(t, router, "/api/nodes/"+c+"/mediamesh", &none)
+	if none.Repeater != nil || none.Rank != 0 || len(none.Daily) != 14 {
+		t.Errorf("non-MediaMesh node = %+v", none)
+	}
+}

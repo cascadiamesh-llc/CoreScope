@@ -186,6 +186,7 @@ func routeDescriptions() map[string]routeMeta {
 				{Name: "days", Description: "Lookback window in days (default 7, clamped 1-365)", Type: "integer"},
 			}},
 		"GET /api/nodes/{pubkey}/neighbors": {Summary: "Get node neighbors", Description: "Returns the queried node's first-hop neighbors with affinity scores and observation metadata (count, SNR, distance, observers). Ambiguous edges carry candidate pubkeys.", Tag: "nodes", Response: schemaRef("NodeNeighborsResponse")},
+		"GET /api/nodes/{pubkey}/mediamesh": {Summary: "Node MediaMesh report", Description: "One node's part in MediaMesh: its repeater mark with first seen and photos, video and voice relayed this week, its rank, packets relayed per day over 14 days, and its backbone hops this week.", Tag: "nodes"},
 
 		"GET /api/nodes/clock-skew": {Summary: "Fleet clock-skew summaries", Description: "Returns an array of clock-skew summaries for nodes with available data, enriched with nodeName/nodeRole when known. Fleet rows omit samples, recentHashEvidence and calibrationSummary; use the single-node endpoint for that detail. Returns an empty array when no store or no clock-skew data is available.", Tag: "nodes", Response: schemaRef("FleetClockSkewResponse"),
 			QueryParams: []paramMeta{{Name: "area", Description: "Configured area key. Omit for the unfiltered fleet. Filtering applies only when the area resolves to a non-empty node set; unknown keys and empty results leave the fleet unfiltered.", Type: "string"}}},
@@ -221,7 +222,7 @@ func routeDescriptions() map[string]routeMeta {
 		"GET /api/analytics/topology":        {Summary: "Network topology", Description: "Hop-count distribution and route analysis.", Tag: "analytics"},
 		"GET /api/analytics/channels":        {Summary: "Channel analytics", Description: "Message counts and activity per channel.", Tag: "analytics"},
 		"GET /api/analytics/distance":        {Summary: "Distance analytics", Description: "Geographic distance calculations between nodes.", Tag: "analytics"},
-		"GET /api/analytics/mediamesh":       {Summary: "MediaMesh analytics", Description: "Transmissions carried on MediaMesh (radio2): share, per payload type and per hour, the observers that heard them, and the nodes that run radio2. Optional region and window.", Tag: "analytics"},
+		"GET /api/analytics/mediamesh":       {Summary: "MediaMesh analytics", Description: "Transmissions carried on MediaMesh (radio2): share, per payload type and per hour, the observers that heard them, the nodes that run radio2, links heard directly, photo/video/voice packet stats and the week's backbone. Optional region and window.", Tag: "analytics"},
 		"GET /api/analytics/hash-sizes":      {Summary: "Hash size analysis", Description: "Distribution of hash prefix sizes across the network.", Tag: "analytics"},
 		"GET /api/analytics/hash-collisions": {Summary: "Hash collision detection", Description: "Identifies nodes sharing hash prefixes.", Tag: "analytics"},
 		"GET /api/analytics/subpaths":        {Summary: "Subpath analysis", Description: "Common routing subpaths through the mesh.", Tag: "analytics"},

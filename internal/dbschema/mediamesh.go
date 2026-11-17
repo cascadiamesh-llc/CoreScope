@@ -73,6 +73,25 @@ func ensureMediaMesh(rw *sql.DB) error {
 			first_seen TEXT NOT NULL,
 			relayed_7d INTEGER NOT NULL DEFAULT 0
 		);
+		-- The MediaMesh backbone: pairs of nodes a photo, video or voice
+		-- packet went between directly in the last week (adjacent resolved
+		-- hops of its path, and the last hop to the observer that heard it),
+		-- a < b, with the number of different packets. Rebuilt with
+		-- mediamesh_node_stats.
+		CREATE TABLE IF NOT EXISTS mediamesh_edge (
+			a       TEXT NOT NULL,
+			b       TEXT NOT NULL,
+			packets INTEGER NOT NULL,
+			PRIMARY KEY (a, b)
+		);
+		-- Photo, video and voice packets each node relayed per day (UTC),
+		-- over the last two weeks. Rebuilt with mediamesh_node_stats.
+		CREATE TABLE IF NOT EXISTS mediamesh_node_daily (
+			public_key TEXT NOT NULL,
+			day        TEXT NOT NULL,
+			packets    INTEGER NOT NULL,
+			PRIMARY KEY (public_key, day)
+		);
 		CREATE TABLE IF NOT EXISTS node_mediamesh (
 			public_key TEXT PRIMARY KEY,
 			mode       TEXT NOT NULL,

@@ -343,6 +343,7 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/nodes/{pubkey}/clock-skew", s.handleNodeClockSkew).Methods("GET")
 	r.HandleFunc("/api/observers/clock-skew", s.handleObserverClockSkew).Methods("GET")
 	r.HandleFunc("/api/nodes/{pubkey}/neighbors", s.handleNodeNeighbors).Methods("GET")
+	r.HandleFunc("/api/nodes/{pubkey}/mediamesh", s.handleNodeMediaMesh).Methods("GET")
 	// Keep specific sub-routes (…/reach, …/rx-coverage) registered BEFORE the
 	// catch-all /api/nodes/{pubkey} — mux matches in registration order, so
 	// reordering these below the catch-all would shadow them and break the route.
