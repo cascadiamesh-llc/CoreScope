@@ -694,6 +694,27 @@
     if (obs) _mmSortCtls.push(TableSort.init(obs, { storageKey: 'meshcore-mediamesh-observers-sort' }));
   }
 
+  /**
+   * The Near cell of an unknown repeater: the likeliest area (that of the
+   * busiest named neighbour with one), then the named nodes seen next to its
+   * hash in last week's MediaMesh paths, busiest first.
+   */
+  function mediaMeshUnknownNearHtml(u) {
+    const next = Array.isArray(u && u.next) ? u.next.filter((n) => n && n.public_key) : [];
+    if (!next.length) return '<td data-value="">—</td>';
+    const place = (next.find((n) => n.near) || {}).near || '';
+    const word = { before: 'from', after: 'to', observer: 'heard by' };
+    const items = next.map((n) => {
+      const name = n.name || String(n.public_key).slice(0, 8);
+      const count = Number(n.packets || 0);
+      return `${word[n.side] || 'next to'} <a href="#/nodes/${encodeURIComponent(n.public_key)}">${esc(name)}</a>`
+        + ` <span class="text-muted">×${count.toLocaleString()}</span>`;
+    }).join(', ');
+    const title = 'Named nodes next to this repeater in MediaMesh paths over the last week: "from" handed it packets, "to" received them from it, "heard by" heard it directly.';
+    return `<td data-value="${esc(place.toLowerCase())}">${place ? `Probably near ${esc(place)}` : 'Area unknown'}`
+      + `<div class="mm-next" title="${esc(title)}">${items}</div></td>`;
+  }
+
   function renderMediaMeshTabHtml(mm, windowVal) {
     mm = mm || {};
     const reps = Array.isArray(mm.repeaters) ? mm.repeaters : [];
@@ -721,7 +742,8 @@
         <td data-value="${esc(mediaMeshTime(r.last_seen))}">${seen}</td>
       </tr>`;
     }).join('');
-    // Known only by their path hash: no advert heard yet, so no name or place.
+    // Known only by their path hash: no advert heard yet, so no name or place,
+    // but the named nodes next to it in MediaMesh paths say roughly where.
     const unknownRows = unknown.map((u) => {
       const id = String(u.prefix || '').toUpperCase();
       const how = u.source === 'heard' ? 'heard sending on radio2' : 'seen relaying MediaMesh packets';
@@ -729,7 +751,7 @@
       const rowClass = u.source === 'relayed' ? ' class="mm-row--relayed mm-row--unknown"' : ' class="mm-row--unknown"';
       return `<tr${rowClass}>
         <td data-value="~${esc(id.toLowerCase())}"><span class="mm-dot mm-dot--rxtx" aria-hidden="true"></span>Unknown repeater <code>${esc(id)}</code></td>
-        <td>—</td>
+        ${mediaMeshUnknownNearHtml(u)}
         <td>—</td>
         <td>listens and sends</td>
         <td>—</td>

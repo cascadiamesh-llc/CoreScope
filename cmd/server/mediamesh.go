@@ -67,7 +67,24 @@ type MediaMeshUnknown struct {
 	FirstSeen string `json:"first_seen"`
 	LastSeen  string `json:"last_seen"`
 	Packets   int    `json:"packets"`
+	// Next: the named nodes seen next to the hash in last week's MediaMesh
+	// paths (mediamesh_prefix_next), busiest first: roughly where it is.
+	Next []MediaMeshNeighbour `json:"next,omitempty"`
 }
+
+// MediaMeshNeighbour is a named node seen next to an unknown repeater's hash.
+type MediaMeshNeighbour struct {
+	PublicKey string `json:"public_key"`
+	Name      string `json:"name,omitempty"`
+	Near      string `json:"near,omitempty"`
+	// Side: before (handed it the packet), after (it handed the packet on),
+	// observer (heard it directly).
+	Side    string `json:"side"`
+	Packets int    `json:"packets"`
+}
+
+// mediaMeshMaxNext caps the neighbours listed per unknown repeater.
+const mediaMeshMaxNext = 5
 
 func loadMediaMeshUnknown(conn *sql.DB) ([]MediaMeshUnknown, error) {
 	out := []MediaMeshUnknown{}
@@ -86,7 +103,56 @@ func loadMediaMeshUnknown(conn *sql.DB) ([]MediaMeshUnknown, error) {
 		}
 		out = append(out, u)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	if !tableExists(conn, "mediamesh_prefix_next") || len(out) == 0 {
+		return out, nil
+	}
+	nrows, err := conn.Query(`SELECT prefix, public_key, side, packets FROM mediamesh_prefix_next
+		ORDER BY packets DESC, public_key, side`)
+	if err != nil {
+		return nil, err
+	}
+	defer nrows.Close()
+	at := map[string]int{}
+	for i, u := range out {
+		at[strings.ToUpper(u.Prefix)] = i
+	}
+	for nrows.Next() {
+		var prefix string
+		var n MediaMeshNeighbour
+		if err := nrows.Scan(&prefix, &n.PublicKey, &n.Side, &n.Packets); err != nil {
+			return nil, err
+		}
+		if i, ok := at[strings.ToUpper(prefix)]; ok && len(out[i].Next) < mediaMeshMaxNext {
+			out[i].Next = append(out[i].Next, n)
+		}
+	}
+	return out, nrows.Err()
+}
+
+// withNeighbourNames returns the unknown repeaters with their neighbours'
+// names and Near filled in from the node list. It copies, so the shared
+// list stays as loaded.
+func withNeighbourNames(in []MediaMeshUnknown, nodes map[string]nodeInfo) []MediaMeshUnknown {
+	out := make([]MediaMeshUnknown, len(in))
+	for i, u := range in {
+		out[i] = u
+		if len(u.Next) == 0 {
+			continue
+		}
+		out[i].Next = make([]MediaMeshNeighbour, len(u.Next))
+		for j, n := range u.Next {
+			if info, ok := nodes[strings.ToLower(n.PublicKey)]; ok {
+				n.Name = info.Name
+			}
+			n.Near = nodeNear(nodes, n.PublicKey)
+			out[i].Next[j] = n
+		}
+	}
+	return out
 }
 
 // mediaMeshUnknownAt lists the unknown MediaMesh repeaters with current

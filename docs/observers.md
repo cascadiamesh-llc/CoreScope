@@ -247,6 +247,9 @@ passes through your repeater:
   - The mark fades after 2 days without being seen relaying again.
 - A MediaMesh repeater the analyzer has never heard advertise is listed as **Unknown repeater**
   with its path ID (for example `C267A0`): it's on MediaMesh, but its name and position aren't
-  known yet. It becomes the real repeater as soon as its advert reaches an observer.
+  known yet. Its **Near** column shows roughly where it is: the named repeaters seen handing it
+  packets ("from") or receiving them from it ("to"), and the observers that heard it directly
+  ("heard by"), over the last week. It becomes the real repeater as soon as its advert reaches an
+  observer.
 
 Questions? Ask on the CascadiaMesh Discord or email cascadiamesh@gmail.com.

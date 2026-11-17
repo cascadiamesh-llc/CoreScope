@@ -919,3 +919,98 @@ func TestBackfillFullHistory(t *testing.T) {
 		t.Errorf("9E3C last_seen %q (%v), want the packet's time %s", last, err, old.UTC().Format(time.RFC3339))
 	}
 }
+
+// An unknown hash's neighbours: the named hops either side of it in
+// MediaMesh paths, and the observer that heard it last, counted per packet.
+func TestUpdateMediaMeshPrefixNeighbours(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Now()
+	a := "aa11" + strings.Repeat("1", 60)
+	b := "bb22" + strings.Repeat("2", 60)
+	obsKey := "cc33" + strings.Repeat("3", 60)
+	if _, err := s.db.Exec(`INSERT INTO observers (id, name) VALUES (?, 'Obs')`, obsKey); err != nil {
+		t.Fatal(err)
+	}
+	var obsIdx int64
+	if err := s.db.QueryRow(`SELECT rowid FROM observers WHERE id = ?`, obsKey).Scan(&obsIdx); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordMediaMeshPrefix("9E3C", "relayed", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordMediaMeshPrefix("F84749", "heard", now); err != nil {
+		t.Fatal(err)
+	}
+	add := func(hash, path, resolved string, at time.Time) {
+		t.Helper()
+		if _, err := s.InsertTransmission(&PacketData{Hash: hash, RawHex: "1900", RouteType: 1, PayloadType: 6,
+			PathJSON: `[]`, Timestamp: at.UTC().Format(time.RFC3339)}); err != nil {
+			t.Fatal(err)
+		}
+		var txID int64
+		if err := s.db.QueryRow(`SELECT id FROM transmissions WHERE hash = ?`, hash).Scan(&txID); err != nil {
+			t.Fatal(err)
+		}
+		res, err := s.db.Exec(`INSERT INTO observations (transmission_id, observer_idx, direction, path_json, resolved_path, timestamp)
+			VALUES (?, ?, 'rx', ?, ?, ?)`, txID, obsIdx, path, resolved, at.Unix())
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, _ := res.LastInsertId()
+		if _, err := s.db.Exec(`INSERT INTO observation_mediamesh (observation_id) VALUES (?)`, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// a -> 9E3C -> b, heard by the observer from b; twice, as different packets.
+	add("p1", `["aa11","9e3c","bb22"]`, `["`+a+`",null,"`+b+`"]`, now.Add(-time.Hour))
+	add("p2", `["aa11","9e3c","bb22"]`, `["`+a+`",null,"`+b+`"]`, now.Add(-2*time.Hour))
+	// F84749 is the last hop: the observer heard it directly. The 2-byte
+	// "f847" hop counts as the same repeater.
+	add("p3", `["aa11","f847"]`, `["`+a+`",null]`, now.Add(-time.Hour))
+	// Too old to count.
+	add("p4", `["bb22","9e3c"]`, `["`+b+`",null]`, now.Add(-8*24*time.Hour))
+	if n := s.UpdateMediaMeshPrefixNeighbours(now); n != 4 {
+		t.Fatalf("wrote %d rows, want 4", n)
+	}
+	got := map[string]int{}
+	rows, err := s.db.Query(`SELECT prefix, substr(public_key, 1, 4), side, packets FROM mediamesh_prefix_next`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var p, k, side string
+		var n int
+		if err := rows.Scan(&p, &k, &side, &n); err != nil {
+			t.Fatal(err)
+		}
+		got[p+" "+k+" "+side] = n
+	}
+	rows.Close()
+	want := map[string]int{"9E3C aa11 before": 2, "9E3C bb22 after": 2, "F84749 aa11 before": 1, "F84749 cc33 observer": 1}
+	for k, n := range want {
+		if got[k] != n {
+			t.Errorf("%s: %d packets, want %d (all: %v)", k, got[k], n, got)
+		}
+	}
+	// Once the hash is gone (resolved or expired), so are its neighbours.
+	if _, err := s.db.Exec(`DELETE FROM mediamesh_prefix`); err != nil {
+		t.Fatal(err)
+	}
+	if n := s.UpdateMediaMeshPrefixNeighbours(now); n != 0 {
+		t.Errorf("wrote %d rows with no unknown hashes", n)
+	}
+	if n := mmCountRows(t, s, `SELECT COUNT(*) FROM mediamesh_prefix_next`); n != 0 {
+		t.Errorf("%d rows left", n)
+	}
+}
+
+func TestMediaMeshHopMatches(t *testing.T) {
+	for _, c := range []struct {
+		hop, prefix string
+		want        bool
+	}{{"9e3c", "9E3C", true}, {"f847", "F84749", true}, {"F84749AB", "F84749", true}, {"f8", "F84749", false}, {"9e3d", "9E3C", false}} {
+		if got := mediaMeshHopMatches(c.hop, c.prefix); got != c.want {
+			t.Errorf("mediaMeshHopMatches(%q, %q) = %v, want %v", c.hop, c.prefix, got, c.want)
+		}
+	}
+}

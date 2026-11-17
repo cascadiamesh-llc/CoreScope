@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -335,5 +336,40 @@ func TestMediaMeshAnalyticsUnknownRepeaters(t *testing.T) {
 	}
 	if _, ok := seen["B6B2"]; ok {
 		t.Error("B6B2 relayed 3 days ago, past the 2-day window, but listed")
+	}
+}
+
+// An unknown repeater lists the named nodes seen next to its hash, busiest
+// first, with their names and Near.
+func TestMediaMeshAnalyticsUnknownNeighbours(t *testing.T) {
+	srv, router := setupTestServer(t)
+	fh := "1ea5e1952c93" + strings.Repeat("0", 52)
+	if _, err := srv.db.conn.Exec(`INSERT INTO nodes (public_key, name, role, lat, lon, last_seen, first_seen, advert_count)
+		VALUES (?, 'First Hill', 'repeater', 47.60992, -122.32489, ?, '2026-01-01T00:00:00Z', 1)`, fh, mmRecentTS()); err != nil {
+		t.Fatal(err)
+	}
+	srv.store.InvalidateNodeCache()
+	recent := mmRecentTS()
+	seedMediaMesh(t, srv,
+		`CREATE TABLE IF NOT EXISTS mediamesh_prefix_next (prefix TEXT NOT NULL, public_key TEXT NOT NULL,
+			side TEXT NOT NULL, packets INTEGER NOT NULL, PRIMARY KEY (prefix, public_key, side))`,
+		`INSERT INTO mediamesh_prefix VALUES ('9E3C', 'relayed', '`+recent+`', '`+recent+`', 3)`,
+		`INSERT INTO mediamesh_prefix_next VALUES ('9E3C', 'ffff`+strings.Repeat("1", 60)+`', 'before', 2)`,
+		`INSERT INTO mediamesh_prefix_next VALUES ('9E3C', '`+fh+`', 'observer', 12)`,
+	)
+	var got MediaMeshAnalytics
+	getJSON(t, router, "/api/analytics/mediamesh", &got)
+	if len(got.UnknownRepeaters) != 1 {
+		t.Fatalf("unknown = %+v", got.UnknownRepeaters)
+	}
+	next := got.UnknownRepeaters[0].Next
+	if len(next) != 2 {
+		t.Fatalf("next = %+v, want 2", next)
+	}
+	if next[0].Name != "First Hill" || next[0].Side != "observer" || next[0].Packets != 12 || next[0].Near != "First Hill, Seattle" {
+		t.Errorf("busiest neighbour = %+v", next[0])
+	}
+	if next[1].Name != "" || next[1].Side != "before" || next[1].Packets != 2 {
+		t.Errorf("unnamed neighbour = %+v", next[1])
 	}
 }

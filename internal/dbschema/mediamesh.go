@@ -51,6 +51,18 @@ func ensureMediaMesh(rw *sql.DB) error {
 			last_seen  TEXT NOT NULL,
 			packets    INTEGER NOT NULL DEFAULT 1
 		);
+		-- Where an unknown MediaMesh repeater sits: the named nodes next to its
+		-- hash in MediaMesh paths over the last week. side: before (the hop
+		-- that handed it the packet), after (the hop it handed it to) or
+		-- observer (an observer that heard it directly). Rebuilt by the
+		-- ingestor every half hour.
+		CREATE TABLE IF NOT EXISTS mediamesh_prefix_next (
+			prefix     TEXT NOT NULL,
+			public_key TEXT NOT NULL,
+			side       TEXT NOT NULL,
+			packets    INTEGER NOT NULL,
+			PRIMARY KEY (prefix, public_key, side)
+		);
 		CREATE TABLE IF NOT EXISTS node_mediamesh (
 			public_key TEXT PRIMARY KEY,
 			mode       TEXT NOT NULL,

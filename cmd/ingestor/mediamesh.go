@@ -344,6 +344,120 @@ func (s *Store) ResolveMediaMeshPrefixes(now time.Time) int {
 	return resolved
 }
 
+// mediaMeshNextWindow is how far back the neighbours of unknown hashes are
+// looked for.
+const mediaMeshNextWindow = 7 * 24 * time.Hour
+
+// mediaMeshHopMatches reports whether a path hop names an unknown hash: the
+// same bytes, or one the start of the other (a 2-byte hop and the 3-byte
+// hash it begins), at least 2 bytes long.
+func mediaMeshHopMatches(hop, prefix string) bool {
+	hop, prefix = strings.ToUpper(hop), strings.ToUpper(prefix)
+	if len(hop) < 2*mediaMeshRelayedMinHashBytes {
+		return false
+	}
+	return strings.HasPrefix(prefix, hop) || strings.HasPrefix(hop, prefix)
+}
+
+// UpdateMediaMeshPrefixNeighbours rebuilds mediamesh_prefix_next: for each
+// unknown hash, the named nodes next to it in last week's MediaMesh paths
+// (the resolved hop before it, the one after it, and for the last hop of a
+// received packet the observer that heard it), with packet counts. It shows
+// roughly where a repeater that has never advertised is. Returns the number
+// of rows written.
+func (s *Store) UpdateMediaMeshPrefixNeighbours(now time.Time) int {
+	var prefixes []string
+	rows, err := s.db.Query(`SELECT prefix FROM mediamesh_prefix`)
+	if err != nil {
+		return 0
+	}
+	for rows.Next() {
+		var p string
+		if rows.Scan(&p) == nil {
+			prefixes = append(prefixes, strings.ToUpper(p))
+		}
+	}
+	rows.Close()
+	type key struct{ prefix, pubkey, side string }
+	counts := map[key]map[string]bool{} // distinct packets per neighbour
+	if len(prefixes) > 0 {
+		rows, err := s.db.Query(`SELECT t.hash, COALESCE(o.path_json, ''), COALESCE(o.resolved_path, ''),
+				COALESCE(o.direction, ''), COALESCE(obs.id, '')
+			FROM observation_mediamesh m
+			JOIN observations o ON o.id = m.observation_id
+			JOIN transmissions t ON t.id = o.transmission_id
+			LEFT JOIN observers obs ON obs.rowid = o.observer_idx
+			WHERE o.timestamp >= ? AND o.path_json IS NOT NULL AND o.path_json != '[]'`,
+			now.Add(-mediaMeshNextWindow).Unix())
+		if err != nil {
+			log.Printf("[mediamesh] unknown neighbours: %v", err)
+			return 0
+		}
+		note := func(prefix, pubkey, side, hash string) {
+			pubkey = strings.ToLower(pubkey)
+			if !targetPubkeyRe.MatchString(pubkey) {
+				return
+			}
+			k := key{prefix, pubkey, side}
+			if counts[k] == nil {
+				counts[k] = map[string]bool{}
+			}
+			counts[k][hash] = true
+		}
+		for rows.Next() {
+			var hash, pj, rj, dir, observer string
+			if rows.Scan(&hash, &pj, &rj, &dir, &observer) != nil {
+				continue
+			}
+			hops := parsePathArray(pj)
+			var resolved []*string
+			if rj == "" || json.Unmarshal([]byte(rj), &resolved) != nil || len(resolved) != len(hops) {
+				resolved = make([]*string, len(hops))
+			}
+			for i, hop := range hops {
+				for _, p := range prefixes {
+					if !mediaMeshHopMatches(hop, p) {
+						continue
+					}
+					if i > 0 && resolved[i-1] != nil {
+						note(p, *resolved[i-1], "before", hash)
+					}
+					if i+1 < len(hops) && resolved[i+1] != nil {
+						note(p, *resolved[i+1], "after", hash)
+					}
+					if i == len(hops)-1 && !strings.EqualFold(dir, "tx") && observer != "" {
+						note(p, observer, "observer", hash)
+					}
+				}
+			}
+		}
+		rows.Close()
+	}
+	writerMu.Lock()
+	defer writerMu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0
+	}
+	if _, err := tx.Exec(`DELETE FROM mediamesh_prefix_next`); err != nil {
+		tx.Rollback()
+		return 0
+	}
+	written := 0
+	for k, hashes := range counts {
+		if _, err := tx.Exec(`INSERT INTO mediamesh_prefix_next (prefix, public_key, side, packets) VALUES (?, ?, ?, ?)`,
+			k.prefix, k.pubkey, k.side, len(hashes)); err != nil {
+			tx.Rollback()
+			return 0
+		}
+		written++
+	}
+	if err := tx.Commit(); err != nil {
+		return 0
+	}
+	return written
+}
+
 // mediaMeshPrefixKeys runs a "public_key LIKE prefix%" query and returns the
 // keys, lowercased; nil on error.
 func (s *Store) mediaMeshPrefixKeys(query, prefix string) []string {

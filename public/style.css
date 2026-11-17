@@ -6024,6 +6024,7 @@ body.embed #app.app-fixed {
 .mm-cov-sw--relayed { background: #fff; border: 2px solid var(--mediamesh-node-weak-color); border-radius: 50%; }
 .mm-cov-note { font-size: 0.8em; margin: 8px 0 0; }
 .mm-cov-note:empty { display: none; }
+.mm-next { font-size: 0.85em; color: var(--text-muted); margin-top: 2px; line-height: 1.4; }
 .mm-cov-reps { margin-top: 10px; font-size: 0.85em; }
 .mm-cov-reps-toggle { font: inherit; padding: 4px 10px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer; }
 .mm-cov-reps-toggle[aria-expanded="true"] { border-color: var(--mediamesh-node-color); }

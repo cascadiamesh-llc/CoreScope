@@ -338,6 +338,10 @@ func main() {
 			if n%10 == 0 {
 				store.ResolveMediaMeshPrefixes(time.Now())
 			}
+			// Every half hour: where the still-unknown ones sit.
+			if n%60 == 0 {
+				store.UpdateMediaMeshPrefixNeighbours(time.Now())
+			}
 			n++
 		}
 	}()

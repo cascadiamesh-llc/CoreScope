@@ -44,7 +44,7 @@ const ctx = {
 ctx.escapeHtml = ctx.esc;
 vm.createContext(ctx);
 vm.runInContext(extract(analytics, ['renderPayloadPie', 'mediaMeshTypeShares', 'mediaMeshStatCard',
-  'mediaMeshRadioText', 'mediaMeshTime', 'mediaMeshCoverageCardHtml', 'renderMediaMeshTabHtml', 'renderRelayAirtimeDumbbell']) +
+  'mediaMeshRadioText', 'mediaMeshTime', 'mediaMeshUnknownNearHtml', 'mediaMeshCoverageCardHtml', 'renderMediaMeshTabHtml', 'renderRelayAirtimeDumbbell']) +
   '\nthis.api = { renderPayloadPie, mediaMeshTypeShares, mediaMeshStatCard, renderMediaMeshTabHtml, renderRelayAirtimeDumbbell };', ctx);
 const A = ctx.api;
 
@@ -173,6 +173,27 @@ test('repeaters known only by their hash are listed as unknown', () => {
   const rows = h.split('<tr').filter((r) => r.includes('Unknown repeater'));
   assert.ok(rows.some((r) => r.includes('mm-row--relayed') && r.includes('9E3C')), 'relayed unknown is greyed');
   assert.ok(!h.includes('href="#/nodes/c267'), 'no node link for an unknown hash');
+});
+
+test('an unknown repeater shows its likely area and the named nodes next to it', () => {
+  const fh = '1ea5e1952c93' + '0'.repeat(52);
+  const withUnknown = Object.assign({}, MM, { unknown_repeaters: [
+    { prefix: '9E3C', source: 'relayed', first_seen: '2026-10-30T14:00:00Z', last_seen: '2026-10-30T15:00:00Z', packets: 64, next: [
+      { public_key: 'ffff' + '1'.repeat(60), side: 'before', packets: 30 },
+      { public_key: fh, name: 'First Hill <3', near: 'First Hill, Seattle', side: 'observer', packets: 12 },
+      { public_key: 'abcd' + '2'.repeat(60), name: 'Yesler', near: 'Yesler Terrace, Seattle', side: 'after', packets: 1200 },
+    ] },
+    { prefix: '1B36', source: 'relayed', first_seen: '2026-10-30T14:00:00Z', last_seen: '2026-10-30T15:00:00Z', packets: 5 },
+  ] });
+  const h = A.renderMediaMeshTabHtml(withUnknown, '');
+  const row = (id) => h.split('<tr').find((r) => r.includes('<code>' + id + '</code>'));
+  const r = row('9E3C');
+  // the first neighbour with a Near gives the area
+  assert.ok(r.includes('Probably near First Hill, Seattle'), r);
+  assert.ok(r.includes('from <a href="#/nodes/ffff1111">ffff1111</a>') || r.includes('from <a href="#/nodes/ffff' + '1'.repeat(60) + '">ffff1111</a>'), r);
+  assert.ok(r.includes('heard by <a href="#/nodes/' + fh + '">First Hill &lt;3</a> <span class="text-muted">×12</span>'), r);
+  assert.ok(r.includes('to <a href="#/nodes/abcd') && r.includes('×1,200'), r);
+  assert.ok(row('1B36').includes('<td data-value="">—</td>'), 'no neighbours: a dash');
 });
 
 test('empty state explains what is needed', () => {

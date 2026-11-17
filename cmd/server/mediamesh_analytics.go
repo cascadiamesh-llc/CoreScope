@@ -369,7 +369,7 @@ func (s *PacketStore) computeMediaMeshAnalytics(region string, window TimeWindow
 		return out.Observers[i].ID < out.Observers[j].ID
 	})
 	out.Repeaters = s.mediaMeshRepeaters(now, nodes)
-	out.UnknownRepeaters = mediaMeshUnknownAt(now)
+	out.UnknownRepeaters = withNeighbourNames(mediaMeshUnknownAt(now), nodes)
 	out.Links = mediaMeshLinks(links, nodes, now)
 	return out
 }
