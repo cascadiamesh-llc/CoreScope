@@ -847,6 +847,38 @@ func TestResolveMediaMeshPrefixes(t *testing.T) {
 	if n := s.ResolveMediaMeshPrefixes(time.Now()); n != 0 {
 		t.Errorf("resolved an ambiguous hash")
 	}
+	// ...unless exactly one of them is already a MediaMesh repeater.
+	mm := "abcd" + strings.Repeat("2", 60)
+	if err := s.RecordMediaMesh(MediaMeshReport{PubKey: mm, Mode: mediaMeshModeRxTx, Source: mediaMeshSourceHeard}, seen); err != nil {
+		t.Fatal(err)
+	}
+	if n := s.ResolveMediaMeshPrefixes(time.Now()); n != 1 {
+		t.Fatalf("resolved %d, want 1 (the hash of the one MediaMesh repeater)", n)
+	}
+	if _, _, src, ok := nodeMediaMesh(t, s, mm); !ok || src != "heard" {
+		t.Errorf("MediaMesh repeater mark %q (%v), want heard kept", src, ok)
+	}
+	if _, _, _, ok := nodeMediaMesh(t, s, "abcd"+strings.Repeat("1", 60)); ok {
+		t.Error("the other node sharing the hash was marked")
+	}
+	if n := mmCountRows(t, s, `SELECT COUNT(*) FROM mediamesh_prefix`); n != 0 {
+		t.Errorf("%d hash rows left, want 0", n)
+	}
+	// Two MediaMesh repeaters sharing a hash: still left alone.
+	if err := s.RecordMediaMeshPrefix("EEFF", "heard", seen); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"eeff" + strings.Repeat("1", 60), "eeff" + strings.Repeat("2", 60)} {
+		if _, err := s.db.Exec(`INSERT INTO nodes (public_key, name, role) VALUES (?, 'x', 'repeater')`, k); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.RecordMediaMesh(MediaMeshReport{PubKey: k, Mode: mediaMeshModeRxTx, Source: mediaMeshSourceHeard}, seen); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := s.ResolveMediaMeshPrefixes(time.Now()); n != 0 {
+		t.Errorf("resolved a hash two MediaMesh repeaters share")
+	}
 }
 
 // The backfill covers everything stored, stamps marks with when the packet

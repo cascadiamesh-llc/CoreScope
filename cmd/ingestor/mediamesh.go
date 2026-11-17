@@ -295,7 +295,11 @@ func (s *Store) RecordMediaMeshPrefix(hop, source string, seen time.Time) error 
 // ResolveMediaMeshPrefixes turns stored hashes into marks for the node they
 // now match, once exactly one known node does (its advert has been heard):
 // "heard" as a heard mark, "relayed" as a relayed one, stamped with the
-// hash's last sighting. Returns the number resolved.
+// hash's last sighting. When several known nodes share the hash but only one
+// of them is already a MediaMesh repeater, the hash is that repeater's: with
+// thousands of repeaters (and vanity keys like dadada…) short hashes collide,
+// and the one on MediaMesh is the one a MediaMesh path names. Returns the
+// number resolved.
 func (s *Store) ResolveMediaMeshPrefixes(now time.Time) int {
 	type row struct{ prefix, source, lastSeen string }
 	rows, err := s.db.Query(`SELECT prefix, source, last_seen FROM mediamesh_prefix`)
@@ -312,18 +316,10 @@ func (s *Store) ResolveMediaMeshPrefixes(now time.Time) int {
 	rows.Close()
 	resolved := 0
 	for _, r := range all {
-		var keys []string
-		krows, err := s.db.Query(`SELECT public_key FROM nodes WHERE public_key LIKE ? LIMIT 2`, strings.ToLower(r.prefix)+"%")
-		if err != nil {
-			continue
+		keys := s.mediaMeshPrefixKeys(`SELECT public_key FROM nodes WHERE public_key LIKE ? LIMIT 2`, r.prefix)
+		if len(keys) > 1 {
+			keys = s.mediaMeshPrefixKeys(`SELECT public_key FROM node_mediamesh WHERE public_key LIKE ? LIMIT 2`, r.prefix)
 		}
-		for krows.Next() {
-			var k string
-			if krows.Scan(&k) == nil {
-				keys = append(keys, strings.ToLower(k))
-			}
-		}
-		krows.Close()
 		if len(keys) != 1 || !targetPubkeyRe.MatchString(keys[0]) {
 			continue
 		}
@@ -346,6 +342,24 @@ func (s *Store) ResolveMediaMeshPrefixes(now time.Time) int {
 		}
 	}
 	return resolved
+}
+
+// mediaMeshPrefixKeys runs a "public_key LIKE prefix%" query and returns the
+// keys, lowercased; nil on error.
+func (s *Store) mediaMeshPrefixKeys(query, prefix string) []string {
+	rows, err := s.db.Query(query, strings.ToLower(prefix)+"%")
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var keys []string
+	for rows.Next() {
+		var k string
+		if rows.Scan(&k) == nil {
+			keys = append(keys, strings.ToLower(k))
+		}
+	}
+	return keys
 }
 
 // mediaMeshRelayers are the repeaters that forwarded a MediaMesh flood before
