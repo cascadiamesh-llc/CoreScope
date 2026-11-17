@@ -463,6 +463,25 @@ function cellAt(cov, lat, lon) {
     assert.ok(M.planHtml(planned, null, [], 'ground', true).includes('Working it out'));
   });
 
+  await test('backbone: line weight by traffic, tooltip, and area as the network grew', () => {
+    assert.strictEqual(M.backboneWeight(0, 100), 1.5);
+    assert.ok(Math.abs(M.backboneWeight(100, 100) - 6) < 1e-9);
+    const w1 = M.backboneWeight(1, 100), w10 = M.backboneWeight(10, 100);
+    assert.ok(w1 > 1.5 && w10 > w1 && w10 < 6, `${w1} ${w10}`);
+    assert.strictEqual(M.backboneTip({ a_name: 'A & B', b: 'ccddeeff00', packets: 1 }), 'A &amp; B ↔ ccddeeff: 1 photo, video and voice packet this week');
+    assert.ok(M.backboneTip({ a_name: 'A', b_name: 'B', packets: 1200 }).includes('1,200 photo, video and voice packets'));
+    // area history from rasters and first-seen times
+    const cov = { width: 10, height: 10, bounds: { north: 0.0045, south: -0.0045, west: -0.0045, east: 0.0045 } };
+    const r = (row0, v) => ({ col0: 0, row0, w: 10, h: 2, data: new Int16Array(20).fill(v) });
+    cov.rasters = [r(0, 50), r(4, 20)];
+    const a = M.cellAreaKm2(cov);
+    assert.ok(Math.abs(M.unionKm2(cov, [true, false]) - 20 * a) < 1e-9, 'a mask leaves repeaters out');
+    const steps = [{ t: 1000, count: 1 }, { t: 2000, count: 2 }];
+    const h = M.areaHistory(cov, ['1970-01-01T00:00:00.500Z', '1970-01-01T00:00:01.500Z'], steps);
+    assert.strictEqual(h.length, 2);
+    assert.ok(Math.abs(h[0].km2 - 20 * a) < 1e-9 && Math.abs(h[1].km2 - 40 * a) < 1e-9, JSON.stringify(h));
+  });
+
   await test('growth time-lapse: one step per day, counting the repeaters there by then', () => {
     const now = Date.parse('2026-11-17T18:00:00Z');
     const first = ['2026-11-10T09:00:00Z', '2026-11-12T23:30:00Z', '', '2026-11-17T08:00:00Z'];

@@ -618,16 +618,19 @@
     }
     if (_currentTab !== 'mediamesh') return;
     el.innerHTML = renderMediaMeshTabHtml(mm, twVal);
+    el._mmData = mm;
     initMediaMeshTableSort(el);
-    initMediaMeshCoverage(el, Array.isArray(mm.repeaters) ? mm.repeaters : [], Array.isArray(mm.links) ? mm.links : []);
+    initMediaMeshCoverage(el, Array.isArray(mm.repeaters) ? mm.repeaters : [], Array.isArray(mm.links) ? mm.links : [],
+      Array.isArray(mm.backbone) ? mm.backbone : []);
+    showMediaMeshMilestone(el, mediaMeshMilestone(mm, null, Date.now()));
   }
 
   let _mmCoverageDestroy = null;
-  function initMediaMeshCoverage(el, reps, links) {
+  function initMediaMeshCoverage(el, reps, links, backbone) {
     if (_mmCoverageDestroy) { try { _mmCoverageDestroy(); } catch (_) { /* ignore */ } _mmCoverageDestroy = null; }
     const card = el.querySelector('#mmCoverageCard');
     if (!card || !window.MediaMeshCoverage) return;
-    _mmCoverageDestroy = window.MediaMeshCoverage.init(card, reps, { links: links || [], onStats: (st) => mediaMeshOnCoverageStats(el, st) });
+    _mmCoverageDestroy = window.MediaMeshCoverage.init(card, reps, { links: links || [], backbone: backbone || [], onStats: (st) => mediaMeshOnCoverageStats(el, st) });
   }
 
   // The coverage estimate card (mediamesh-coverage.js draws the map into it).
@@ -658,6 +661,7 @@
         </span>
         <span><span class="mm-cov-sw mm-cov-sw--node"></span>MediaMesh repeater</span>
         <span><span class="mm-cov-sw mm-cov-sw--relayed"></span>Relayed (weaker evidence)</span>
+        <label class="mm-cov-links-key" id="mmCovBackboneKey" hidden title="The hops photos, video and voice actually took this week: thicker for busier"><input type="checkbox" id="mmCovBackboneToggle" checked> <span class="mm-cov-sw mm-cov-sw--backbone"></span>Backbone (this week)</label>
         <label class="mm-cov-links-key" id="mmCovLinksKey" hidden><input type="checkbox" id="mmCovLinksToggle" checked> <span class="mm-cov-sw mm-cov-sw--link"></span>Heard on radio2</label>
         <label class="mm-cov-opacity">Opacity <input type="range" id="mmCovOpacity" min="0" max="100" value="100" aria-label="Coverage opacity"></label>
       </div>
@@ -784,6 +788,9 @@
   // view.
   function mediaMeshOnCoverageStats(el, st) {
     if (!st || st.modeKey !== 'ground') return;
+    if (st.areaHistory && st.areaHistory.length && el && el._mmData) {
+      showMediaMeshMilestone(el, mediaMeshMilestone(el._mmData, st.areaHistory, Date.now()));
+    }
     const area = el.querySelector('#mmStatArea');
     if (area) area.textContent = mmKm(st.areaKm2 || 0);
     const detail = el.querySelector('#mmStatAreaDetail');
@@ -797,6 +804,75 @@
     }
   }
 
+  // ---- Milestones: a one-time celebration when the network crosses a mark ----
+
+  const MM_REPEATER_MARKS = [5, 10, 15, 20, 25, 30, 40, 50, 75, 100, 150, 200, 300, 500, 750, 1000];
+  const MM_AREA_MARKS = [50, 100, 250, 500, 750, 1000, 1500, 2000, 3000, 5000, 7500, 10000, 20000];
+  const MM_MILESTONE_DAYS = 7;
+
+  // The newest milestone crossed in the last week, or null: the repeater
+  // count (dated by each repeater's first-seen), or the km² covered for people
+  // on the ground (dated by the coverage map's day-by-day history).
+  // { id, kind: 'repeaters' | 'area', mark, at (ms) }.
+  function mediaMeshMilestone(mm, areaHistory, now) {
+    const since = now - MM_MILESTONE_DAYS * 86400000;
+    const found = [];
+    const firsts = (Array.isArray(mm && mm.repeaters) ? mm.repeaters : [])
+      .map((r) => Date.parse(r.first_seen)).filter(Number.isFinite).sort((a, b) => a - b);
+    MM_REPEATER_MARKS.forEach((m) => {
+      if (firsts.length >= m && firsts[m - 1] >= since) found.push({ kind: 'repeaters', mark: m, at: firsts[m - 1] });
+    });
+    const hist = Array.isArray(areaHistory) ? areaHistory : [];
+    MM_AREA_MARKS.forEach((m) => {
+      const i = hist.findIndex((h) => h.km2 >= m);
+      if (i < 0) return;
+      const at = hist[i].t;
+      // crossed inside the history (not already there on its first day)
+      if (i > 0 && at >= since) found.push({ kind: 'area', mark: m, at });
+    });
+    if (!found.length) return null;
+    found.sort((a, b) => b.at - a.at || b.mark - a.mark);
+    const f = found[0];
+    return Object.assign({ id: f.kind + ':' + f.mark }, f);
+  }
+
+  function mediaMeshMilestoneHtml(ms) {
+    if (!ms) return '';
+    const when = new Date(ms.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const what = ms.kind === 'repeaters'
+      ? `MediaMesh reached <strong>${ms.mark} repeaters</strong>`
+      : `MediaMesh now covers <strong>${Number(ms.mark).toLocaleString()} km²</strong> for people on the ground`;
+    const bits = Array.from({ length: 14 }, (_, i) => `<i style="--i:${i}"></i>`).join('');
+    return `<div class="mm-milestone" role="status" data-mm-milestone="${esc(ms.id)}">
+      <span class="mm-milestone-burst" aria-hidden="true">${bits}</span>
+      <svg class="ph-icon mm-milestone-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-confetti"/></svg>
+      <span class="mm-milestone-text">${what} <span class="text-muted">on ${esc(when)}</span></span>
+      <button type="button" class="mm-milestone-close" data-mm-milestone-close aria-label="Dismiss"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-x"/></svg></button>
+    </div>`;
+  }
+
+  // Shows ms in the tab's banner slot unless this viewer dismissed it; a
+  // later, bigger milestone replaces a smaller one.
+  function showMediaMeshMilestone(el, ms) {
+    const slot = el && el.querySelector('#mmMilestone');
+    if (!slot || !ms) return;
+    let dismissed = '';
+    try { dismissed = localStorage.getItem('meshcore-mediamesh-milestone-dismissed') || ''; } catch (_) { /* private mode */ }
+    if (dismissed.split(',').includes(ms.id)) return;
+    const cur = slot.firstElementChild && slot.firstElementChild.dataset.mmMilestone;
+    if (cur === ms.id) return;
+    slot.innerHTML = mediaMeshMilestoneHtml(ms);
+    const btn = slot.querySelector('[data-mm-milestone-close]');
+    if (btn) btn.addEventListener('click', () => {
+      try {
+        const list = (localStorage.getItem('meshcore-mediamesh-milestone-dismissed') || '').split(',').filter(Boolean);
+        list.push(ms.id);
+        localStorage.setItem('meshcore-mediamesh-milestone-dismissed', list.slice(-50).join(','));
+      } catch (_) { /* private mode */ }
+      slot.innerHTML = '';
+    });
+  }
+
   function renderMediaMeshTabHtml(mm, windowVal) {
     mm = mm || {};
     const reps = Array.isArray(mm.repeaters) ? mm.repeaters : [];
@@ -804,7 +880,7 @@
     const obs = Array.isArray(mm.observers) ? mm.observers : [];
     const hours = Array.isArray(mm.per_hour) ? mm.per_hour : [];
     const n = Number(mm.mediamesh_transmissions || 0);
-    const intro = '<p class="text-muted" style="margin:0 0 12px">MediaMesh is the second LoRa profile (radio2) that Keymind Cascade repeaters, Wadamesh TAK standalones and MeshCore Open TAK use for photos, video and voice. A transmission counts here when an observer heard it on radio2.</p>';
+    const intro = '<div id="mmMilestone"></div><p class="text-muted" style="margin:0 0 12px">MediaMesh is the second LoRa profile (radio2) that Keymind Cascade repeaters, Wadamesh TAK standalones and MeshCore Open TAK use for photos, video and voice. A transmission counts here when an observer heard it on radio2.</p>';
     if (n === 0 && reps.length === 0 && unknown.length === 0) {
       return intro + '<div class="text-center text-muted" style="padding:40px">No MediaMesh traffic or repeaters in this period. Observers need firmware that tags radio2.</div>';
     }

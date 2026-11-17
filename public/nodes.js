@@ -949,6 +949,8 @@
           <div id="fullNeighborsContent"><div class="text-muted" style="padding:8px"><span class="spinner"></span> Loading neighbors…</div></div>
         </div>
 
+        <div class="node-full-card mm-node-card" id="node-mediamesh" hidden></div>
+
         <div class="node-full-card" id="node-affinity-debug" style="display:none">
           <h4 style="cursor:pointer" onclick="var body=this.parentElement.querySelector('.affinity-debug-body'); var hidden=body.style.display==='none'; body.style.display=hidden?'block':'none'; this.querySelector('.toggle-icon').innerHTML=body.style.display==='none'?'<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-caret-down"/></svg>':'<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-caret-up"/></svg>'"><span class="toggle-icon"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-caret-down"/></svg></span> <svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-magnifying-glass"/></svg> Affinity Debug</h4>
           <div class="affinity-debug-body" style="display:none">
@@ -1029,6 +1031,9 @@
           defaultDirection: 'desc'
         });
       }
+
+      // MediaMesh: shown only for a MediaMesh repeater (mediamesh-node.js)
+      if (window.MediaMeshNode) window.MediaMeshNode.load(document.getElementById('node-mediamesh'), n.public_key, n);
 
       // Fetch neighbors for this node (full-screen view)
       fetchAndRenderNeighbors(n.public_key, 'fullNeighborsContent', {

@@ -21,6 +21,7 @@ node tests/unit/test-aging.js
 node tests/unit/test-analytics-channels-integration.js
 node tests/unit/test-analytics-mediamesh.js
 node tests/unit/test-mediamesh-coverage.js
+node tests/unit/test-mediamesh-node.js
 node tests/unit/test-anl1-tooltip-render.js
 node tests/unit/test-area-filter.js
 node tests/unit/test-channel-color-picker.js

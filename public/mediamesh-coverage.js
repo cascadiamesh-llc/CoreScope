@@ -1012,14 +1012,15 @@
     return n * cellAreaKm2(cov);
   }
 
-  /** km² covered by all the repeaters together, whatever is counted on the
-   * map: from the rasters, leaving cov.margins alone. */
-  function unionKm2(cov) {
+  /** km² covered by all the repeaters together (or those mask allows),
+   * whatever is counted on the map: from the rasters, leaving cov.margins
+   * alone. */
+  function unionKm2(cov, mask) {
     if (!cov || !cov.rasters) return 0;
     const hit = new Uint8Array(cov.width * cov.height);
     let n = 0;
-    cov.rasters.forEach((r) => {
-      if (!r || !r.data) return;
+    cov.rasters.forEach((r, ri) => {
+      if (!r || !r.data || (mask && !mask[ri])) return;
       for (let y = 0; y < r.h; y++) {
         let i = (r.row0 + y) * cov.width + r.col0, k = y * r.w;
         for (let x = 0; x < r.w; x++, i++, k++) {
@@ -1081,6 +1082,41 @@
       if (p && p.marginDb >= 0) out.push({ rep: r, index, distM, marginDb: p.marginDb });
     });
     return out.sort((a, b) => b.marginDb - a.marginDb);
+  }
+
+  // ---- Backbone ----------------------------------------------------------------
+
+  /** Line width for a backbone hop carrying packets, against the busiest. */
+  function backboneWeight(packets, maxPackets) {
+    if (!(packets > 0) || !(maxPackets > 0)) return 1.5;
+    return 1.5 + 4.5 * Math.log1p(packets) / Math.log1p(Math.max(maxPackets, packets));
+  }
+
+  /** The tooltip for a backbone hop. */
+  function backboneTip(e) {
+    const a = e.a_name || String(e.a || '').slice(0, 8), b = e.b_name || String(e.b || '').slice(0, 8);
+    return `${esc(a)} ↔ ${esc(b)}: ${Number(e.packets || 0).toLocaleString()} photo, video and voice packet${e.packets === 1 ? '' : 's'} this week`;
+  }
+
+  /**
+   * Area covered at each step of the time-lapse: [{ t, count, km2 }]. cov
+   * holds every repeater's raster (placed order = first's order).
+   */
+  function areaHistory(cov, first, steps) {
+    return steps.map((st) => ({ t: st.t, count: st.count, km2: unionKm2(cov, presentAt(first, st.t)) }));
+  }
+
+  /**
+   * One repeater's coverage on its own, for its page: { cov, km2 } in the
+   * given view, or null without terrain. opts.loadTile as for init.
+   */
+  async function footprint(rep, modeKey, opts) {
+    if (!rep || !Number.isFinite(rep.lat) || !Number.isFinite(rep.lon)) return null;
+    const mode = CONFIG.modes[modeKey || 'ground'];
+    const terrain = await loadTerrainLevels(terrainPlan([rep], mode), opts && opts.loadTile);
+    if (terrain.total && terrain.failed === terrain.total) return null;
+    const cov = await computeCoverage([rep], terrain.elevAt, modeKey || 'ground', null, null);
+    return cov ? { cov, km2: unionKm2(cov) } : null;
   }
 
   // ---- Growth time-lapse ------------------------------------------------------
@@ -1510,6 +1546,31 @@
       if (any && (!linksToggle || linksToggle.checked)) linkLayer.addTo(map); else map.removeLayer(linkLayer);
     }
     const onLinksToggle = () => drawLinks();
+
+    // The week's backbone: the hops photos, video and voice actually took.
+    const backbone = ((opts && opts.backbone) || []).filter((e) => [e.a_lat, e.a_lon, e.b_lat, e.b_lon].every(Number.isFinite));
+    const backboneLayer = L.layerGroup();
+    const backboneToggle = el.querySelector('#mmCovBackboneToggle');
+    const backboneKey = el.querySelector('#mmCovBackboneKey');
+    if (backbone.length) {
+      const maxP = Math.max(...backbone.map((e) => e.packets || 0));
+      const col = cssColor('--mediamesh-node-color', '#d946ef');
+      // a pale casing under each hop, so it reads over the pink shading
+      const casing = cssColor('--card-bg', '#ffffff');
+      backbone.slice().sort((x, y) => (x.packets || 0) - (y.packets || 0)).forEach((e) => {
+        const w = backboneWeight(e.packets, maxP), ll = [[e.a_lat, e.a_lon], [e.b_lat, e.b_lon]];
+        L.polyline(ll, { color: casing, weight: w + 3, opacity: 0.9, lineCap: 'round', interactive: false }).addTo(backboneLayer);
+        L.polyline(ll, { color: col, weight: w, opacity: 0.95, lineCap: 'round' })
+          .bindTooltip(backboneTip(e), { sticky: true }).addTo(backboneLayer);
+      });
+    }
+    if (backboneKey) backboneKey.hidden = !backbone.length;
+    function drawBackbone() {
+      const on = backbone.length && (!backboneToggle || backboneToggle.checked) && !timeMask;
+      if (on) backboneLayer.addTo(map); else map.removeLayer(backboneLayer);
+    }
+    const onBackboneToggle = () => drawBackbone();
+    if (backboneToggle) backboneToggle.addEventListener('change', onBackboneToggle);
     const calEl = el.querySelector('#mmCovCal');
     function drawCalibration() {
       if (calEl) calEl.textContent = session.cal ? calibrationText(session.cal) : '';
@@ -1716,6 +1777,7 @@
       try {
         opts.onStats({
           modeKey: shown.modeKey, areaKm2: unionKm2(shown),
+          areaHistory: steps.length ? areaHistory(shown, firstSeen, steps) : [],
           repAreas: shown.reps.map((r, i) => ({ rep: r, km2: areas[i] || 0 })),
           calibration: session.cal,
         });
@@ -1797,6 +1859,7 @@
       applyEnabled();
       // Today's heard links would give the past away: back at the end only.
       if (timeMask) map.removeLayer(linkLayer); else drawLinks();
+      drawBackbone();
       if (timeLabel) {
         const area = shown ? coveredKm2(shown) : 0;
         timeLabel.textContent = `${last ? 'Today' : fmtDay(steps[k].t)} · ${steps[k].count} repeater${steps[k].count === 1 ? '' : 's'}`
@@ -1850,6 +1913,7 @@
 
     el.addEventListener('click', onClick);
     drawLinks();
+    drawBackbone();
     show((opts && opts.mode) || 'ground');
     return () => {
       destroyed = true;
@@ -1857,6 +1921,7 @@
       if (slider) slider.removeEventListener('input', onSlide);
       if (panelEl) { panelEl.removeEventListener('input', onSearch); panelEl.removeEventListener('change', onPanelChange); }
       if (planEl) planEl.removeEventListener('change', onPlanChange);
+      if (backboneToggle) backboneToggle.removeEventListener('change', onBackboneToggle);
       if (timeRange) timeRange.removeEventListener('input', onTimeInput);
       stopPlay();
       if (linksToggle) linksToggle.removeEventListener('change', onLinksToggle);
@@ -1870,6 +1935,7 @@
     computeCoverage, workerPool, pathProfile, profileVerdict, budgetRows, profileSvg, profileHtml,
     terrainPlan, loadTerrainLevels, loadTerrain, rampColor, edgeFade, cellAt, readout,
     fitCalibration, calibrationText, setCalibration, getCalibration, CAL,
+    backboneWeight, backboneTip, areaHistory, footprint, coverageImage, legendGradient,
     growthSteps, presentAt, antennaHeight, cellAreaKm2, coveredKm2, unionKm2, repAreasKm2, planGain, planLinks, planHtml, PLAN_RGB,
     repNotes, repArea, repGroups, repSummaryHtml, repPanelHtml, repAction, assumptionsHtml, linkRows, linksTableHtml, init,
   };

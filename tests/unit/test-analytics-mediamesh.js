@@ -43,9 +43,9 @@ const ctx = {
 };
 ctx.escapeHtml = ctx.esc;
 vm.createContext(ctx);
-vm.runInContext(extract(analytics, ['renderPayloadPie', 'mediaMeshTypeShares', 'mediaMeshStatCard',
-  'mediaMeshRadioText', 'mediaMeshTime', 'mediaMeshUnknownNearHtml', 'mediaMeshLinksByLength', 'mmKm', 'mediaMeshHeadlineHtml', 'mediaMeshLeaderboardHtml', 'mediaMeshOnCoverageStats', 'mediaMeshCoverageCardHtml', 'renderMediaMeshTabHtml', 'renderRelayAirtimeDumbbell']) +
-  '\nthis.api = { renderPayloadPie, mediaMeshTypeShares, mediaMeshStatCard, renderMediaMeshTabHtml, renderRelayAirtimeDumbbell, mediaMeshLinksByLength, mediaMeshHeadlineHtml, mediaMeshLeaderboardHtml, mediaMeshOnCoverageStats };', ctx);
+vm.runInContext("const MM_REPEATER_MARKS = [5, 10, 15, 20, 25, 30, 40, 50, 75, 100, 150, 200, 300, 500, 750, 1000]; const MM_AREA_MARKS = [50, 100, 250, 500, 750, 1000, 1500, 2000, 3000, 5000, 7500, 10000, 20000]; const MM_MILESTONE_DAYS = 7;\n" + extract(analytics, ['renderPayloadPie', 'mediaMeshTypeShares', 'mediaMeshStatCard',
+  'mediaMeshRadioText', 'mediaMeshTime', 'mediaMeshUnknownNearHtml', 'mediaMeshLinksByLength', 'mmKm', 'mediaMeshHeadlineHtml', 'mediaMeshLeaderboardHtml', 'mediaMeshOnCoverageStats', 'mediaMeshMilestone', 'mediaMeshMilestoneHtml', 'mediaMeshCoverageCardHtml', 'renderMediaMeshTabHtml', 'renderRelayAirtimeDumbbell']) +
+  '\nthis.api = { renderPayloadPie, mediaMeshTypeShares, mediaMeshStatCard, renderMediaMeshTabHtml, renderRelayAirtimeDumbbell, mediaMeshLinksByLength, mediaMeshHeadlineHtml, mediaMeshLeaderboardHtml, mediaMeshOnCoverageStats, mediaMeshMilestone, mediaMeshMilestoneHtml };', ctx);
 const A = ctx.api;
 
 const MM = {
@@ -242,6 +242,35 @@ test('leaderboard: most relayed, longest links, newest, best placed from the map
   assert.ok(placed.indexOf('Big') < placed.indexOf('Small') && placed.includes('41 km²') && placed.includes('3.2 km²') && !placed.includes('None'), placed);
 });
 
+test('milestone constants in the test match analytics.js', () => {
+  assert.ok(analytics.includes('const MM_REPEATER_MARKS = [5, 10, 15, 20, 25, 30, 40, 50, 75, 100, 150, 200, 300, 500, 750, 1000];'));
+  assert.ok(analytics.includes('const MM_AREA_MARKS = [50, 100, 250, 500, 750, 1000, 1500, 2000, 3000, 5000, 7500, 10000, 20000];'));
+  assert.ok(analytics.includes('const MM_MILESTONE_DAYS = 7;'));
+});
+
+test('milestones: the newest mark crossed this week, repeaters by first seen, area by history', () => {
+  const now = Date.parse('2026-11-17T12:00:00Z');
+  const day = 86400000;
+  const reps = (n, lastAgoDays) => Array.from({ length: n }, (_, i) => ({ first_seen: new Date(now - (i === n - 1 ? lastAgoDays : 30) * day).toISOString() }));
+  // the 20th repeater arrived 2 days ago
+  let ms = A.mediaMeshMilestone({ repeaters: reps(20, 2) }, null, now);
+  assert.ok(ms && ms.kind === 'repeaters' && ms.mark === 20 && ms.id === 'repeaters:20', JSON.stringify(ms));
+  // ...but 10 days ago is old news
+  assert.strictEqual(A.mediaMeshMilestone({ repeaters: reps(20, 10) }, null, now), null);
+  // 19 repeaters: no round number crossed
+  assert.strictEqual(A.mediaMeshMilestone({ repeaters: reps(19, 1) }, null, now), null);
+  // area: crossed 1,000 km² yesterday; newer than the repeater mark, so it wins
+  const hist = [{ t: now - 20 * day, km2: 400 }, { t: now - 3 * day, km2: 760 }, { t: now - day, km2: 1010 }];
+  ms = A.mediaMeshMilestone({ repeaters: reps(20, 2) }, hist, now);
+  assert.ok(ms.kind === 'area' && ms.mark === 1000 && ms.at === now - day, JSON.stringify(ms));
+  // already past a mark on the first day of the history: not a crossing
+  assert.strictEqual(A.mediaMeshMilestone({ repeaters: [] }, [{ t: now - day, km2: 600 }, { t: now, km2: 610 }], now), null);
+  const h = A.mediaMeshMilestoneHtml(ms);
+  assert.ok(h.includes('MediaMesh now covers <strong>1,000 km²</strong> for people on the ground') && h.includes('data-mm-milestone="area:1000"') && h.includes('#ph-confetti'), h);
+  assert.ok(A.mediaMeshMilestoneHtml({ id: 'repeaters:20', kind: 'repeaters', mark: 20, at: now }).includes('MediaMesh reached <strong>20 repeaters</strong>'));
+  assert.strictEqual(A.mediaMeshMilestoneHtml(null), '');
+});
+
 test('empty state explains what is needed', () => {
   const h = A.renderMediaMeshTabHtml({ mediamesh_transmissions: 0, repeaters: [], observers: [], per_hour: [] }, '');
   assert.ok(h.includes('No MediaMesh traffic or repeaters'));
@@ -250,7 +279,7 @@ test('empty state explains what is needed', () => {
 test('the coverage card has everything the map script fills in, and gets the heard links', () => {
   const html = A.renderMediaMeshTabHtml(MM, '');
   for (const id of ['mmCoverageCard', 'mmCovMap', 'mmCovReps', 'mmCovRepSummary', 'mmCovRepPanel', 'mmCovGradient', 'mmCovOpacity', 'mmCovReadout', 'mmCovStatus',
-    'mmCovProfile', 'mmCovMode', 'mmCovCal', 'mmCovPlan', 'mmCovTime', 'mmCovTimeRange', 'mmCovTimeLabel', 'mmStatArea', 'mmLeaderPlaced', 'mmCovLinksKey', 'mmCovLinksToggle', 'mmCovLinksWrap', 'mmCovLinks', 'mmCovHow']) {
+    'mmCovProfile', 'mmCovMode', 'mmCovCal', 'mmCovPlan', 'mmCovTime', 'mmCovTimeRange', 'mmCovTimeLabel', 'mmStatArea', 'mmLeaderPlaced', 'mmMilestone', 'mmCovBackboneKey', 'mmCovBackboneToggle', 'mmCovLinksKey', 'mmCovLinksToggle', 'mmCovLinksWrap', 'mmCovLinks', 'mmCovHow']) {
     assert.strictEqual(html.split('id="' + id + '"').length, 2, id);
   }
   assert.ok(html.includes('data-mm-cov="ground"') && html.includes('data-mm-cov="repeater"'));
@@ -259,8 +288,8 @@ test('the coverage card has everything the map script fills in, and gets the hea
   assert.ok(/id="mmCovLinksKey" hidden/.test(html) && /id="mmCovLinksWrap" hidden/.test(html), 'nothing about heard links until there are some');
   assert.ok(html.includes('Estimate, not a measurement'));
   assert.ok(html.includes('Repeaters without a saved position (Peak, Valley)'));
-  assert.ok(analytics.includes('initMediaMeshCoverage(el, Array.isArray(mm.repeaters) ? mm.repeaters : [], Array.isArray(mm.links) ? mm.links : [])'));
-  assert.ok(analytics.includes('window.MediaMeshCoverage.init(card, reps, { links: links || [], onStats: (st) => mediaMeshOnCoverageStats(el, st) })'));
+  assert.ok(analytics.includes('initMediaMeshCoverage(el, Array.isArray(mm.repeaters) ? mm.repeaters : [], Array.isArray(mm.links) ? mm.links : [],\n      Array.isArray(mm.backbone) ? mm.backbone : []);'));
+  assert.ok(analytics.includes('window.MediaMeshCoverage.init(card, reps, { links: links || [], backbone: backbone || [], onStats: (st) => mediaMeshOnCoverageStats(el, st) })'));
   const css = fs.readFileSync('public/style.css', 'utf8');
   for (const cls of ['.mm-cov-chip', '.mm-cov-profile', '.mm-cov-prof-zone', '.mm-cov-prof-los', '.mm-cov-budget', '.mm-cov-how', '.mm-cov-links-table']) {
     assert.ok(css.includes(cls + ' {'), cls);
