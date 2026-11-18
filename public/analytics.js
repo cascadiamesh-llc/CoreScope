@@ -662,7 +662,7 @@
         </span>
         <span><span class="mm-cov-sw mm-cov-sw--node"></span>MediaMesh repeater</span>
         <span><span class="mm-cov-sw mm-cov-sw--relayed"></span>Relayed (weaker evidence)</span>
-        <label class="mm-cov-links-key" id="mmCovBackboneKey" hidden title="The hops photos, video and voice actually took this week: thicker for busier"><input type="checkbox" id="mmCovBackboneToggle" checked> <span class="mm-cov-sw mm-cov-sw--backbone"></span>Backbone (this week)</label>
+        <label class="mm-cov-links-key" id="mmCovBackboneKey" hidden title="The hops photos, video and voice actually took this week: thicker for busier"><input type="checkbox" id="mmCovBackboneToggle"> <span class="mm-cov-sw mm-cov-sw--backbone"></span>Backbone (this week)</label>
         <label class="mm-cov-links-key" id="mmCovLinksKey" hidden><input type="checkbox" id="mmCovLinksToggle" checked> <span class="mm-cov-sw mm-cov-sw--link"></span>Heard on radio2</label>
         <label class="mm-cov-opacity">Opacity <input type="range" id="mmCovOpacity" min="0" max="100" value="100" aria-label="Coverage opacity"></label>
       </div>

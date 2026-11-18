@@ -286,6 +286,8 @@ test('the coverage card has everything the map script fills in, and gets the hea
   assert.ok(/<div class="mm-cov-profile" id="mmCovProfile" hidden>/.test(html), 'no profile until a point is clicked');
   assert.ok(/id="mmCovRepPanel" hidden>/.test(html), 'the repeater picker starts closed');
   assert.ok(/id="mmCovLinksKey" hidden/.test(html) && /id="mmCovLinksWrap" hidden/.test(html), 'nothing about heard links until there are some');
+  assert.ok(html.includes('<input type="checkbox" id="mmCovBackboneToggle">'), 'the backbone starts off');
+  assert.ok(html.includes('<input type="checkbox" id="mmCovLinksToggle" checked>'), 'heard links start on');
   assert.ok(html.includes('Estimate, not a measurement'));
   assert.ok(html.includes('Repeaters without a saved position (Peak, Valley)'));
   assert.ok(analytics.includes('initMediaMeshCoverage(el, Array.isArray(mm.repeaters) ? mm.repeaters : [], Array.isArray(mm.links) ? mm.links : [],\n      Array.isArray(mm.backbone) ? mm.backbone : []);'));
