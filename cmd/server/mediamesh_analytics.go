@@ -63,6 +63,11 @@ type MediaMeshRepeater struct {
 	// relayed in the last week. From the ingestor's mediamesh_node_stats.
 	FirstSeen   string `json:"first_seen,omitempty"`
 	RelayedWeek int    `json:"media_relayed_7d"`
+	// ClipsWeek: whole clips among them (photos, videos, voice clips), of
+	// which ClipsEstimatedWeek were estimated from bursts of packets whose
+	// contents the analyzer can't read.
+	ClipsWeek          int `json:"media_clips_7d"`
+	ClipsEstimatedWeek int `json:"media_clips_estimated_7d"`
 	MediaMeshNode
 }
 
@@ -618,6 +623,7 @@ func (s *PacketStore) mediaMeshRepeaters(now time.Time, names map[string]nodeInf
 		rep.Near = nodeNear(names, pk)
 		st := mediaMeshNodeStatOf(pk)
 		rep.FirstSeen, rep.RelayedWeek = st.FirstSeen, st.Relayed7d
+		rep.ClipsWeek, rep.ClipsEstimatedWeek = st.Clips7d, st.ClipsEstimated7d
 		if info, ok := names[pk]; ok && !(info.Lat == 0 && info.Lon == 0) {
 			lat, lon := info.Lat, info.Lon
 			rep.Lat, rep.Lon = &lat, &lon

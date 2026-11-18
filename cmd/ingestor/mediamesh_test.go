@@ -1130,6 +1130,12 @@ func TestUpdateMediaMeshNodeStats(t *testing.T) {
 	if n := edge(a, b); n != 1 {
 		t.Errorf("a-b edge: %d packets, want 1 (p5; p1 is older than a week)", n)
 	}
+	// Clips: p3's bytes name its clip; p2, p5 and f4 can't be read, so they
+	// count by bursts: p5 alone, p2 and f4 together (the same minute).
+	var clipsN, est int
+	if err := s.db.QueryRow(`SELECT clips_7d, estimated_7d FROM mediamesh_node_clips WHERE public_key = ?`, a).Scan(&clipsN, &est); err != nil || clipsN != 3 || est != 2 {
+		t.Errorf("a clips: %d (%d estimated), %v; want 3 (2)", clipsN, est, err)
+	}
 	// Per day: a relayed p1 (10 days ago), p2, p3, p5 and f4 within two weeks.
 	var dayN int
 	if err := s.db.QueryRow(`SELECT COALESCE(SUM(packets), 0) FROM mediamesh_node_daily WHERE public_key = ?`, a).Scan(&dayN); err != nil || dayN != 5 {
@@ -1143,5 +1149,36 @@ func TestUpdateMediaMeshNodeStats(t *testing.T) {
 	s.UpdateMediaMeshNodeStats(now)
 	if f, r := row(a); f != oldTS || r != 4 {
 		t.Errorf("a after retention: first %s relayed %d, want %s and 4", f, r, oldTS)
+	}
+}
+
+func TestMediaClipKeyAndTally(t *testing.T) {
+	raw := func(h string) *PacketData {
+		return &PacketData{PayloadType: payloadRawCustom, DecodedJSON: `{"raw":"` + h + `"}`}
+	}
+	if k, _ := mediaClipKey(raw("561a2b3c4d0001")); k != "s1a2b3c4d" {
+		t.Errorf("raw key %q", k)
+	}
+	// a parity piece counts under its clip
+	if k, _ := mediaClipKey(raw("56e4ebc28d0300")); k != "s1a2b3c4d" {
+		t.Errorf("parity key %q", k)
+	}
+	grp := &PacketData{PayloadType: payloadGrpData, DecodedJSON: `{"channelHash":17}`}
+	if k, ch := mediaClipKey(grp); k != "" || ch != 17 {
+		t.Errorf("unreadable: %q %d", k, ch)
+	}
+	read := &PacketData{PayloadType: payloadGrpData, DecodedJSON: `{"channelHash":17,"dataType":22083,"decryptedBlob":"541a2b3c4d0500"}`}
+	if k, _ := mediaClipKey(read); k != "s1a2b3c4d" {
+		t.Errorf("readable channel data %q", k)
+	}
+	c := &mediaClipTally{exact: map[string]bool{}}
+	c.add("s1", -1, 0)
+	c.add("s1", -1, 5)
+	for _, ts := range []int64{100, 110, 125, 400, 405} {
+		c.add("", 17, ts)
+	}
+	c.add("", 18, 110)
+	if n, est := c.count(); n != 4 || est != 3 {
+		t.Errorf("count %d (%d estimated), want 4 (3)", n, est)
 	}
 }

@@ -6038,6 +6038,7 @@ body.embed #app.app-fixed {
 .mm-node-tile { border: 1px solid var(--border); border-left: 3px solid var(--mediamesh-node-color); border-radius: 8px; padding: 8px 10px; }
 .mm-node-label { font-size: 0.8em; color: var(--text-muted); }
 .mm-node-value { font-size: 1.15em; font-weight: var(--fw-medium, 500); margin-top: 2px; }
+.mm-node-sub { font-size: 0.85em; margin-top: 2px; }
 .mm-node-value .text-muted { font-size: 0.75em; font-weight: 400; }
 .mm-node-cols { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(260px, 2fr); gap: 16px; }
 @media (max-width: 700px) { .mm-node-cols { grid-template-columns: 1fr; } }

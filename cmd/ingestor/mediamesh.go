@@ -3,7 +3,9 @@ package main
 import (
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -507,6 +509,83 @@ func (s *Store) mainMeshPathsSince(since int64) (map[int64][][]string, error) {
 	return out, rows.Err()
 }
 
+// mediaClipGapS: packets of one clip come in a burst; a gap longer than this
+// on the same channel through the same repeater starts another clip.
+const mediaClipGapS = 30
+
+// mediaClipKey is the clip a media packet belongs to when its bytes can be
+// read ("s" and the session id, a parity piece under its clip's id), else
+// "" and the channel it was sent on, for estimating.
+func mediaClipKey(d *PacketData) (key string, channel int) {
+	var p struct {
+		Raw           string `json:"raw"`
+		DataType      *int   `json:"dataType"`
+		DecryptedBlob string `json:"decryptedBlob"`
+		ChannelHash   *int   `json:"channelHash"`
+	}
+	channel = -1
+	if json.Unmarshal([]byte(d.DecodedJSON), &p) != nil {
+		return "", channel
+	}
+	if p.ChannelHash != nil {
+		channel = *p.ChannelHash
+	}
+	h := p.Raw
+	if d.PayloadType == payloadGrpData {
+		h = ""
+		if p.DataType != nil && *p.DataType == mediaChannelDataType {
+			h = p.DecryptedBlob
+		}
+	}
+	b, err := hex.DecodeString(h)
+	if err != nil || len(b) < 5 || (b[0] != 0x56 && b[0] != 0x57 && b[0] != 0x53 && b[0] != 0x54) {
+		return "", channel
+	}
+	sid := uint32(b[1])<<24 | uint32(b[2])<<16 | uint32(b[3])<<8 | uint32(b[4])
+	if alt := sid ^ 0xFEC0FEC0; alt < sid {
+		sid = alt // a clip and its parity pieces count once
+	}
+	return fmt.Sprintf("s%08x", sid), channel
+}
+
+// mediaClipTally counts the clips one repeater relayed: exactly by session
+// id where the packets could be read, else estimated from bursts.
+type mediaClipTally struct {
+	exact  map[string]bool
+	bursts []mediaClipBurst
+}
+
+type mediaClipBurst struct {
+	channel int
+	ts      int64
+}
+
+func (c *mediaClipTally) add(key string, channel int, ts int64) {
+	if key != "" {
+		c.exact[key] = true
+		return
+	}
+	c.bursts = append(c.bursts, mediaClipBurst{channel, ts})
+}
+
+// count is the clips: the exact ones, plus one per burst of unreadable
+// packets on a channel; estimated says whether any were estimated.
+func (c *mediaClipTally) count() (n int, estimated int) {
+	n = len(c.exact)
+	sort.Slice(c.bursts, func(i, j int) bool {
+		if c.bursts[i].channel != c.bursts[j].channel {
+			return c.bursts[i].channel < c.bursts[j].channel
+		}
+		return c.bursts[i].ts < c.bursts[j].ts
+	})
+	for i, b := range c.bursts {
+		if i == 0 || b.channel != c.bursts[i-1].channel || b.ts-c.bursts[i-1].ts > mediaClipGapS {
+			estimated++
+		}
+	}
+	return n + estimated, estimated
+}
+
 // UpdateMediaMeshNodeStats rebuilds mediamesh_node_stats from the stored
 // MediaMesh photo and voice packets (GRP_DATA, RAW_CUSTOM that carry media):
 // for every node that relayed one (a hop mediaMeshTrustedHops keeps) or heard
@@ -568,6 +647,7 @@ func (s *Store) UpdateMediaMeshNodeStats(now time.Time) int {
 			first[pk] = ts
 		}
 	}
+	clips := map[string]*mediaClipTally{}
 	for rows.Next() {
 		var d PacketData
 		var txID, ts int64
@@ -590,6 +670,7 @@ func (s *Store) UpdateMediaMeshNodeStats(now time.Time) int {
 		}
 		resolved = mediaMeshTrustedHops(&d, hops, resolved, mainPaths[txID])
 		day := time.Unix(ts, 0).UTC().Format("2006-01-02")
+		clipKey, channel := mediaClipKey(&d)
 		for i, r := range resolved {
 			if r == nil {
 				continue
@@ -601,6 +682,10 @@ func (s *Store) UpdateMediaMeshNodeStats(now time.Time) int {
 					relayed[pk] = map[string]bool{}
 				}
 				relayed[pk][hash] = true
+				if clips[pk] == nil {
+					clips[pk] = &mediaClipTally{exact: map[string]bool{}}
+				}
+				clips[pk].add(clipKey, channel, ts)
 				if i > 0 && resolved[i-1] != nil {
 					link(*resolved[i-1], pk, hash)
 				}
@@ -646,6 +731,15 @@ func (s *Store) UpdateMediaMeshNodeStats(now time.Time) int {
 	}
 	for k, hs := range edges {
 		if _, err := tx.Exec(`INSERT INTO mediamesh_edge (a, b, packets) VALUES (?, ?, ?)`, k.a, k.b, len(hs)); err != nil {
+			return fail()
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM mediamesh_node_clips`); err != nil {
+		return fail()
+	}
+	for pk, c := range clips {
+		n, estimated := c.count()
+		if _, err := tx.Exec(`INSERT INTO mediamesh_node_clips (public_key, clips_7d, estimated_7d) VALUES (?, ?, ?)`, pk, n, estimated); err != nil {
 			return fail()
 		}
 	}

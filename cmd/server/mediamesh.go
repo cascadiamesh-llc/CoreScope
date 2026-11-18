@@ -164,6 +164,10 @@ func withNeighbourNames(in []MediaMeshUnknown, nodes map[string]nodeInfo) []Medi
 type mediaMeshNodeStat struct {
 	FirstSeen string
 	Relayed7d int
+	// Clips7d: clips relayed in the last week (mediamesh_node_clips), of
+	// which ClipsEstimated7d were estimated from bursts of unreadable packets.
+	Clips7d          int
+	ClipsEstimated7d int
 }
 
 func loadMediaMeshNodeStats(conn *sql.DB) (map[string]mediaMeshNodeStat, error) {
@@ -184,7 +188,29 @@ func loadMediaMeshNodeStats(conn *sql.DB) (map[string]mediaMeshNodeStat, error) 
 		}
 		out[strings.ToLower(pk)] = st
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if !tableExists(conn, "mediamesh_node_clips") {
+		return out, nil
+	}
+	crows, err := conn.Query(`SELECT public_key, clips_7d, estimated_7d FROM mediamesh_node_clips`)
+	if err != nil {
+		return nil, err
+	}
+	defer crows.Close()
+	for crows.Next() {
+		var pk string
+		var n, est int
+		if err := crows.Scan(&pk, &n, &est); err != nil {
+			return nil, err
+		}
+		k := strings.ToLower(pk)
+		st := out[k]
+		st.Clips7d, st.ClipsEstimated7d = n, est
+		out[k] = st
+	}
+	return out, crows.Err()
 }
 
 // mediaMeshEdge is one pair of nodes photos, video or voice went between

@@ -42,6 +42,9 @@
       + ` <span class="text-muted">(${Math.max(0, Math.floor((now - first) / 86400000))} days ago)</span>`
       : '<span class="text-muted">not yet known</span>';
     const week = Number(r.media_relayed_7d || 0);
+    // whole clips among them; "about" when some were estimated from bursts
+    const nClips = Number(r.media_clips_7d || 0);
+    const clips = nClips ? `${Number(r.media_clips_estimated_7d || 0) > 0 ? 'about ' : ''}${nClips.toLocaleString()} whole clip${nClips === 1 ? '' : 's'} (photos, video, voice)` : '';
     const rank = report.rank > 0 ? `#${report.rank} of ${report.rank_of} repeaters` : 'none this week';
     const hops = (Array.isArray(report.backbone) ? report.backbone : []).slice().sort((x, y) => (y.packets || 0) - (x.packets || 0));
     const partner = (e) => (e.a === report.public_key ? { pk: e.b, name: e.b_name } : { pk: e.a, name: e.a_name });
@@ -53,7 +56,7 @@
     return `<h4>${ICON('ph-share-network')} MediaMesh</h4>
       <div class="mm-node-tiles">
         <div class="mm-node-tile"><div class="mm-node-label">On MediaMesh since</div><div class="mm-node-value">${joined}</div></div>
-        <div class="mm-node-tile"><div class="mm-node-label">Media packets relayed this week</div><div class="mm-node-value">${week.toLocaleString()} <span class="text-muted">${esc(rank)}</span></div></div>
+        <div class="mm-node-tile"><div class="mm-node-label">Media packets relayed this week</div><div class="mm-node-value">${week.toLocaleString()} <span class="text-muted">${esc(rank)}</span></div>${clips ? `<div class="text-muted mm-node-sub">${clips}</div>` : ''}</div>
         <div class="mm-node-tile"><div class="mm-node-label">Covers on its own</div><div class="mm-node-value" id="mmNodeArea">${placed ? '…' : '<span class="text-muted">no saved position</span>'}</div></div>
       </div>
       <div class="mm-node-cols">

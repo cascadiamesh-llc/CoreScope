@@ -44,7 +44,7 @@ const ctx = {
 ctx.escapeHtml = ctx.esc;
 vm.createContext(ctx);
 vm.runInContext("const MM_REPEATER_MARKS = [5, 10, 15, 20, 25, 30, 40, 50, 75, 100, 150, 200, 300, 500, 750, 1000]; const MM_AREA_MARKS = [50, 100, 250, 500, 750, 1000, 1500, 2000, 3000, 5000, 7500, 10000, 20000]; const MM_MILESTONE_DAYS = 7;\n" + extract(analytics, ['renderPayloadPie', 'mediaMeshTypeShares', 'mediaMeshStatCard',
-  'mediaMeshRadioText', 'mediaMeshTime', 'mediaMeshUnknownNearHtml', 'mediaMeshLinksByLength', 'mmKm', 'mediaMeshHeadlineHtml', 'mediaMeshLeaderboardHtml', 'mediaMeshOnCoverageStats', 'mediaMeshMilestone', 'mediaMeshMilestoneHtml', 'mediaMeshCoverageCardHtml', 'renderMediaMeshTabHtml', 'renderRelayAirtimeDumbbell']) +
+  'mediaMeshRadioText', 'mediaMeshTime', 'mediaMeshUnknownNearHtml', 'mediaMeshLinksByLength', 'mmKm', 'mediaMeshHeadlineHtml', 'mediaMeshClipsText', 'mediaMeshLeaderboardHtml', 'mediaMeshOnCoverageStats', 'mediaMeshMilestone', 'mediaMeshMilestoneHtml', 'mediaMeshCoverageCardHtml', 'renderMediaMeshTabHtml', 'renderRelayAirtimeDumbbell']) +
   '\nthis.api = { renderPayloadPie, mediaMeshTypeShares, mediaMeshStatCard, renderMediaMeshTabHtml, renderRelayAirtimeDumbbell, mediaMeshLinksByLength, mediaMeshHeadlineHtml, mediaMeshLeaderboardHtml, mediaMeshOnCoverageStats, mediaMeshMilestone, mediaMeshMilestoneHtml };', ctx);
 const A = ctx.api;
 
@@ -228,6 +228,11 @@ test('leaderboard: most relayed, longest links, newest, best placed from the map
   assert.ok(relayed.indexOf('Busy') < relayed.indexOf('Middle &lt;b&gt;') && !relayed.includes('Quiet'), relayed);
   // they are packets (pieces of clips), not whole photos
   assert.ok(relayed.startsWith('<h4>Most media packets relayed') && relayed.includes('300 packets'), relayed);
+  // and the whole clips among them, "about" when some were estimated
+  const lb2 = A.mediaMeshLeaderboardHtml(Object.assign({}, MM, { repeaters: [
+    { public_key: 'aa', name: 'A', media_relayed_7d: 300, media_clips_7d: 14, media_clips_estimated_7d: 3 },
+    { public_key: 'bb', name: 'B', media_relayed_7d: 20, media_clips_7d: 1, media_clips_estimated_7d: 0 }] }));
+  assert.ok(lb2.includes('300 packets · about 14 clips') && lb2.includes('20 packets · 1 clip<'), lb2);
   const newest = h.split('<section>')[4];
   assert.ok(newest.indexOf('Quiet') < newest.indexOf('Middle') && newest.indexOf('Middle') < newest.indexOf('Busy'), newest);
   assert.strictEqual(A.mediaMeshLeaderboardHtml(Object.assign({}, MM, { repeaters: [] })), '');

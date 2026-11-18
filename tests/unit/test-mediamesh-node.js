@@ -35,6 +35,7 @@ test('card: since when, relayed with rank, hops with partners, map only with a p
   assert.ok(h.includes('On MediaMesh since') && h.includes('(28 days ago)'), h);
   assert.ok(h.includes('412 <span class="text-muted">#2 of 14 repeaters</span>'), h);
   assert.ok(h.includes('Media packets relayed this week'), 'packets, not whole photos');
+  assert.ok(N.cardHtml({ lat: 1, lon: 1 }, Object.assign({}, report, { repeater: Object.assign({}, report.repeater, { media_clips_7d: 30, media_clips_estimated_7d: 2 }) }), now).includes('about 30 whole clips (photos, video, voice)'));
   assert.ok(h.includes(`href="#/nodes/${other}">Yesler</a> <span class="text-muted">88</span>`), 'the partner, not itself');
   assert.ok(h.includes('id="mmNodeMap"') && h.includes('id="mmNodeArea">…<'));
   assert.ok(h.includes('First &lt;Hill&gt;') && !h.includes('First <Hill>'), 'names escaped');

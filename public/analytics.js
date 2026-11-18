@@ -761,6 +761,14 @@
   // Who's doing the most: relayed media this week, the longest links heard,
   // the newest repeaters, and the best-placed (most ground coverage on its
   // own, filled in by the coverage map).
+  // "about 140 clips": whole photos, videos and voice clips among the
+  // packets; "about" when some were estimated (contents unreadable).
+  function mediaMeshClipsText(r) {
+    const n = Number(r && r.media_clips_7d || 0);
+    if (!n) return '';
+    return (Number(r.media_clips_estimated_7d || 0) > 0 ? 'about ' : '') + n.toLocaleString() + ' clip' + (n === 1 ? '' : 's');
+  }
+
   function mediaMeshLeaderboardHtml(mm) {
     const reps = Array.isArray(mm && mm.repeaters) ? mm.repeaters : [];
     const name = (r) => r.name || String(r.public_key || '').slice(0, 8);
@@ -768,7 +776,7 @@
     const list = (items) => (items.length ? `<ol class="mm-lb-list">${items.join('')}</ol>` : '<p class="text-muted mm-lb-empty">Nothing yet.</p>');
     const relayed = reps.filter((r) => Number(r.media_relayed_7d || 0) > 0)
       .sort((a, b) => b.media_relayed_7d - a.media_relayed_7d || name(a).localeCompare(name(b))).slice(0, 5)
-      .map((r) => `<li>${link(r)} <span class="mm-lb-num">${Number(r.media_relayed_7d).toLocaleString()} packets</span></li>`);
+      .map((r) => `<li>${link(r)} <span class="mm-lb-num">${Number(r.media_relayed_7d).toLocaleString()} packets${mediaMeshClipsText(r) ? ' · ' + mediaMeshClipsText(r) : ''}</span></li>`);
     const longest = mediaMeshLinksByLength(mm).slice(0, 5)
       .map((l) => `<li>${esc(l.from)} → ${esc(l.to)} <span class="mm-lb-num">${mmKm(l.km)} km</span></li>`);
     const newest = reps.filter((r) => mediaMeshTime(r.first_seen))

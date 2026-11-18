@@ -84,6 +84,15 @@ func ensureMediaMesh(rw *sql.DB) error {
 			packets INTEGER NOT NULL,
 			PRIMARY KEY (a, b)
 		);
+		-- Clips (photos, videos, voice clips) each node relayed in the last
+		-- week: counted by session id where the packets could be read, the
+		-- rest estimated from bursts on a channel (estimated_7d of them).
+		-- Rebuilt with mediamesh_node_stats.
+		CREATE TABLE IF NOT EXISTS mediamesh_node_clips (
+			public_key   TEXT PRIMARY KEY,
+			clips_7d     INTEGER NOT NULL,
+			estimated_7d INTEGER NOT NULL
+		);
 		-- Photo, video and voice packets each node relayed per day (UTC),
 		-- over the last two weeks. Rebuilt with mediamesh_node_stats.
 		CREATE TABLE IF NOT EXISTS mediamesh_node_daily (
