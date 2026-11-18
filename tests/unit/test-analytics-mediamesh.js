@@ -226,6 +226,8 @@ test('leaderboard: most relayed, longest links, newest, best placed from the map
   const h = A.mediaMeshLeaderboardHtml(mm);
   const relayed = h.split('<section>')[1];
   assert.ok(relayed.indexOf('Busy') < relayed.indexOf('Middle &lt;b&gt;') && !relayed.includes('Quiet'), relayed);
+  // they are packets (pieces of clips), not whole photos
+  assert.ok(relayed.startsWith('<h4>Most media packets relayed') && relayed.includes('300 packets'), relayed);
   const newest = h.split('<section>')[4];
   assert.ok(newest.indexOf('Quiet') < newest.indexOf('Middle') && newest.indexOf('Middle') < newest.indexOf('Busy'), newest);
   assert.strictEqual(A.mediaMeshLeaderboardHtml(Object.assign({}, MM, { repeaters: [] })), '');

@@ -34,6 +34,7 @@ test('card: since when, relayed with rank, hops with partners, map only with a p
   let h = N.cardHtml({ lat: 47.6, lon: -122.3 }, report, now);
   assert.ok(h.includes('On MediaMesh since') && h.includes('(28 days ago)'), h);
   assert.ok(h.includes('412 <span class="text-muted">#2 of 14 repeaters</span>'), h);
+  assert.ok(h.includes('Media packets relayed this week'), 'packets, not whole photos');
   assert.ok(h.includes(`href="#/nodes/${other}">Yesler</a> <span class="text-muted">88</span>`), 'the partner, not itself');
   assert.ok(h.includes('id="mmNodeMap"') && h.includes('id="mmNodeArea">…<'));
   assert.ok(h.includes('First &lt;Hill&gt;') && !h.includes('First <Hill>'), 'names escaped');

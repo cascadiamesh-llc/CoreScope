@@ -768,7 +768,7 @@
     const list = (items) => (items.length ? `<ol class="mm-lb-list">${items.join('')}</ol>` : '<p class="text-muted mm-lb-empty">Nothing yet.</p>');
     const relayed = reps.filter((r) => Number(r.media_relayed_7d || 0) > 0)
       .sort((a, b) => b.media_relayed_7d - a.media_relayed_7d || name(a).localeCompare(name(b))).slice(0, 5)
-      .map((r) => `<li>${link(r)} <span class="mm-lb-num">${Number(r.media_relayed_7d).toLocaleString()}</span></li>`);
+      .map((r) => `<li>${link(r)} <span class="mm-lb-num">${Number(r.media_relayed_7d).toLocaleString()} packets</span></li>`);
     const longest = mediaMeshLinksByLength(mm).slice(0, 5)
       .map((l) => `<li>${esc(l.from)} → ${esc(l.to)} <span class="mm-lb-num">${mmKm(l.km)} km</span></li>`);
     const newest = reps.filter((r) => mediaMeshTime(r.first_seen))
@@ -778,7 +778,7 @@
     return `<div class="analytics-row"><div class="analytics-card flex-1">
       <h3>MediaMesh leaderboard</h3>
       <div class="mm-lb">
-        <section><h4>Most photos, video &amp; voice relayed <span class="text-muted">(7 days)</span></h4>${list(relayed)}</section>
+        <section><h4>Most media packets relayed <span class="text-muted">(7 days)</span></h4>${list(relayed)}</section>
         <section><h4>Best placed <span class="text-muted">(km² it covers alone)</span></h4><div id="mmLeaderPlaced"><p class="text-muted mm-lb-empty">Waiting for the coverage map…</p></div></section>
         <section><h4>Longest links heard</h4>${list(longest)}</section>
         <section><h4>Newest on MediaMesh</h4>${list(newest)}</section>

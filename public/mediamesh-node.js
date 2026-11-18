@@ -53,7 +53,7 @@
     return `<h4>${ICON('ph-share-network')} MediaMesh</h4>
       <div class="mm-node-tiles">
         <div class="mm-node-tile"><div class="mm-node-label">On MediaMesh since</div><div class="mm-node-value">${joined}</div></div>
-        <div class="mm-node-tile"><div class="mm-node-label">Photos, video &amp; voice relayed this week</div><div class="mm-node-value">${week.toLocaleString()} <span class="text-muted">${esc(rank)}</span></div></div>
+        <div class="mm-node-tile"><div class="mm-node-label">Media packets relayed this week</div><div class="mm-node-value">${week.toLocaleString()} <span class="text-muted">${esc(rank)}</span></div></div>
         <div class="mm-node-tile"><div class="mm-node-label">Covers on its own</div><div class="mm-node-value" id="mmNodeArea">${placed ? '…' : '<span class="text-muted">no saved position</span>'}</div></div>
       </div>
       <div class="mm-node-cols">
