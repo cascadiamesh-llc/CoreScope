@@ -432,7 +432,8 @@ function cellAt(cov, lat, lon) {
   });
 
   await test('planned repeater: new against already-covered area, and the repeaters it links to', async () => {
-    const elev = () => 0;
+    // low land with a little relief (dead-flat ground at sea level counts as water)
+    const elev = (lat, lon) => 10 + 0.5 * Math.sin(lat * 3000) + 0.5 * Math.cos(lon * 3000);
     const planned = { lat: 47.6, lon: -122.33 };
     const planCov = await M.computeCoverage([planned], elev, 'repeater');
     // nothing there before: all new
@@ -543,8 +544,54 @@ function cellAt(cov, lat, lon) {
     assert.ok(g.includes('ITU-R P.526-11') && g.includes('k = 4/3') && g.includes('Fresnel'));
     assert.ok(g.includes('30 km from each repeater') && r.includes('60 km from each repeater'));
     assert.ok(/Not modelled:<\/strong> buildings and trees/.test(g) && g.includes('interference'));
-    assert.strictEqual((g.match(/<li>/g) || []).length, 7);
+    assert.ok(g.includes('plane-earth (two-ray) loss') && g.includes('km² count land only'));
+    assert.strictEqual((g.match(/<li>/g) || []).length, 8);
     assert.ok(g.includes('<strong>Checked:</strong> Not yet checked against real links'));
+  });
+
+  await test('ground reflection: plane-earth loss sets the floor over flat ground and water', () => {
+    // 40 dB a decade, less 20 log of each height
+    assert.ok(Math.abs(M.planeEarthLoss(10000, 10, 1) - 140) < 1e-9);
+    assert.ok(Math.abs(M.planeEarthLoss(10000, 100, 10) - 100) < 1e-9);
+    assert.deepStrictEqual(M.effectiveHeights(0, 110, 10, 1.5, 1.5), [110, 1.5], 'a hilltop over the sea');
+    assert.deepStrictEqual(M.effectiveHeights(80, 60, 10, 81.5, 1.5), [10, 1.5], 'never below its own mast');
+    // flat ground, people on the ground: a few km, not the 10+ km free space allowed
+    const flat = (lat, lon) => 10 + 0.3 * Math.sin(lat * 3000) + 0.3 * Math.cos(lon * 3000);
+    M.setCalibration(0);
+    const at = (km) => M.pathProfile({ lat: 47.6, lon: -122.33 }, 47.6 + km / 111.32, -122.33, flat, 'ground');
+    assert.ok(at(3).marginDb > 0, 'reaches 3 km');
+    assert.ok(at(7).marginDb < 0, `not 7 km: ${at(7).marginDb}`);
+    assert.ok(at(7).groundDb > 3, 'the reflection is what costs it');
+    assert.ok(M.budgetRows(at(7)).some((r) => r[0] === 'Reflection off the ground'));
+  });
+
+  await test('calibration: raises repeater to repeater only; lowers both', () => {
+    const g = M.CONFIG.modes.ground, r = M.CONFIG.modes.repeater;
+    M.setCalibration(6);
+    assert.strictEqual(M.modeCalibration(r), 6);
+    assert.strictEqual(M.modeCalibration(g), 0);
+    const base = M.budgetDb(g);
+    M.setCalibration(-4);
+    assert.strictEqual(M.modeCalibration(g), -4);
+    assert.strictEqual(M.budgetDb(g), base - 4);
+    M.setCalibration(0);
+    assert.ok(M.assumptionsHtml('ground', [], { used: true, n: 5, offsetDb: 6, fitDb: 9, spreadDb: 3 }).includes('never raise the estimate for people on the ground'));
+  });
+
+  await test('areas count land: the sea and dead-flat lakes are left out', async () => {
+    // west of -122.35 is sea; a flat lake at 6 m between -122.30 and -122.28; land elsewhere
+    const elev = (lat, lon) => (lon < -122.35 ? 0 : lon > -122.30 && lon < -122.28 ? 8 : 8 + 0.6 * Math.sin(lat * 2000) + 0.6 * Math.cos(lon * 2000));
+    const cov = await M.computeCoverage([{ lat: 47.6, lon: -122.32 }], elev, 'ground');
+    const g = { bounds: cov.bounds, width: cov.width, height: cov.height, cellLat: (cov.bounds.north - cov.bounds.south) / cov.height, cellLon: (cov.bounds.east - cov.bounds.west) / cov.width };
+    const mask = M.waterMask(g, elev);
+    const cell = (lat, lon) => mask[Math.floor((cov.bounds.north - lat) / g.cellLat) * cov.width + Math.floor((lon - cov.bounds.west) / g.cellLon)];
+    assert.strictEqual(cell(47.6, -122.40), 1, 'sea');
+    assert.strictEqual(cell(47.6, -122.29), 1, 'lake');
+    assert.strictEqual(cell(47.6, -122.32), 0, 'land');
+    const land = M.unionKm2(cov);
+    const all = M.unionKm2(Object.assign({}, cov, { water: null }));
+    assert.ok(land > 0 && land < all, `${land} < ${all}`);
+    assert.ok(Math.abs(M.repAreasKm2(cov)[0] - land) < 1e-6);
   });
 
   await test('heard links: paired with the model\'s figure for the same path', () => {

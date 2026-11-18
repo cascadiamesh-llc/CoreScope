@@ -54,12 +54,16 @@
         label: 'People on the ground',
         note: 'People on the ground: a companion or standalone radio at 1.5 m.',
         rxHeightM: 1.5, rxGainDbi: 0, clutterDb: 10,
+        // The links heard on radio2 run between repeaters, mostly higher up
+        // than the 10 m assumed, and only links strong enough to be heard
+        // are in them: they can lower this estimate but never raise it.
+        calibrateUp: false,
         radiusKm: 30, stepM: 50, growth: 0.012, rays: 1440, cellM: 100,
       },
       repeater: {
         label: 'Repeater to repeater',
         note: 'Repeater to repeater: both antennas 10 m up.',
-        rxHeightM: 10, rxGainDbi: 2, clutterDb: 0,
+        rxHeightM: 10, rxGainDbi: 2, clutterDb: 0, calibrateUp: true,
         radiusKm: 60, stepM: 100, growth: 0.012, rays: 1440, cellM: 200,
       },
     },
@@ -76,6 +80,8 @@
   let calibrationDb = 0;
   function setCalibration(db) { calibrationDb = Number.isFinite(db) ? db : 0; }
   function getCalibration() { return calibrationDb; }
+  /** The correction one mode takes: all of it, or only a lowering. */
+  function modeCalibration(mode) { return mode && mode.calibrateUp === false ? Math.min(0, calibrationDb) : calibrationDb; }
 
   const NO_DATA = -1e9;
   const NO_DATA_I16 = -32768;
@@ -135,11 +141,30 @@
     return 6.9 + 20 * Math.log10(Math.sqrt((v - 0.1) * (v - 0.1) + 1) + v - 0.1);
   }
 
+  /**
+   * Plane-earth (two-ray) path loss in dB: the direct wave and the one
+   * reflected off the ground beyond the first Fresnel zone cancel, so loss
+   * grows 40 dB per decade of distance instead of free space's 20. dM in
+   * metres; hT, hR: each antenna's height above the ground the path runs
+   * over (effectiveHeights). The path loss is the larger of this and free
+   * space plus diffraction: over open water or flat ground free space alone
+   * is far too hopeful for an antenna 1.5 m up.
+   */
+  function planeEarthLoss(dM, hT, hR) {
+    return 40 * Math.log10(Math.max(dM, 1)) - 20 * Math.log10(Math.max(hT, 1)) - 20 * Math.log10(Math.max(hR, 1));
+  }
+
+  /** Each end's height above the path's mean ground (between the ends),
+   * never less than its own mast. */
+  function effectiveHeights(meanGround, txAbs, txMast, rxAbs, rxMast) {
+    return [Math.max(txMast, txAbs - meanGround), Math.max(rxMast, rxAbs - meanGround)];
+  }
+
   /** The path loss that leaves exactly 0 dB to spare, in one mode. */
   function budgetDb(mode, radio) {
     const c = CONFIG;
     return c.txDbm + c.txGainDbi - c.cableDb + mode.rxGainDbi
-      - (radio || DEFAULT_RADIO).sensitivityDbm - c.fadeMarginDb - mode.clutterDb + calibrationDb;
+      - (radio || DEFAULT_RADIO).sensitivityDbm - c.fadeMarginDb - mode.clutterDb + modeCalibration(mode);
   }
 
   /** dB to spare at the receiver for a path loss, in one mode. */
@@ -319,14 +344,25 @@
       fs[i] = fspl(dist[i] / 1000, job.freqMHz);
     }
     const pc = new Float64Array(n); // peaks, lowered by the earth's curve
+    const gsum = new Float64Array(n + 1); // ground x length, running, for the mean ground
+    const seg = new Float64Array(n);
+    for (let i = 0; i < n; i++) seg[i] = i ? dist[i] - dist[i - 1] : dist[0];
     const k2 = 2 / lambdaM;
     for (let a = 0; a < rays; a++) {
       const off = a * n;
       let valid = 0;
-      while (valid < n && elev[off + valid] === elev[off + valid]) { pc[valid] = peak[off + valid] - drop[valid]; valid++; }
+      while (valid < n && elev[off + valid] === elev[off + valid]) {
+        pc[valid] = peak[off + valid] - drop[valid];
+        gsum[valid + 1] = gsum[valid] + elev[off + valid] * seg[valid];
+        valid++;
+      }
       for (let j = 0; j < valid; j++) {
         const D = dist[j];
         const hr = elev[off + j] - drop[j] + job.rxHeightM;
+        // ground between the ends (the samples before this one), on average
+        const meanG = j > 0 ? gsum[j] / dist[j - 1] : job.txGround;
+        const hT = Math.max(job.txHeightM, ht - meanG), hR = Math.max(job.rxHeightM, elev[off + j] + job.rxHeightM - meanG);
+        const pe = planeEarthLoss(D, hT, hR);
         let loss = 0;
         if (j > 0) {
           // principal edge
@@ -368,7 +404,8 @@
             loss = jp + (1 - Math.exp(-jp / 6)) * (jt + jr + 10 + 0.04 * (D / 1000));
           }
         }
-        out[off + j] = job.budgetDb - fs[j] - loss;
+        const total = fs[j] + loss;
+        out[off + j] = job.budgetDb - (pe > total ? pe : total);
       }
     }
     return out;
@@ -481,7 +518,7 @@
       await new Promise((res) => setTimeout(res, 0));
     }
     const rasters = await Promise.all(pending);
-    return merge({ rasters, reps, radios, width: g.width, height: g.height, bounds: g.bounds, modeKey });
+    return merge({ rasters, reps, radios, width: g.width, height: g.height, bounds: g.bounds, modeKey, water: waterMask(g, elevAt) });
   }
 
   // ---- Workers ----------------------------------------------------------------
@@ -598,14 +635,21 @@
     edge(diff.ir, diff.vr, diff.T * diff.jr, false);
     edges.sort((a, b) => a.d - b.d);
     const fsplDb = fspl(D / 1000, r.freqMHz);
-    const pathLossDb = fsplDb + diff.loss;
+    let gSum = 0;
+    for (let i = 0; i < n; i++) gSum += terrain[i];
+    const [hTe, hRe] = effectiveHeights(gSum / n, txGround + antennaHeight(rep), antennaHeight(rep), rxGround + mode.rxHeightM, mode.rxHeightM);
+    const planeEarthDb = planeEarthLoss(D, hTe, hRe);
+    // what the ground's reflection costs beyond free space and diffraction
+    const groundDb = Math.max(0, planeEarthDb - (fsplDb + diff.loss));
+    const pathLossDb = fsplDb + diff.loss + groundDb;
     const eirpDbm = c.txDbm + c.txGainDbi - c.cableDb;
-    const rxDbm = eirpDbm + mode.rxGainDbi - pathLossDb - mode.clutterDb + calibrationDb;
+    const cal = modeCalibration(mode);
+    const rxDbm = eirpDbm + mode.rxGainDbi - pathLossDb - mode.clutterDb + cal;
     return {
       distM: D, d, terrain, txGround, rxGround, txHeightM: antennaHeight(rep), rxHeightM: mode.rxHeightM,
-      lambdaM: r.lambdaM, effR, radio: r, fsplDb, diff, edges,
+      lambdaM: r.lambdaM, effR, radio: r, fsplDb, diff, edges, groundDb, planeEarthDb,
       lineOfSight: !(diff.vp > 0), fresnelClear: !(diff.vp > -0.78),
-      clutterDb: mode.clutterDb, calibrationDb, pathLossDb, eirpDbm, rxDbm,
+      clutterDb: mode.clutterDb, calibrationDb: cal, pathLossDb, eirpDbm, rxDbm,
       sensitivityDbm: r.sensitivityDbm, fadeMarginDb: c.fadeMarginDb,
       marginDb: rxDbm - r.sensitivityDbm - c.fadeMarginDb, modeKey,
     };
@@ -643,6 +687,7 @@
       ['Free space over ' + fmtKm(p.distM), fmtLoss(p.fsplDb), 'loss'],
       ['Terrain (diffraction)', fmtLoss(p.diff.loss), 'loss'],
     ];
+    if (p.groundDb > 0.05) rows.push(['Reflection off the ground', fmtLoss(p.groundDb), 'loss']);
     if (mode.clutterDb) rows.push(['Buildings and trees (flat allowance)', fmtLoss(mode.clutterDb), 'loss']);
     if (mode.rxGainDbi) rows.push(['Receiving antenna', '+' + fmtDb(mode.rxGainDbi) + ' dB', 'gain']);
     if (p.calibrationDb) {
@@ -995,6 +1040,36 @@
 
   // ---- Areas, planned repeaters ----------------------------------------------
 
+  /**
+   * Which grid cells are open water (1), so areas count land: the sea
+   * (0.5 m or lower) and lakes, which elevation data holds dead flat (a
+   * cell under 40 m whose four neighbours a cell away are within 0.2 m of
+   * it). Uint8Array over the grid; null without terrain.
+   */
+  function waterMask(g, elevAt) {
+    if (!elevAt) return null;
+    const out = new Uint8Array(g.width * g.height);
+    for (let row = 0, i = 0; row < g.height; row++) {
+      const lat = g.bounds.north - (row + 0.5) * g.cellLat;
+      for (let col = 0; col < g.width; col++, i++) {
+        const lon = g.bounds.west + (col + 0.5) * g.cellLon;
+        const e = elevAt(lat, lon);
+        if (!Number.isFinite(e)) continue;
+        if (e <= 0.5) { out[i] = 1; continue; }
+        if (e >= 40) continue;
+        let flat = true;
+        for (const [dy, dx] of [[g.cellLat, 0], [-g.cellLat, 0], [0, g.cellLon], [0, -g.cellLon]]) {
+          const n = elevAt(lat + dy, lon + dx);
+          if (!(Math.abs(n - e) <= 0.2)) { flat = false; break; }
+        }
+        if (flat) out[i] = 1;
+      }
+    }
+    return out;
+  }
+
+  const isLand = (cov, i) => !cov.water || !cov.water[i];
+
   /** The area of one grid cell in km², at the grid's middle latitude. */
   function cellAreaKm2(cov) {
     const b = cov.bounds;
@@ -1008,7 +1083,7 @@
   function coveredKm2(cov) {
     if (!cov || !cov.margins) return 0;
     let n = 0;
-    for (let i = 0; i < cov.margins.length; i++) if (cov.margins[i] >= 0) n++;
+    for (let i = 0; i < cov.margins.length; i++) if (cov.margins[i] >= 0 && isLand(cov, i)) n++;
     return n * cellAreaKm2(cov);
   }
 
@@ -1025,7 +1100,7 @@
         let i = (r.row0 + y) * cov.width + r.col0, k = y * r.w;
         for (let x = 0; x < r.w; x++, i++, k++) {
           const t = r.data[k];
-          if (t !== NO_DATA_I16 && t >= 0 && !hit[i]) { hit[i] = 1; n++; }
+          if (t !== NO_DATA_I16 && t >= 0 && !hit[i] && isLand(cov, i)) { hit[i] = 1; n++; }
         }
       }
     });
@@ -1039,7 +1114,10 @@
     return cov.rasters.map((r) => {
       if (!r || !r.data) return 0;
       let n = 0;
-      for (let k = 0; k < r.data.length; k++) if (r.data[k] !== NO_DATA_I16 && r.data[k] >= 0) n++;
+      for (let y = 0; y < r.h; y++) {
+        let i = (r.row0 + y) * cov.width + r.col0, k = y * r.w;
+        for (let x = 0; x < r.w; x++, i++, k++) if (r.data[k] !== NO_DATA_I16 && r.data[k] >= 0 && isLand(cov, i)) n++;
+      }
       return n * a;
     });
   }
@@ -1060,7 +1138,9 @@
         if (!(planCov.margins[i] >= 0)) continue;
         const ll = cellCenter(planCov, col, row);
         const c = cellAt(cov, ll[0], ll[1]);
-        if (c && c.margin >= 0) { over++; out.isNew[i] = 2; } else { fresh++; out.isNew[i] = 1; }
+        // drawn over water too, counted on land only
+        const land = isLand(planCov, i);
+        if (c && c.margin >= 0) { if (land) over++; out.isNew[i] = 2; } else { if (land) fresh++; out.isNew[i] = 1; }
       }
     }
     out.newKm2 = fresh * a; out.overlapKm2 = over * a; out.totalKm2 = (fresh + over) * a;
@@ -1324,9 +1404,12 @@
         ? `<strong>Receiving:</strong> a companion or standalone radio held at ${mode.rxHeightM} m with a ${mode.rxGainDbi} dBi antenna, and ${mode.clutterDb} dB taken off for nearby buildings and trees.`
         : `<strong>Receiving:</strong> another repeater's ${mode.rxGainDbi} dBi antenna, ${mode.rxHeightM} m above the ground.`,
       `<strong>Radio:</strong> each repeater's reported radio2 setting where it has sent one (${reported} of ${(radios || []).length} here${other ? `, ${other} not on the default preset` : ''}), otherwise ${def.freqMHz} MHz, ${def.bwKHz} kHz, SF${def.sf}. That preset needs ${fmtDb(def.sensitivityDbm)} dBm at the receiver (SX1262 datasheet); the estimate asks for ${c.fadeMarginDb} dB more as a safety margin against fading.`,
-      `<strong>Path:</strong> free-space loss, the earth's curve (k = 4/3), and diffraction over up to three ridges (ITU-R P.526-11, cascaded knife edges). Ground that only comes close to the line of sight costs signal too: a path has to clear its first Fresnel zone to count as clean.`,
+      `<strong>Path:</strong> free-space loss, the earth's curve (k = 4/3), and diffraction over up to three ridges (ITU-R P.526-11, cascaded knife edges). Ground that only comes close to the line of sight costs signal too: a path has to clear its first Fresnel zone to count as clean. Over open water and flat ground the wave reflected off the surface cancels the direct one, so loss is at least the plane-earth (two-ray) loss for each antenna's height above the ground in between.`,
       `<strong>Terrain:</strong> Mapzen elevation tiles (SRTM, USGS), about ${t.nearZoom === 12 ? '25' : '50'} m per pixel next to a repeater and 50 to 100 m further out, worked out to ${mode.radiusKm} km from each repeater.`,
-      `<strong>Checked:</strong> ${esc(calibrationText(cal))}${cal && cal.used && cal.offsetDb ? ' The correction is added to every path, for both views.' : ''}`,
+      `<strong>Checked:</strong> ${esc(calibrationText(cal))}${cal && cal.used && cal.offsetDb ? (cal.offsetDb > 0
+        ? ' The raise applies repeater to repeater only: those links run between antennas often higher than 10 m, and only links strong enough to be heard are in them, so they never raise the estimate for people on the ground.'
+        : ' The correction is added to every path, for both views.') : ''}`,
+      '<strong>Areas:</strong> km² count land only; open water (the Sound, lakes) is drawn but not counted.',
       '<strong>Not modelled:</strong> buildings and trees (the terrain data is bare ground), being indoors, interference and local noise, reflections, each site\'s real antenna, height and power. Downtown streets and inside buildings will be worse than drawn; a rooftop or a window facing the repeater can be better. Repeaters that only listen can hear you but won\'t send back.',
     ];
     return items.map((i) => `<li>${i}</li>`).join('');
@@ -1951,7 +2034,7 @@
 
   root.MediaMeshCoverage = {
     CONFIG, fspl, knifeEdgeLoss, sensitivityDbm, parseRadio, radioFor, budgetDb, marginFor, band,
-    worstEdge, cascadedKnifeEdge, sampleDistances, gridFor, buildJob, polarMargins, repRaster, merge,
+    worstEdge, cascadedKnifeEdge, planeEarthLoss, effectiveHeights, modeCalibration, waterMask, sampleDistances, gridFor, buildJob, polarMargins, repRaster, merge,
     computeCoverage, workerPool, pathProfile, profileVerdict, budgetRows, profileSvg, profileHtml,
     terrainPlan, loadTerrainLevels, loadTerrain, rampColor, edgeFade, cellAt, readout,
     fitCalibration, calibrationText, setCalibration, getCalibration, CAL,
