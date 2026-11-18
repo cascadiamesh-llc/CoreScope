@@ -59,7 +59,7 @@
   function open(opts) {
     if (st) return;
     const el = document.createElement('div');
-    el.className = 'nightsky';
+    el.className = 'nightsky' + (opts && opts.kiosk ? ' nightsky--kiosk' : '');
     el.setAttribute('role', 'dialog');
     el.setAttribute('aria-label', 'MediaMesh night sky');
     el.innerHTML = `<canvas class="nightsky-canvas" aria-hidden="true"></canvas>
@@ -98,7 +98,7 @@
     document.addEventListener('keydown', st.onKey);
     el.addEventListener('click', st.onClick);
     if (el.requestFullscreen && st.opts.fullscreen !== false) el.requestFullscreen().catch(() => {});
-    el.querySelector('[data-ns-act="close"]').focus();
+    if (!(opts && opts.kiosk)) el.querySelector('[data-ns-act="close"]').focus();
     st.raf = requestAnimationFrame(frame);
   }
 

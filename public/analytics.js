@@ -624,6 +624,7 @@
       Array.isArray(mm.backbone) ? mm.backbone : []);
     showMediaMeshMilestone(el, mediaMeshMilestone(mm, null, Date.now()));
     if (window.MediaMeshInsights) window.MediaMeshInsights.init(el, mm);
+    if (window.MediaMeshRecap) window.MediaMeshRecap.init(el, mm);
   }
 
   let _mmCoverageDestroy = null;
@@ -795,6 +796,7 @@
     }
     const area = el.querySelector('#mmStatArea');
     if (area) area.textContent = mmKm(st.areaKm2 || 0);
+    if (window.MediaMeshRecap) window.MediaMeshRecap.setArea(st.areaKm2 || 0);
     const detail = el.querySelector('#mmStatAreaDetail');
     if (detail && st.calibration && st.calibration.used) detail.textContent = `for people on the ground, checked against ${st.calibration.n} real links`;
     const placed = el.querySelector('#mmLeaderPlaced');
@@ -946,6 +948,7 @@
       <div class="analytics-row"><div class="analytics-card flex-1 mm-ins-card" id="mmPeopleCard" hidden></div></div>
       ${mediaMeshLeaderboardHtml(mm)}
       ${window.MediaMeshInsights ? window.MediaMeshInsights.cardsHtml() : ''}
+      ${window.MediaMeshRecap ? window.MediaMeshRecap.cardHtml() : ''}
       <div class="analytics-row">
         <div class="analytics-card flex-1">
           <h3>MediaMesh repeaters</h3>

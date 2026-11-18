@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MediaMesh live</title>
+<!-- An embeddable MediaMesh widget: live counts and a small night sky of the
+     network, for another site to show in an iframe:
+     <iframe src="https://<analyzer>/mediamesh-widget.html" width="340" height="330"
+       style="border:0;border-radius:12px" title="MediaMesh live"></iframe>
+     Its own dark design (light text on dark), so it reads on any site. -->
+<style>
+  html, body { margin: 0; height: 100%; background: #070a14; color: #e6e9ef; font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  a.w { display: flex; flex-direction: column; height: 100%; color: inherit; text-decoration: none; }
+  canvas { display: block; width: 100%; flex: 1 1 0; height: 0; min-height: 120px; background: #03050b; }
+  .info { padding: 12px 16px 14px; }
+  .brand { font-size: 11px; letter-spacing: .18em; color: #f0abfc; font-weight: 600; }
+  .big { font-size: 22px; font-weight: 600; margin-top: 4px; color: #f8fafc; }
+  .sub { font-size: 13px; color: #cbd5e1; margin-top: 4px; line-height: 1.4; }
+  .go { margin-top: 8px; font-size: 14px; color: #f5d0fe; }
+  a.w:focus-visible { outline: 2px solid #f0abfc; outline-offset: -2px; }
+</style>
+</head>
+<body>
+<a class="w" id="w" href="/#/live" target="_blank" rel="noopener" aria-label="MediaMesh live: open the analyzer">
+  <canvas id="sky" aria-hidden="true"></canvas>
+  <div class="info">
+    <div class="brand">MEDIAMESH LIVE</div>
+    <div class="big" id="big">…</div>
+    <div class="sub" id="sub"></div>
+    <div class="go">See it live →</div>
+  </div>
+</a>
+<script>
+'use strict';
+(function () {
+  var cv = document.getElementById('sky'), g = cv.getContext('2d');
+  var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var reps = [], edges = [], stars = [], P = null, t0 = performance.now();
+  var KIND = { photo: 'Photo', video: 'Video', voice: 'Voice clip' };
+
+  function fit() {
+    var dpr = Math.min(2, window.devicePixelRatio || 1), w = cv.clientWidth, h = cv.clientHeight;
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    stars = [];
+    for (var i = 0; i < Math.round(w * h / 900); i++) stars.push([Math.random() * w, Math.random() * h, Math.random() * 0.5 + 0.1]);
+    var pts = reps.filter(function (r) { return Number.isFinite(r.lat) && Number.isFinite(r.lon); });
+    if (!pts.length) { P = null; return; }
+    var s = 90, n = -90, west = 180, e = -180;
+    pts.forEach(function (r) { s = Math.min(s, r.lat); n = Math.max(n, r.lat); west = Math.min(west, r.lon); e = Math.max(e, r.lon); });
+    var k = Math.cos((s + n) / 2 * Math.PI / 180), m = 18;
+    var spanY = Math.max(n - s, 0.04), spanX = Math.max((e - west) * k, 0.04);
+    var sc = Math.min((w - 2 * m) / spanX, (h - 2 * m) / spanY);
+    var ox = (w - (e - west) * k * sc) / 2, oy = (h - (n - s) * sc) / 2;
+    P = function (lat, lon) { return [ox + (lon - west) * k * sc, oy + (n - lat) * sc]; };
+  }
+
+  function frame(now) {
+    var w = cv.clientWidth, h = cv.clientHeight, t = (now - t0) / 1000;
+    // the text below can change height and so this canvas's: fit again
+    if (Math.round(w * Math.min(2, window.devicePixelRatio || 1)) !== cv.width || Math.round(h * Math.min(2, window.devicePixelRatio || 1)) !== cv.height) fit();
+    g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cv.width, cv.height); g.restore();
+    stars.forEach(function (s) { g.globalAlpha = s[2] * (still ? 1 : 0.7 + 0.3 * Math.sin(t + s[0])); g.fillStyle = '#cbd5ff'; g.fillRect(s[0], s[1], 1, 1); });
+    g.globalAlpha = 1;
+    if (P) {
+      var maxP = 1;
+      edges.forEach(function (e) { maxP = Math.max(maxP, e.packets || 0); });
+      edges.forEach(function (e, i) {
+        var a = P(e.a_lat, e.a_lon), b = P(e.b_lat, e.b_lon);
+        g.strokeStyle = 'rgba(240,171,252,0.35)'; g.lineWidth = 1 + 1.5 * Math.log1p(e.packets || 0) / Math.log1p(maxP);
+        g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke();
+        if (!still) {
+          var f = ((t * (0.15 + 0.35 * (e.packets || 0) / maxP)) + i * 0.37) % 1;
+          var x = a[0] + (b[0] - a[0]) * f, y = a[1] + (b[1] - a[1]) * f;
+          g.shadowColor = '#f0abfc'; g.shadowBlur = 10;
+          g.fillStyle = '#fae8ff'; g.beginPath(); g.arc(x, y, 2.2, 0, Math.PI * 2); g.fill();
+          g.shadowBlur = 0;
+        }
+      });
+      reps.forEach(function (r, i) {
+        if (!Number.isFinite(r.lat) || !Number.isFinite(r.lon)) return;
+        var p = P(r.lat, r.lon), rr = 12 + (still ? 0 : 4 * Math.sin(t * 2 + i));
+        g.shadowColor = 'rgba(240,171,252,0.9)'; g.shadowBlur = rr;
+        g.fillStyle = '#ffffff'; g.beginPath(); g.arc(p[0], p[1], 2, 0, Math.PI * 2); g.fill();
+        g.shadowBlur = 0;
+      });
+    }
+    if (!still) requestAnimationFrame(frame);
+  }
+
+  function nameOf(hop) {
+    var h = String(hop || '').toLowerCase();
+    var hit = reps.filter(function (r) { return String(r.public_key || '').toLowerCase().indexOf(h) === 0; });
+    return hit.length === 1 ? hit[0].name : h.toUpperCase();
+  }
+
+  function text(clips) {
+    var now = Date.now(), hour = clips.filter(function (c) { return now - Date.parse(c.at) < 3600000; });
+    var set = hour.length ? hour : clips, span = hour.length ? 'in the last hour' : 'in the last day';
+    var counts = { photo: 0, video: 0, voice: 0 };
+    set.forEach(function (c) { if (counts[c.kind] !== undefined) counts[c.kind]++; });
+    var top = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; })[0];
+    var label = { photo: 'photo', video: 'video', voice: 'voice clip' }[top];
+    document.getElementById('big').textContent = set.length ? counts[top] + ' ' + label + (counts[top] === 1 ? '' : 's') + ' ' + span : reps.length + ' repeaters on the air';
+    var last = clips.filter(function (c) { return c.outcome && c.outcome !== 'none'; })[0];
+    var bits = [reps.length + ' repeaters'];
+    if (last) {
+      var route = last.path && last.path.length ? nameOf(last.path[0]) + ' → ' + (last.observerName || nameOf(last.path[last.path.length - 1])) : '';
+      bits.push('last: ' + (KIND[last.kind] || 'Clip') + (last.kind !== 'photo' && last.seconds ? ', ' + last.seconds + ' s' : '') + (route ? ' · ' + route : ''));
+    }
+    document.getElementById('sub').textContent = bits.join(' · ');
+  }
+
+  function load() {
+    Promise.all([
+      fetch('/api/analytics/mediamesh').then(function (r) { return r.json(); }),
+      fetch('/api/analytics/mediamesh/clips?days=1').then(function (r) { return r.json(); }).catch(function () { return { clips: [] }; }),
+    ]).then(function (res) {
+      reps = (res[0] && res[0].repeaters) || [];
+      edges = ((res[0] && res[0].backbone) || []).filter(function (e) { return [e.a_lat, e.a_lon, e.b_lat, e.b_lon].every(Number.isFinite); });
+      fit();
+      text((res[1] && res[1].clips) || []);
+      fit();
+      if (still) frame(performance.now());
+    }).catch(function () { document.getElementById('big').textContent = 'MediaMesh'; });
+  }
+
+  try { document.getElementById('w').href = location.origin + '/#/live'; } catch (_) { /* relative is fine */ }
+  window.addEventListener('resize', fit);
+  load();
+  setInterval(load, 60000);
+  if (!still) requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

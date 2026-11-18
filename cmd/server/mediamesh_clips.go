@@ -112,8 +112,8 @@ type MediaMeshClip struct {
 	Observers int      `json:"observers"`
 }
 
-// MediaMeshHour is the photo, video and voice traffic of one hour.
-type MediaMeshHour struct {
+// MediaMeshClipHour is the photo, video and voice traffic of one hour.
+type MediaMeshClipHour struct {
 	T       string `json:"t"` // the hour, UTC
 	Packets int    `json:"packets"`
 	Clips   int    `json:"clips"` // announced in this hour
@@ -122,10 +122,10 @@ type MediaMeshHour struct {
 
 // MediaMeshClips is /api/analytics/mediamesh/clips.
 type MediaMeshClips struct {
-	From  string          `json:"from"`
-	To    string          `json:"to"`
-	Clips []MediaMeshClip `json:"clips"`
-	Hours []MediaMeshHour `json:"hours"`
+	From  string              `json:"from"`
+	To    string              `json:"to"`
+	Clips []MediaMeshClip     `json:"clips"`
+	Hours []MediaMeshClipHour `json:"hours"`
 }
 
 // analyseMediaClips matches pieces to announcements and judges each clip at
@@ -255,7 +255,7 @@ func (s *Server) handleMediaMeshClips(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	out := &MediaMeshClips{To: now.Format(time.RFC3339), From: now.Add(-time.Duration(days) * 24 * time.Hour).Format(time.RFC3339),
-		Clips: []MediaMeshClip{}, Hours: []MediaMeshHour{}}
+		Clips: []MediaMeshClip{}, Hours: []MediaMeshClipHour{}}
 	if s.store != nil {
 		s.store.mediaMeshClips(out.From, out)
 	}
@@ -291,12 +291,12 @@ func mediaClipPayload(pt int, d map[string]interface{}) []byte {
 func (s *PacketStore) mediaMeshClips(since string, out *MediaMeshClips) {
 	var anns []mediaClipAnn
 	var pieces []mediaClipPiece
-	hours := map[string]*MediaMeshHour{}
-	hour := func(t time.Time) *MediaMeshHour {
+	hours := map[string]*MediaMeshClipHour{}
+	hour := func(t time.Time) *MediaMeshClipHour {
 		k := t.UTC().Truncate(time.Hour).Format(time.RFC3339)
 		h := hours[k]
 		if h == nil {
-			h = &MediaMeshHour{T: k}
+			h = &MediaMeshClipHour{T: k}
 			hours[k] = h
 		}
 		return h

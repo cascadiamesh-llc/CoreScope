@@ -1593,3 +1593,5 @@ input.live-node-filter-input:focus {
   .nightsky-clock { right: 16px; font-size: 24px; }
   .nightsky-brand { left: 16px; font-size: 11px; }
 }
+.nightsky--kiosk .nightsky-controls { display: none; }
+.nightsky--kiosk { cursor: none; }

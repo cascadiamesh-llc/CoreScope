@@ -6331,3 +6331,45 @@ a.stat-card-mediamesh { color: inherit; text-decoration: none; }
 .mm-reach-handle:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .mm-reach-least { margin: 0; padding-left: 18px; font-size: 13px; color: var(--text); }
 .mm-reach-bar { grid-template-columns: 110px 1fr 44px 40px; }
+
+/* This week on MediaMesh (mediamesh-recap.js): the picture has its own design. */
+.mm-recap-canvas { display: block; width: 100%; max-width: 900px; height: auto; aspect-ratio: 1200 / 630; border-radius: 8px; border: 1px solid var(--border); }
+.mm-recap-actions { margin-top: 10px; align-items: center; }
+.mm-recap-msg { font-size: 12px; }
+.mm-recap-code { margin: 6px 0 0; padding: 10px 12px; border-radius: 6px; background: color-mix(in srgb, var(--text) 6%, var(--card-bg)); color: var(--text); font-family: var(--mono); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.mm3d--kiosk .mm3d-close, .mm3d--kiosk .mm3d-hint { display: none; }
+.mm3d--kiosk { cursor: none; }
+
+/* Kiosk mode (kiosk.js): a TV at a meetup. Its own dark design, light text. */
+.kiosk { position: fixed; inset: 0; z-index: 9990; background: #03050b; color: #e6e9ef; font-family: Inter, system-ui, sans-serif; overflow: hidden; }
+.kiosk--idle, .kiosk--idle * { cursor: none; }
+.kiosk-stage { position: absolute; inset: 0; }
+.kiosk-pad { padding: 7vh 6vw; }
+.kiosk h1 { margin: 0; font-size: clamp(32px, 5vw, 64px); font-weight: 600; color: #f8fafc; }
+.kiosk-sub { color: #aab4c6; font-size: clamp(16px, 2vw, 26px); margin-top: 8px; }
+.kiosk-board { margin-top: 4vh; }
+.kiosk-row { display: flex; align-items: baseline; gap: 3vw; font-size: clamp(22px, 3.2vw, 44px); padding: 1.6vh 0; border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
+.kiosk-rank { width: 2.2em; color: #f0abfc; font-weight: 600; }
+.kiosk-name { flex: 1; color: #f1f5f9; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kiosk-val { color: #e2e8f0; font-variant-numeric: tabular-nums; }
+.kiosk-val small { color: #94a3b8; font-size: 0.55em; }
+.kiosk-week { position: absolute; inset: 6vh 4vw 12vh; display: grid; place-items: center; }
+.kiosk-recap { max-width: 100%; max-height: 100%; width: auto; height: auto; aspect-ratio: 1200 / 630; border-radius: 12px; box-shadow: 0 10px 50px rgba(0, 0, 0, 0.6); }
+.kiosk-join { display: flex; gap: 5vw; align-items: center; justify-content: space-between; }
+.kiosk-steps { font-size: clamp(18px, 2.4vw, 32px); line-height: 1.7; color: #e2e8f0; margin: 4vh 0; padding-left: 1.2em; }
+.kiosk-url { font-size: clamp(16px, 1.8vw, 24px); color: #f5d0fe; overflow-wrap: anywhere; }
+.kiosk-qr { flex: none; background: #ffffff; padding: 16px; border-radius: 16px; }
+.kiosk-qr img { display: block; width: min(32vw, 46vh); height: auto; image-rendering: pixelated; }
+.kiosk-hud { font-family: Inter, system-ui, sans-serif; }
+.kiosk-clock { position: fixed; right: 4vw; top: 4vh; z-index: 10003; text-align: right; font-size: clamp(22px, 3vw, 40px); font-weight: 300; color: #e6e9ef; font-variant-numeric: tabular-nums; }
+.kiosk-clock small { display: block; font-size: 0.35em; letter-spacing: 0.18em; color: #94a3b8; }
+.kiosk-hud[data-slide="sky"] .kiosk-clock, .kiosk-hud[data-slide="3d"] .kiosk-clock, .kiosk-hud[data-slide="sky"] .kiosk-dots, .kiosk-hud[data-slide="3d"] .kiosk-dots { display: none; }
+.kiosk-dots { position: fixed; left: 0; right: 0; bottom: 3vh; z-index: 10003; display: flex; justify-content: center; flex-wrap: wrap; gap: 10px 28px; font-size: clamp(12px, 1.3vw, 18px); color: #94a3b8; pointer-events: none; }
+.kiosk-dots span::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #475569; margin-right: 8px; vertical-align: 2px; }
+.kiosk-dots span.on { color: #f5d0fe; }
+.kiosk-dots span.on::before { background: #f0abfc; }
+.kiosk-prog { position: fixed; left: 0; right: 0; bottom: 0; height: 4px; z-index: 10003; }
+.kiosk-prog i { display: block; height: 100%; width: 0; background: #f0abfc; }
+@media (max-width: 700px) { .kiosk-join { flex-direction: column; align-items: flex-start; } }
+a.tab-btn { text-decoration: none; display: inline-flex; align-items: center; }
+.kiosk-hud[data-slide="join"] .kiosk-clock { display: none; }

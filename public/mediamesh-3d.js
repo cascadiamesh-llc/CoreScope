@@ -110,7 +110,7 @@
   async function open(opts) {
     if (st) return;
     const el = document.createElement('div');
-    el.className = 'mm3d';
+    el.className = 'mm3d' + (opts.kiosk ? ' mm3d--kiosk' : '');
     el.setAttribute('role', 'dialog');
     el.setAttribute('aria-modal', 'true');
     el.setAttribute('aria-label', 'MediaMesh coverage in 3D');
