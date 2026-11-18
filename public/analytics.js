@@ -649,6 +649,7 @@
           <button type="button" class="tab-btn active" data-mm-cov="ground">People on the ground</button>
           <button type="button" class="tab-btn" data-mm-cov="repeater">Repeater to repeater</button>
           <button type="button" class="tab-btn mm-cov-plan-btn" data-mm-cov-plan aria-pressed="false">＋ Plan a repeater</button>
+          <button type="button" class="tab-btn mm-cov-3d-btn" data-mm-cov-3d disabled title="The estimate over the terrain in 3D, with the backbone">3D view</button>
         </div>
       </div>
       <div class="mm-cov-reps" id="mmCovReps"><div id="mmCovRepSummary"></div><div class="mm-cov-rep-panel" id="mmCovRepPanel" hidden></div></div>

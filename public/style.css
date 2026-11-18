@@ -6197,3 +6197,33 @@ body.embed #app.app-fixed {
 a.stat-card-mediamesh { color: inherit; text-decoration: none; }
 .stat-card-mediamesh .stat-label { color: var(--mediamesh-text-color); }
 .mm-chart rect { fill: var(--mediamesh-path-color); }
+
+/* MediaMesh coverage in 3D (mediamesh-3d.js): its own dark scene, so its
+   text keeps its own light colours whatever the page theme. */
+.mm3d { position: fixed; inset: 0; z-index: 10000; background: #0b1020; color: #e6e9ef; font-family: Inter, system-ui, sans-serif; overflow: hidden; }
+.mm3d-stage { position: absolute; inset: 0; }
+.mm3d-stage canvas { display: block; touch-action: none; cursor: grab; }
+.mm3d-stage canvas:active { cursor: grabbing; }
+.mm3d-stage canvas:focus-visible { outline: 2px solid #f0abfc; outline-offset: -4px; }
+.mm3d-title { position: absolute; left: 28px; top: 22px; right: 140px; pointer-events: none; }
+.mm3d-title h2 { margin: 0; font-size: 20px; font-weight: 600; color: #f8fafc; }
+.mm3d-title p { margin: 4px 0 0; font-size: 13px; color: #aab4c6; }
+.mm3d-close { position: absolute; right: 24px; top: 22px; font: inherit; font-size: 13px; padding: 6px 16px; border-radius: 999px; border: 1px solid rgba(240, 171, 252, 0.6); background: rgba(15, 18, 32, 0.85); color: #f5d0fe; cursor: pointer; }
+.mm3d-close:hover { background: rgba(240, 171, 252, 0.18); }
+.mm3d-close:focus-visible { outline: 2px solid #f0abfc; outline-offset: 2px; }
+.mm3d-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.mm3d-label { position: absolute; left: 0; top: 0; font-size: 12px; font-weight: 500; color: #f8fafc; text-shadow: 0 1px 3px #000, 0 0 8px #000; white-space: nowrap; }
+.mm3d-legend { position: absolute; left: 28px; bottom: 24px; display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; font-size: 12px; color: #cbd5e1; background: rgba(11, 16, 32, 0.78); padding: 8px 12px; border-radius: 8px; }
+.mm3d-ramp { display: inline-block; width: 100px; height: 8px; border-radius: 4px; margin: 0 6px; vertical-align: middle; background: linear-gradient(90deg, rgba(232, 121, 249, 0.15), rgba(232, 121, 249, 0.95)); }
+.mm3d-pin { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; background: #f0abfc; box-shadow: 0 0 6px #f0abfc; }
+.mm3d-arc { display: inline-block; width: 22px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; background: #7dd3fc; }
+.mm3d-hint { position: absolute; right: 24px; bottom: 24px; margin: 0; font-size: 12px; color: #aab4c6; background: rgba(11, 16, 32, 0.78); padding: 8px 12px; border-radius: 8px; }
+.mm3d-status { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); margin: 0; font-size: 14px; color: #e6e9ef; }
+.mm3d-status:empty { display: none; }
+@media (max-width: 640px) {
+  .mm3d-title { left: 16px; top: 16px; right: 96px; }
+  .mm3d-title h2 { font-size: 16px; }
+  .mm3d-close { right: 16px; top: 16px; }
+  .mm3d-legend { left: 16px; right: 16px; bottom: 56px; }
+  .mm3d-hint { left: 16px; right: 16px; bottom: 16px; text-align: center; }
+}

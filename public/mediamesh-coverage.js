@@ -1791,6 +1791,7 @@
       if (noteEl) noteEl.textContent = CONFIG.modes[modeKey].note;
       if (howEl) howEl.innerHTML = assumptionsHtml(modeKey, placed.map(radioFor), session.cal);
       shown = null; shownTerrain = null;
+      set3dReady();
       drawOverlay();
       pick.clearLayers();
       if (!placed.length) { if (status) status.textContent = 'No MediaMesh repeater has a saved position yet.'; return; }
@@ -1828,6 +1829,7 @@
         drawCalibration();
         shown = merge(res.cov, counted());
         shownTerrain = res.elevAt;
+        set3dReady();
         drawOverlay();
         drawProfile();
         drawLinks();
@@ -1839,6 +1841,22 @@
         delete cache[modeKey];
         if (status && !destroyed) status.textContent = 'Terrain data could not be loaded, so the coverage estimate is unavailable.';
       }
+    }
+
+    // ---- The same estimate in 3D, over the terrain ----
+    const btn3d = el.querySelector('[data-mm-cov-3d]');
+    function set3dReady() { if (btn3d) btn3d.disabled = !shown || !shownTerrain || !root.MediaMesh3D; }
+    function open3d() {
+      if (!shown || !shownTerrain || !root.MediaMesh3D) return;
+      const on = counted();
+      root.MediaMesh3D.open({
+        cov: shown, elevAt: shownTerrain,
+        reps: shown.reps.filter((_, i) => on[i]),
+        backbone: timeMask ? [] : backbone,
+        areaKm2: unionKm2(shown),
+        modeLabel: shown.modeKey === 'repeater' ? 'Where repeaters should hear each other' : 'Where photos, video and voice reach people on the ground',
+        onClose: () => { if (btn3d) btn3d.focus(); },
+      });
     }
 
     // ---- Growth time-lapse: replay the network day by day ----
@@ -1900,6 +1918,7 @@
       if (e.target.closest('[data-mm-cov-close]')) { clearProfile(); return; }
       if (e.target.closest('[data-mm-cov-panel]')) { panelOpen = !panelOpen; drawReps(); return; }
       if (e.target.closest('[data-mm-cov-plan]')) { armPlan(!planArmed); return; }
+      if (e.target.closest('[data-mm-cov-3d]')) { open3d(); return; }
       if (e.target.closest('[data-mm-cov-plan-remove]')) { clearPlan(); return; }
       const fold = e.target.closest('[data-mm-cov-fold]');
       if (fold) { setFold(fold.closest('.mm-cov-group'), fold.getAttribute('aria-expanded') !== 'true'); return; }
@@ -1924,6 +1943,7 @@
       if (backboneToggle) backboneToggle.removeEventListener('change', onBackboneToggle);
       if (timeRange) timeRange.removeEventListener('input', onTimeInput);
       stopPlay();
+      if (root.MediaMesh3D && root.MediaMesh3D.isOpen()) root.MediaMesh3D.close();
       if (linksToggle) linksToggle.removeEventListener('change', onLinksToggle);
       map.remove();
     };
