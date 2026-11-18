@@ -3735,7 +3735,7 @@
     }
 
     // --- Night sky: MediaMesh media as comets, everything else as embers ---
-    if (window.LiveNightSky && LiveNightSky.isOpen()) feedNightSky(allPaths, typeName, payload);
+    if (window.LiveNightSky && window.LiveNightSky.isOpen()) feedNightSky(allPaths, typeName, payload);
 
     // --- Animate all unique paths simultaneously ---
     // First path gets audio sync hook, rest are visual-only
@@ -4919,8 +4919,8 @@
       const hops = nightSkyHops(p.hopPositions);
       if (!hops.length) continue;
       const clip = p.mediamesh ? mediaMeshSkyClip(typeName, payload, (p.key || '').split(','), mmAnnounced) : null;
-      if (clip && hops.length >= 2) LiveNightSky.packet(Object.assign({ hops }, clip));
-      else LiveNightSky.ember(hops[0].lat, hops[0].lon);
+      if (clip && hops.length >= 2) window.LiveNightSky.packet(Object.assign({ hops }, clip));
+      else window.LiveNightSky.ember(hops[0].lat, hops[0].lon);
     }
   }
 
@@ -4928,7 +4928,7 @@
     if (!window.LiveNightSky) return;
     const nodes = () => Object.values(nodeData).filter((n) => Number.isFinite(n.lat) && Number.isFinite(n.lon) && !(n.lat === 0 && n.lon === 0))
       .map((n) => ({ lat: n.lat, lon: n.lon, name: n.name, star: !!(window.MediaMesh && window.MediaMesh.info(n)) }));
-    LiveNightSky.open({
+    window.LiveNightSky.open({
       nodes,
       focus: () => { const s = nodes().filter((n) => n.star); return s.length >= 2 ? s : nodes(); },
       onReplay: replayNightSky,
@@ -4939,7 +4939,7 @@
   async function replayNightSky() {
     let data;
     try { data = await api('/analytics/mediamesh/replay?hours=24', { ttl: 60000 }); } catch (_) { return; }
-    if (!data || !window.LiveNightSky || !LiveNightSky.isOpen()) return;
+    if (!data || !window.LiveNightSky || !window.LiveNightSky.isOpen()) return;
     const announced = new Map();
     (data.announcements || []).forEach((a) => { const p = mediaMeshParseAnnouncement(a.text); if (p) announced.set(p.sid, p); });
     const events = [];
@@ -4952,7 +4952,7 @@
     }
     const from = Date.parse(data.from), to = Date.parse(data.to);
     const hours = Math.max(1, Math.round((to - from) / 3600000));
-    LiveNightSky.replay(events, { from, to, durationMs: 60000, label: `The last ${hours} hour${hours === 1 ? '' : 's'} in a minute` });
+    window.LiveNightSky.replay(events, { from, to, durationMs: 60000, label: `The last ${hours} hour${hours === 1 ? '' : 's'} in a minute` });
   }
 
   // Open MediaMesh transfers, newest last, and the clips announced lately
