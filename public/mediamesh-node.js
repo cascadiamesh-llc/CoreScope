@@ -67,8 +67,138 @@
           ${hopList ? `<ol class="mm-lb-list">${hopList}</ol>` : '<p class="text-muted" style="margin:4px 0 0">None with a placed neighbour yet.</p>'}
         </div>
         ${placed ? `<div class="mm-node-col mm-node-col--map"><div id="mmNodeMap" class="mm-node-map" aria-label="Where ${esc(name)}'s MediaMesh signal should reach people on the ground"></div>
-          <div class="text-muted mm-node-note">Estimated coverage for people on the ground from ${esc(name)} alone, and its hops this week. <a href="#/analytics?tab=mediamesh">The whole network →</a></div></div>` : ''}
+          <div class="text-muted mm-node-note">Estimated coverage for people on the ground from ${esc(name)} alone, and its hops this week. <a href="#/analytics?tab=mediamesh">The whole network →</a></div>
+          ${whatIfHtml(rep)}</div>` : ''}
       </div>`;
+  }
+
+  // ---- What if: another height, power or antenna ------------------------------
+
+  const WI = [
+    { key: 'heightM', label: 'Antenna height', min: 2, max: 60, step: 1, unit: 'm' },
+    { key: 'txDbm', label: 'Transmit power', min: 10, max: 30, step: 1, unit: 'dBm' },
+    { key: 'gainDbi', label: 'Antenna gain', min: 0, max: 9, step: 0.5, unit: 'dBi' },
+  ];
+  const EIRP_LIMIT_DBM = 36; // FCC 15.247: 30 dBm into up to 6 dBi
+  const fmtNum = (v) => String(Math.round(v * 10) / 10);
+
+  function defaultsOf(rep) {
+    const M = root.MediaMeshCoverage;
+    return M && M.whatIfDefaults ? M.whatIfDefaults(rep) : { heightM: 10, txDbm: 22, gainDbi: 2 };
+  }
+
+  /** The what-if panel (closed until asked for; the terrain is read then). */
+  function whatIfHtml(rep) {
+    const d = defaultsOf(rep);
+    const rows = WI.map((w) => `<label class="mm-wi-row"><span class="mm-wi-name">${w.label}</span>
+        <input type="range" min="${w.min}" max="${w.max}" step="${w.step}" value="${d[w.key]}" data-wi="${w.key}" aria-label="${w.label} in ${w.unit}">
+        <output class="mm-wi-val" data-wi-out="${w.key}">${fmtNum(d[w.key])} ${w.unit}</output></label>`).join('');
+    return `<details class="mm-wi" id="mmNodeWhatIf"><summary>What if it had a taller mast, more power or a better antenna?</summary>
+      <div class="mm-wi-body">${rows}
+        <p class="mm-wi-eirp text-muted" data-wi-eirp></p>
+        <div class="mm-wi-result" data-wi-result aria-live="polite"></div>
+        <p class="mm-wi-key text-muted"><span class="mm-wi-sw mm-wi-sw--gain"></span> reached only with the change · <span class="mm-wi-sw mm-wi-sw--lost"></span> lost with it · <span class="mm-wi-sw mm-wi-sw--both"></span> reached either way</p>
+        <button type="button" class="btn-secondary mm-wi-reset" data-wi-reset>Back to today's settings</button>
+        <p class="text-muted mm-wi-note">Today's estimate gives every repeater ${fmtNum(d.heightM)} m, ${fmtNum(d.txDbm)} dBm and a ${fmtNum(d.gainDbi)} dBi antenna. Same terrain and the same conservative model, out to ${(root.MediaMeshCoverage && root.MediaMeshCoverage.CONFIG.modes.ground.radiusKm) || 30} km. People: 2020 census.</p>
+      </div></details>`;
+  }
+
+  /** "312 km² (+41 km²)": an amount, and its change when there is one. */
+  function withChange(v, before, unit, round) {
+    const r = round || ((x) => x);
+    const d = r(v) - r(before);
+    const sign = d > 0 ? '+' : '−';
+    return `<strong>${r(v).toLocaleString()}${unit}</strong>${d ? ` <span class="${d > 0 ? 'mm-wi-up' : 'mm-wi-down'}">(${sign}${Math.abs(d).toLocaleString()}${unit})</span>` : ''}`;
+  }
+
+  /** The result line: area and people, and how they change. */
+  function whatIfResultHtml(now, before) {
+    const km = (x) => (x < 100 ? Math.round(x * 10) / 10 : Math.round(x));
+    const ppl = (x) => (x < 1000 ? Math.round(x) : Math.round(x / 100) * 100);
+    return `Covers ${withChange(now.km2, before.km2, ' km²', km)}`
+      + (now.people != null && before.people != null ? ` · reaches about ${withChange(now.people, before.people, ' people', ppl)}` : '');
+  }
+
+  /** "EIRP 23 dBm", and a note above the legal limit. */
+  function eirpText(s) {
+    const M = root.MediaMeshCoverage;
+    const cable = (M && M.CONFIG && M.CONFIG.cableDb) || 1;
+    const e = Number(s.txDbm) + Number(s.gainDbi) - cable;
+    return `Radiated: ${fmtNum(e)} dBm EIRP` + (e > EIRP_LIMIT_DBM ? ` · above the ${EIRP_LIMIT_DBM} dBm the FCC allows on 915 MHz` : '');
+  }
+
+  /**
+   * Wires the what-if panel: on opening, reads the terrain under the
+   * repeater's rays once; each change then works the coverage out again
+   * in a worker (the newest settings win) and redraws the map.
+   */
+  function attachWhatIf(token, panel, rep, onCov) {
+    const M = root.MediaMeshCoverage;
+    if (!panel || !M || !M.whatIfBase) return;
+    const result = panel.querySelector('[data-wi-result]'), eirp = panel.querySelector('[data-wi-eirp]');
+    const inputs = [...panel.querySelectorAll('[data-wi]')];
+    const d = defaultsOf(rep);
+    const settings = () => Object.fromEntries(inputs.map((i) => [i.dataset.wi, Number(i.value)]));
+    const isToday = (s) => WI.every((w) => s[w.key] === d[w.key]);
+    let base = null, pool = null, running = false, pending = false, before = null, points = null;
+    const people = (cov) => (points && root.MediaMeshReach && root.MediaMeshReach.peopleIn ? root.MediaMeshReach.peopleIn(cov, points).reached : null);
+    async function run() {
+      if (running) { pending = true; return; }
+      running = true;
+      try {
+        do {
+          pending = false;
+          const s = settings();
+          if (result) result.innerHTML = '<span class="text-muted">Working it out…</span>';
+          const cov = await M.whatIfCoverage(base, s, pool ? pool.run : null);
+          if (token.gone) return;
+          const now = { km2: M.unionKm2(cov), people: people(cov) };
+          if (!pending) {
+            if (result) result.innerHTML = whatIfResultHtml(now, before);
+            onCov(isToday(s) ? null : cov, before.cov);
+          }
+        } while (pending && !token.gone);
+      } catch (_) {
+        if (result) result.innerHTML = '<span class="text-muted">Couldn\'t be worked out.</span>';
+      } finally { running = false; }
+    }
+    let timer = null;
+    const changed = () => {
+      const s = settings();
+      inputs.forEach((i) => {
+        const w = WI.find((x) => x.key === i.dataset.wi), out = panel.querySelector(`[data-wi-out="${w.key}"]`);
+        if (out) out.textContent = `${fmtNum(s[w.key])} ${w.unit}`;
+      });
+      if (eirp) eirp.textContent = eirpText(s);
+      if (!base) return;
+      clearTimeout(timer);
+      timer = setTimeout(run, 120);
+    };
+    inputs.forEach((i) => i.addEventListener('input', changed));
+    const reset = panel.querySelector('[data-wi-reset]');
+    if (reset) reset.addEventListener('click', () => { inputs.forEach((i) => { i.value = String(d[i.dataset.wi]); }); changed(); });
+    if (eirp) eirp.textContent = eirpText(settings());
+    panel.addEventListener('toggle', async () => {
+      if (!panel.open || base || token.loadingBase) return;
+      token.loadingBase = true;
+      if (result) result.innerHTML = '<span class="text-muted">Reading the terrain around it…</span>';
+      try {
+        const api = root.api;
+        const [b, pts] = await Promise.all([M.whatIfBase(rep, 'ground'),
+          typeof api === 'function' ? Promise.resolve(api('/places/population', { ttl: 3600000 })).then((x) => (x && x.points) || null).catch(() => null) : null]);
+        if (token.gone) return;
+        if (!b) { if (result) result.innerHTML = '<span class="text-muted">No terrain data here.</span>'; return; }
+        base = b; points = pts;
+        pool = M.workerPool ? M.workerPool(1) : null;
+        token.cleanup.push(() => { if (pool) pool.close(); });
+        const cov = await M.whatIfCoverage(base, d, pool ? pool.run : null);
+        if (token.gone) return;
+        before = { cov, km2: M.unionKm2(cov), people: people(cov) };
+        if (isToday(settings())) { if (result) result.innerHTML = whatIfResultHtml(before, before); } else run();
+      } catch (_) {
+        if (result) result.innerHTML = '<span class="text-muted">Couldn\'t be worked out.</span>';
+      }
+    });
   }
 
   /** Draws the footprint map: this repeater's coverage and its hops. */
@@ -101,7 +231,14 @@
       if (!fp) { if (areaEl) areaEl.innerHTML = '<span class="text-muted">no terrain data</span>'; return map; }
       const b = fp.cov.bounds;
       M.merge(fp.cov);
-      (M.canvasOverlay ? M.canvasOverlay(L, M.coverageCanvas(fp.cov), [[b.south, b.west], [b.north, b.east]], { pane: 'mmCoverage', className: 'mm-cov-overlay' }) : L.imageOverlay(M.coverageImage(fp.cov), [[b.south, b.west], [b.north, b.east]], { pane: 'mmCoverage', className: 'mm-cov-overlay' })).addTo(map);
+      let overlay = (M.canvasOverlay ? M.canvasOverlay(L, M.coverageCanvas(fp.cov), [[b.south, b.west], [b.north, b.east]], { pane: 'mmCoverage', className: 'mm-cov-overlay' }) : L.imageOverlay(M.coverageImage(fp.cov), [[b.south, b.west], [b.north, b.east]], { pane: 'mmCoverage', className: 'mm-cov-overlay' })).addTo(map);
+      // what if: the change drawn in place of today's coverage
+      map.mmShow = (after, before) => {
+        if (!M.whatIfCanvas || !M.canvasOverlay) return;
+        const src = after || before, bb = src.bounds;
+        map.removeLayer(overlay);
+        overlay = M.canvasOverlay(L, after ? M.whatIfCanvas(before, after) : M.coverageCanvas(before), [[bb.south, bb.west], [bb.north, bb.east]], { pane: 'mmCoverage', className: 'mm-cov-overlay' }).addTo(map);
+      };
       if (areaEl) areaEl.innerHTML = `${km(fp.km2)} km² <span class="text-muted">for people on the ground</span>`;
     } catch (_) {
       if (areaEl) areaEl.innerHTML = '<span class="text-muted">couldn\'t be worked out</span>';
@@ -117,8 +254,12 @@
   /** Fills el (hidden until there's something to show) for node n. */
   async function load(el, pubkey, n) {
     if (!el || !pubkey) return;
-    if (current && current.map) { try { current.map.remove(); } catch (_) { /* gone */ } }
-    const token = current = { pubkey, map: null };
+    if (current) {
+      current.gone = true;
+      current.cleanup.forEach((f) => { try { f(); } catch (_) { /* gone */ } });
+      if (current.map) { try { current.map.remove(); } catch (_) { /* gone */ } }
+    }
+    const token = current = { pubkey, map: null, cleanup: [] };
     let report;
     try {
       report = typeof root.api === 'function'
@@ -129,8 +270,12 @@
     const rep = { name: report.repeater.name || (n && n.name), lat: Number(n && n.lat), lon: Number(n && n.lon), radio: report.repeater.radio };
     el.innerHTML = cardHtml(rep, report, Date.now());
     el.hidden = false;
-    if (el.querySelector('#mmNodeMap')) token.map = await drawMap(el.querySelector('#mmNodeMap'), rep, report, el.querySelector('#mmNodeArea'));
+    if (el.querySelector('#mmNodeMap')) {
+      token.map = await drawMap(el.querySelector('#mmNodeMap'), rep, report, el.querySelector('#mmNodeArea'));
+      if (current !== token) return;
+      attachWhatIf(token, el.querySelector('#mmNodeWhatIf'), rep, (after, before) => { if (token.map && token.map.mmShow) token.map.mmShow(after, before); });
+    }
   }
 
-  root.MediaMeshNode = { load, cardHtml, dailySvg };
+  root.MediaMeshNode = { load, cardHtml, dailySvg, whatIfHtml, whatIfResultHtml, eirpText };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -725,6 +725,38 @@ function cellAt(cov, lat, lon) {
     assert.deepStrictEqual(M.terrainPlan(two, M.CONFIG.modes.ground).slice(0, 2), plan.slice(0, 2));
   });
 
+  await test('what if: the same terrain, another height, power or antenna', async () => {
+    // rolling hills from each pixel's place, so every zoom agrees
+    const hilly = (url) => {
+      const [, z, x, y] = /terrarium\/(\d+)\/(\d+)\/(\d+)/.exec(url).map(Number);
+      const px = new Uint8ClampedArray(65536 * 4);
+      for (let j = 0; j < 256; j++) for (let i = 0; i < 256; i++) {
+        const lon = ((x + (i + 0.5) / 256) / 2 ** z) * 360 - 180;
+        const n = Math.PI - 2 * Math.PI * (y + (j + 0.5) / 256) / 2 ** z, lat = 180 / Math.PI * Math.atan(Math.sinh(n));
+        const e = 60 + 50 * Math.sin(lat * 140) * Math.cos(lon * 95) + 25 * Math.sin(lon * 310);
+        const v = e + 32768, k = (j * 256 + i) * 4;
+        px[k] = Math.floor(v / 256); px[k + 1] = Math.floor(v % 256); px[k + 2] = Math.floor((v % 1) * 256); px[k + 3] = 255;
+      }
+      return Promise.resolve(px);
+    };
+    const rep = { name: 'Hill', lat: 47.6, lon: -122.3 };
+    const base = await M.whatIfBase(rep, 'ground', { loadTile: hilly });
+    assert.ok(base && base.job.elev.length === base.job.rays * base.job.n);
+    const d = M.whatIfDefaults(rep);
+    assert.deepStrictEqual(d, { heightM: 10, txDbm: 22, gainDbi: 2 });
+    const j = M.whatIfJob(base, { heightM: 30, txDbm: 27, gainDbi: 5 }, true);
+    assert.strictEqual(j.txHeightM, 30);
+    assert.ok(Math.abs(j.budgetDb - (base.job.budgetDb + 8)) < 1e-9, '5 dB more power and 3 dB more antenna');
+    assert.ok(j.elev !== base.job.elev && j.elev[5] === base.job.elev[5], 'its own copy of the terrain');
+    const same = await M.whatIfCoverage(base, d);
+    const fp = await M.footprint(rep, 'ground', { loadTile: hilly });
+    assert.ok(Math.abs(M.unionKm2(same) - fp.km2) < 1e-9, `today's settings give today's estimate: ${M.unionKm2(same)} vs ${fp.km2}`);
+    const higher = M.unionKm2(await M.whatIfCoverage(base, Object.assign({}, d, { heightM: 30 })));
+    const louder = M.unionKm2(await M.whatIfCoverage(base, Object.assign({}, d, { txDbm: 28 })));
+    const quieter = M.unionKm2(await M.whatIfCoverage(base, Object.assign({}, d, { txDbm: 14 })));
+    assert.ok(higher > fp.km2 && louder > fp.km2 && quieter < fp.km2, `${higher} ${louder} ${quieter} vs ${fp.km2}`);
+  });
+
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);
 })();

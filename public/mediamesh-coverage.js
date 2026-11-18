@@ -1403,6 +1403,83 @@
     return cov ? { cov, km2: unionKm2(cov) } : null;
   }
 
+  // ---- What if: one repeater with another antenna, height or power ------------
+
+  /**
+   * The terrain under one repeater's rays, sampled once, so its coverage can
+   * be worked out again for any antenna height, power or antenna gain
+   * without touching the terrain: { rep, modeKey, job, g, water, elevAt }, or
+   * null without terrain. opts.loadTile as for init.
+   */
+  async function whatIfBase(rep, modeKey, opts) {
+    if (!rep || !Number.isFinite(rep.lat) || !Number.isFinite(rep.lon)) return null;
+    const key = modeKey || 'ground', mode = CONFIG.modes[key];
+    const terrain = await loadTerrainLevels(terrainPlan([rep], mode), opts && opts.loadTile);
+    if (terrain.total && terrain.failed === terrain.total) return null;
+    const g = gridFor([rep], mode);
+    const job = withTerrainArrays(prepareJob(rep, radioFor(rep), terrain.elevAt, mode, g, true));
+    for (let a = 0; a < job.rays; a += RAYS_PER_STEP) {
+      sampleRays(job, terrain.elevAt, a, Math.min(job.rays, a + RAYS_PER_STEP));
+      if (a % (RAYS_PER_STEP * 8) === 0) await new Promise((res) => setTimeout(res, 0));
+    }
+    return { rep, modeKey: key, job, g, water: waterMask(g, terrain.elevAt), elevAt: terrain.elevAt };
+  }
+
+  /** The settings a repeater is drawn with today: { heightM, txDbm, gainDbi }. */
+  function whatIfDefaults(rep) {
+    return { heightM: antennaHeight(rep), txDbm: CONFIG.txDbm, gainDbi: CONFIG.txGainDbi };
+  }
+
+  /**
+   * The job for other settings: the same terrain, another antenna height
+   * and as many dB more or less to spend as the power and antenna add.
+   * copy: give it arrays of its own (a worker takes them away).
+   */
+  function whatIfJob(base, settings, copy) {
+    const d = whatIfDefaults(base.rep);
+    const job = Object.assign({}, base.job, {
+      txHeightM: Math.max(1, Math.min(300, Number(settings.heightM) || d.heightM)),
+      budgetDb: base.job.budgetDb + ((Number(settings.txDbm) || d.txDbm) - d.txDbm) + ((Number.isFinite(Number(settings.gainDbi)) ? Number(settings.gainDbi) : d.gainDbi) - d.gainDbi),
+    });
+    if (copy) { job.elev = base.job.elev.slice(); job.peak = base.job.peak.slice(); }
+    return job;
+  }
+
+  /**
+   * Coverage for other settings, as computeCoverage gives it (one
+   * repeater). run(job) may hand the work to a worker (workerPool's run).
+   */
+  async function whatIfCoverage(base, settings, run) {
+    const job = whatIfJob(base, settings, !!run);
+    const data = run ? await run(job, () => whatIfJob(base, settings, false)) : repRaster(job);
+    const g = base.g;
+    return merge({ rasters: [{ col0: job.col0, row0: job.row0, w: job.w, h: job.h, data }], reps: [base.rep], radios: [radioFor(base.rep)],
+      width: g.width, height: g.height, bounds: g.bounds, modeKey: base.modeKey, water: base.water });
+  }
+
+  /**
+   * The comparison on the map: cells the new settings add (cyan), cells
+   * they lose (red, faint) and those both reach (MediaMesh pink, faint).
+   */
+  function whatIfCanvas(before, after) {
+    const cv = document.createElement('canvas');
+    cv.width = after.width; cv.height = after.height;
+    const ctx = cv.getContext('2d');
+    const img = ctx.createImageData(after.width, after.height);
+    const pink = nodeColor(), lost = (() => { const h = cssColor('--status-red', '#ef4444').slice(1); return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)); })();
+    for (let i = 0; i < after.margins.length; i++) {
+      const a = before.margins[i] >= 0, b = after.margins[i] >= 0;
+      if (!a && !b) continue;
+      if (after.water && after.water[i]) continue;
+      const c = b && !a ? rampColor(Math.max(8, after.margins[i]), PLAN_RGB) : a && !b ? [lost[0], lost[1], lost[2], 0.32] : rampColor(after.margins[i], pink);
+      if (!c) continue;
+      const alpha = b && !a ? Math.max(0.3, c[3] * 1.2) : a && !b ? c[3] : c[3] * 0.55;
+      img.data[i * 4] = c[0]; img.data[i * 4 + 1] = c[1]; img.data[i * 4 + 2] = c[2]; img.data[i * 4 + 3] = Math.round(alpha * 255);
+    }
+    ctx.putImageData(img, 0, 0);
+    return cv;
+  }
+
   // ---- Growth time-lapse ------------------------------------------------------
 
   const DAY_MS = 86400000;
@@ -2262,7 +2339,7 @@
     terrainPlan, loadTerrainLevels, loadTerrain, rampColor, edgeFade, cellAt, cellCenter, readout,
     fitCalibration, calibrationText, setCalibration, getCalibration, CAL,
     backboneWeight, backboneTip, areaHistory, footprint, coverageImage, legendGradient,
-    growthSteps, presentAt, antennaHeight, coverageCanvas, canvasOverlay, cellAreaKm2, coveredKm2, unionKm2, repAreasKm2, planGain, planLinks, planHtml, PLAN_RGB,
+    growthSteps, presentAt, antennaHeight, coverageCanvas, canvasOverlay, whatIfBase, whatIfDefaults, whatIfJob, whatIfCoverage, whatIfCanvas, cellAreaKm2, coveredKm2, unionKm2, repAreasKm2, planGain, planLinks, planHtml, PLAN_RGB,
     repNotes, repArea, repGroups, repSummaryHtml, repPanelHtml, repAction, assumptionsHtml, linkRows, linksTableHtml, init,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

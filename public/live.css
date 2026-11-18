@@ -1597,3 +1597,5 @@ input.live-node-filter-input:focus {
 }
 .nightsky--kiosk .nightsky-controls { display: none; }
 .nightsky--kiosk { cursor: none; }
+.live-mm-transfer-rec { font: inherit; font-size: 0.78em; margin-left: 6px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--mediamesh-path-color); background: transparent; color: var(--mediamesh-text-color, var(--text)); cursor: pointer; white-space: nowrap; }
+.live-mm-transfer-rec:hover { background: color-mix(in srgb, var(--mediamesh-path-color) 14%, transparent); }

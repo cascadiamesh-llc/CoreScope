@@ -6374,3 +6374,62 @@ a.stat-card-mediamesh { color: inherit; text-decoration: none; }
 @media (max-width: 700px) { .kiosk-join { flex-direction: column; align-items: flex-start; } }
 a.tab-btn { text-decoration: none; display: inline-flex; align-items: center; }
 .kiosk-hud[data-slide="join"] .kiosk-clock { display: none; }
+
+/* MediaMesh flight recorder (mediamesh-cliplog.js): one clip, every piece. */
+.mm-fr-overlay { position: fixed; inset: 0; z-index: 10000; background: color-mix(in srgb, var(--bg) 55%, transparent); backdrop-filter: blur(2px); display: flex; align-items: flex-start; justify-content: center; padding: 4vh 16px; overflow-y: auto; }
+.mm-fr-panel { background: var(--card-bg); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-lg, 12px); box-shadow: var(--shadow); width: min(900px, 100%); padding: 16px 18px 18px; }
+.mm-fr-head { display: flex; align-items: flex-start; gap: 12px; }
+.mm-fr-head > div { flex: 1; min-width: 0; }
+.mm-fr-head h3 { margin: 0 0 2px; }
+.mm-fr-sub { margin: 0; font-size: 0.88em; overflow-wrap: anywhere; }
+.mm-fr-badge { white-space: nowrap; font-weight: var(--fw-medium, 500); padding-top: 3px; }
+.mm-fr-close { font: inherit; background: transparent; border: 1px solid var(--border); color: var(--text); border-radius: var(--radius-sm, 6px); width: 32px; height: 32px; cursor: pointer; flex: none; }
+.mm-fr-close:hover { background: var(--surface-2); }
+.mm-fr-story { margin: 12px 0 8px; }
+.mm-fr-story p { margin: 0 0 6px; line-height: 1.45; }
+.mm-fr-scroll { overflow-x: auto; margin: 6px 0 2px; }
+.mm-fr-wf { display: block; min-width: 520px; }
+.mm-fr-grid { stroke: var(--border); stroke-width: 1; }
+.mm-fr-axis { fill: var(--text-muted); font-size: 11px; }
+.mm-fr-label { fill: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.mm-fr-label.is-missing { fill: var(--status-red-text); font-weight: var(--fw-medium, 500); }
+.mm-fr-label.is-rebuilt { fill: var(--status-amber-text); }
+.mm-fr-label--head { fill: var(--text); font-weight: var(--fw-medium, 500); }
+.mm-fr-row.is-missing { fill: color-mix(in srgb, var(--status-red) 14%, transparent); }
+.mm-fr-row.is-rebuilt { fill: color-mix(in srgb, var(--status-amber) 16%, transparent); }
+.mm-fr-stall { fill: color-mix(in srgb, var(--status-amber) 12%, transparent); stroke: color-mix(in srgb, var(--status-amber) 45%, transparent); stroke-dasharray: 3 3; }
+.mm-fr-dot { stroke: var(--card-bg); stroke-width: 1; }
+.mm-fr-o0 { fill: var(--mediamesh-node-color); background: var(--mediamesh-node-color); }
+.mm-fr-o1 { fill: var(--status-info); background: var(--status-info); }
+.mm-fr-o2 { fill: var(--status-orange); background: var(--status-orange); }
+.mm-fr-o3 { fill: var(--status-green); background: var(--status-green); }
+.mm-fr-o4 { fill: var(--status-purple); background: var(--status-purple); }
+.mm-fr-o5 { fill: var(--status-yellow); background: var(--status-yellow); }
+.mm-fr-key { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+.mm-fr-far { font-size: 0.8em; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--mediamesh-path-color); color: var(--mediamesh-text-color, var(--text)); margin-left: 4px; white-space: nowrap; }
+.mm-fr-key-line { font-size: 0.85em; margin: 0 0 10px; }
+.mm-fr-row-key { display: inline-block; width: 18px; height: 10px; border-radius: 2px; vertical-align: -1px; }
+.mm-fr-row-key.is-missing { background: color-mix(in srgb, var(--status-red) 30%, transparent); }
+.mm-fr-row-key.is-rebuilt { background: color-mix(in srgb, var(--status-amber) 34%, transparent); }
+.mm-fr-via { font-size: 0.9em; overflow-wrap: anywhere; }
+.mm-fr-open { font: inherit; background: none; border: 0; padding: 0; color: var(--link-color, var(--accent)); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; text-align: left; }
+@media (max-width: 600px) { .mm-fr-overlay { padding: 0; } .mm-fr-panel { border-radius: 0; min-height: 100%; padding: 12px; } }
+
+/* What if (mediamesh-node.js): one repeater with another mast, power or antenna. */
+.mm-wi { margin-top: 10px; border: 1px solid var(--border); border-radius: var(--radius-md, 8px); padding: 6px 10px; }
+.mm-wi summary { cursor: pointer; font-weight: var(--fw-medium, 500); color: var(--text); }
+.mm-wi-body { padding-top: 8px; }
+.mm-wi-row { display: grid; grid-template-columns: 9.5em 1fr 4.5em; align-items: center; gap: 8px; margin: 4px 0; color: var(--text); }
+.mm-wi-row input[type="range"] { width: 100%; accent-color: var(--mediamesh-node-color); }
+.mm-wi-val { text-align: right; font-variant-numeric: tabular-nums; }
+.mm-wi-eirp { margin: 4px 0; font-size: 0.85em; }
+.mm-wi-result { margin: 8px 0 4px; min-height: 1.4em; color: var(--text); }
+.mm-wi-up { color: var(--status-green-text); }
+.mm-wi-down { color: var(--status-red-text); }
+.mm-wi-key { font-size: 0.85em; margin: 4px 0 8px; }
+.mm-wi-sw { display: inline-block; width: 14px; height: 10px; border-radius: 2px; vertical-align: -1px; }
+.mm-wi-sw--gain { background: rgba(6, 182, 212, 0.7); }
+.mm-wi-sw--lost { background: color-mix(in srgb, var(--status-red) 45%, transparent); }
+.mm-wi-sw--both { background: color-mix(in srgb, var(--mediamesh-node-color) 40%, transparent); }
+.mm-wi-note { font-size: 0.82em; margin: 8px 0 2px; }
+@media (max-width: 600px) { .mm-wi-row { grid-template-columns: 1fr 4.5em; } .mm-wi-row input[type="range"] { grid-column: 1 / -1; grid-row: 2; } }

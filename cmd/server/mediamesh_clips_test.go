@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/hex"
+	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -82,5 +85,87 @@ func TestAnalyseMediaClips(t *testing.T) {
 	}
 	if c[0].SID != "00000004" {
 		t.Errorf("newest first: %s", c[0].SID)
+	}
+}
+
+// The flight recorder: every piece of one clip each observer heard on
+// radio2, found by either of its ids, parity pieces apart, and nothing from
+// the main radio or from another clip.
+func TestMediaMeshClipLog(t *testing.T) {
+	srv, router := setupTestServer(t)
+	seedMediaMesh(t, srv)
+	at := time.Now().UTC().Add(-time.Hour)
+	ts := func(sec int) string { return at.Add(time.Duration(sec) * time.Second).Format(time.RFC3339) }
+	grpTxt, raw := PayloadGRP_TXT, mediaPayloadRawCustom
+	obsID := 900000
+	obs := func(name string, sec int, path string, onMM bool) *StoreObs {
+		obsID++
+		if onMM {
+			mediaMeshMu.Lock()
+			mediaMeshObs[obsID] = struct{}{}
+			mediaMeshMu.Unlock()
+		}
+		return &StoreObs{ID: obsID, ObserverID: "obs-" + name, ObserverName: name, PathJSON: path, Timestamp: ts(sec)}
+	}
+	sid := uint32(0x1a2b3c4d)
+	piece := func(wire uint32, info, sec int, o ...*StoreObs) *StoreTx {
+		b := []byte{0x56, byte(wire >> 24), byte(wire >> 16), byte(wire >> 8), byte(wire), byte(info), 0xee}
+		return &StoreTx{Hash: "h" + strconv.Itoa(obsID), FirstSeen: ts(sec), PayloadType: &raw,
+			DecodedJSON: `{"raw":"` + hex.EncodeToString(b) + `"}`, Observations: o}
+	}
+	txs := []*StoreTx{
+		{Hash: "ann", FirstSeen: ts(0), PayloadType: &grpTxt, DecodedJSON: `{"text":"Jade: VI1:` + strconv.FormatUint(uint64(sid), 36) + `:14:3:0 Photo","channel":"#seattle"}`,
+			Observations: []*StoreObs{obs("Near", 0, `["aa"]`, false)}},
+		piece(sid, 0, 5, obs("Far", 6, `["aa","bb"]`, true), obs("Near", 5, `["aa"]`, true)),
+		piece(sid, 2, 9, obs("Far", 10, `["aa","bb"]`, true), obs("Main", 9, `["aa"]`, false)),
+		piece(sid^mediaClipFecXor, 1, 12, obs("Far", 12, `["aa","bb"]`, true)),
+		piece(0x0badf00d, 0, 7, obs("Far", 7, `["aa"]`, true)),
+	}
+	srv.store.mu.Lock()
+	srv.store.packets = append(srv.store.packets, txs...)
+	srv.store.mu.Unlock()
+
+	for _, ask := range []uint32{sid, sid ^ mediaClipFecXor} {
+		log := srv.store.mediaMeshClipLog(ask, at.Add(-time.Hour).Format(time.RFC3339))
+		if log.SID != "1a2b3c4d" || log.Clip == nil || log.Announcement == nil {
+			t.Fatalf("asked %08x: %+v", ask, log)
+		}
+		if log.Clip.Outcome != "parity" || log.Clip.Heard != 2 || log.Clip.ObsName != "Far" || log.Clip.Hops != 2 {
+			t.Errorf("verdict: %+v", log.Clip)
+		}
+		if log.Announcement.Channel != "#seattle" || len(log.Announcement.Heard) != 1 {
+			t.Errorf("announcement: %+v", log.Announcement)
+		}
+		if len(log.Pieces) != 3 {
+			t.Fatalf("pieces: %+v", log.Pieces)
+		}
+		p0, p2, par := log.Pieces[0], log.Pieces[1], log.Pieces[2]
+		if p0.Index != 0 || len(p0.Heard) != 2 || p0.Heard[0].Name != "Near" || p0.Heard[1].Name != "Far" {
+			t.Errorf("piece 0: %+v", p0)
+		}
+		if p2.Index != 2 || len(p2.Heard) != 1 {
+			t.Errorf("piece 2 (one copy on the main radio): %+v", p2)
+		}
+		if !par.Parity || par.Index != -1 || par.Block != 0 || par.J != 1 {
+			t.Errorf("parity: %+v", par)
+		}
+		if _, ok := log.Hops["bb"]; !ok {
+			t.Errorf("hops: %+v", log.Hops)
+		}
+	}
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest("GET", "/api/analytics/mediamesh/clips/zz", nil))
+	if rec.Code != 400 {
+		t.Errorf("bad sid: %d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest("GET", "/api/analytics/mediamesh/clips/00000001", nil))
+	if rec.Code != 404 {
+		t.Errorf("unknown clip: %d", rec.Code)
+	}
+	var got MediaMeshClipLog
+	getJSON(t, router, "/api/analytics/mediamesh/clips/1a2b3c4d", &got)
+	if got.Clip == nil || len(got.Pieces) != 3 {
+		t.Errorf("endpoint: %+v", got)
 	}
 }

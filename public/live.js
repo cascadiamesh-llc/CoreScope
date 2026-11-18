@@ -252,7 +252,9 @@
       + (t.caption ? '<div class="live-mm-transfer-caption">“' + escapeHtml(t.caption) + '”</div>' : '')
       + (obs ? '<div class="live-mm-transfer-route">Heard by ' + obs + '</div>' : '')
       + '<div class="live-mm-transfer-chunks" aria-hidden="true">' + boxes + '</div>'
-      + '<div class="live-mm-transfer-status">' + status + '</div>';
+      + '<div class="live-mm-transfer-status">' + status
+      + (t.sid && window.MediaMeshClipLog ? ' <button type="button" class="live-mm-transfer-rec" data-mm-clip="' + escapeHtml(t.sid) + '" title="Every piece, when and by which path">Flight recorder</button>' : '')
+      + '</div>';
   }
 
   // MediaMesh (radio2): a fuchsia badge on feed rows carried on radio2.
@@ -5025,7 +5027,11 @@
         observers: [], hashes: new Set(), first: ts, last: ts, firstSeen: now, lastSeen: now, pkt, color, timer: null };
       const a = sid ? mmAnnounced.get(sid) : null;
       if (a) applyMediaMeshAnnouncement(t, a);
-      el.addEventListener('click', () => showFeedCard(el, t.pkt, t.color));
+      el.addEventListener('click', (e) => {
+        const rec = e.target.closest && e.target.closest('[data-mm-clip]');
+        if (rec) { e.stopPropagation(); window.MediaMeshClipLog.open(rec.dataset.mmClip); return; }
+        showFeedCard(el, t.pkt, t.color);
+      });
       requestAnimationFrame(() => requestAnimationFrame(() => el.classList.remove('live-feed-enter')));
       mmTransfers.push(t);
       if (mmTransfers.length > 12) {

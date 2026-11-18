@@ -43,6 +43,20 @@ test('card: since when, relayed with rank, hops with partners, map only with a p
   assert.ok(!h.includes('id="mmNodeMap"') && h.includes('no saved position') && h.includes('none this week') && h.includes('None with a placed neighbour yet'), h);
 });
 
+test('what if: sliders at today\'s settings, the change in area and people, the legal limit', () => {
+  const h = N.whatIfHtml({ lat: 47.6, lon: -122.3 });
+  assert.ok(h.includes('data-wi="heightM"') && h.includes('value="10"') && h.includes('value="22"') && h.includes('value="2"'), h);
+  assert.ok(h.includes('<details') && !h.includes(' open'), 'closed until asked for');
+  const r = N.whatIfResultHtml({ km2: 352.4, people: 96123 }, { km2: 311.6, people: 84090 });
+  assert.ok(r.includes('<strong>352 km²</strong>') && r.includes('(+40 km²)'), r);
+  assert.ok(r.includes('96,100 people') && r.includes('(+12,000 people)'), r);
+  const down = N.whatIfResultHtml({ km2: 50, people: 900 }, { km2: 60.25, people: 1200 });
+  assert.ok(down.includes('mm-wi-down') && down.includes('(−10.3 km²)'), down);
+  assert.ok(!N.whatIfResultHtml({ km2: 10, people: 5 }, { km2: 10, people: 5 }).includes('('), 'no change: no bracket');
+  assert.ok(N.eirpText({ txDbm: 22, gainDbi: 2 }).startsWith('Radiated: 23 dBm EIRP') && !N.eirpText({ txDbm: 22, gainDbi: 2 }).includes('FCC'));
+  assert.ok(N.eirpText({ txDbm: 30, gainDbi: 9 }).includes('above the 36 dBm the FCC allows'));
+});
+
 test('MediaMesh styles never fix a text colour: text follows the theme', () => {
   // Dark text on a dark popup slipped through once (#1a1a2e). Any MediaMesh
   // rule that sets a text colour must take it from a theme variable.
