@@ -67,6 +67,13 @@ test('night sky text stays light on its own dark background', () => {
   assert.ok(/\.nightsky \{[^}]*background: #03050b/.test(css), 'the sky has its own background');
 });
 
+test('a feed rebuild keeps MediaMesh transfers as cards, starting them again', () => {
+  const js = pub('live.js');
+  const rb = js.slice(js.indexOf('function rebuildFeedList()'), js.indexOf('function applyFavoritesFilter()'));
+  assert.ok(rb.includes('mmTransfers = [];'), 'old cards are dropped with the rows');
+  assert.ok(rb.includes('mediaMeshTransferFor(') && rb.includes('transfer: t'), 'clips are grouped into cards again');
+});
+
 test('the transfer card keeps its height in a full feed', () => {
   // the feed is a flex column of clipped rows: a card that may shrink gets squashed unreadable
   assert.ok(/\.live-feed-item\.live-mm-transfer \{ flex-shrink: 0;/.test(pub('live.css')));

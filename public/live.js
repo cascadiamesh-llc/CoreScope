@@ -220,7 +220,8 @@
   // chunks, repair (parity packets), maxHops, observers (names), first,
   // last (ms) }. Done once nothing has arrived for MEDIAMESH_TRANSFER_IDLE_MS.
   function mediaMeshTransferHtml(t, now) {
-    const done = now - t.last >= MEDIAMESH_TRANSFER_IDLE_MS;
+    // done by the wall clock (lastSeen); first/last are the packets' own times
+    const done = now - (t.lastSeen != null ? t.lastSeen : t.last) >= MEDIAMESH_TRANSFER_IDLE_MS;
     const kind = t.kind || '';
     const icon = '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#' + (MEDIAMESH_CLIP_ICONS[kind] || 'ph-film-strip') + '"/></svg>';
     let title = MEDIAMESH_CLIP_TITLES[kind] || 'Media clip';
@@ -3125,6 +3126,9 @@
     if (!feedContent) return;
     feedContent.querySelectorAll('.live-feed-item').forEach(el => el.remove());
     feedDedup.clear();
+    // the cards go with the rows: transfers start again from the buffer
+    mmTransfers.forEach((t) => { if (t.timer) clearTimeout(t.timer); });
+    mmTransfers = [];
     // #1207: ensure empty-state placeholder is present (re-add if a prior
     // rebuild wiped everything). CSS hides it when items exist.
     if (!feedContent.querySelector('.live-feed-empty')) {
@@ -3177,6 +3181,17 @@
           opHops = op.decoded.path.hops;
         }
         if (opHops.length > longestHops.length) longestHops = opHops;
+      }
+
+      // MediaMesh photos, video and voice: one card per transfer, as live
+      const mmClip = pkt.mediamesh === true ? mediaMeshClipOf(typeName, payload) : null;
+      if (mmClip) {
+        const seen = group.latestTs || Date.now();
+        const t = mediaMeshTransferFor(mmClip, payload, longestHops, color, Object.assign({}, pkt, { _ts: seen }), null, seen);
+        for (const op of group.packets) updateMediaMeshTransfer(t, Object.assign({}, op, { _ts: seen }), longestHops, op === group.packets[0], null, seen);
+        if (t.el.parentNode !== feedContent) feedContent.appendChild(t.el);
+        if (group.hash) feedDedup.set(group.hash, { element: t.el, count: group.count, pkt, packets: group.packets, createdAt: Date.now(), transfer: t });
+        continue;
       }
 
       // Create feed item directly with correct count
@@ -4982,11 +4997,13 @@
 
   // The transfer this packet belongs to: an open one with the same key, or a
   // new card at the top of the feed. A parity packet joins its clip.
-  function mediaMeshTransferFor(clip, payload, hops, color, pkt, feed) {
-    const now = Date.now();
+  function mediaMeshTransferFor(clip, payload, hops, color, pkt, feed, seenAt) {
+    const now = seenAt != null ? seenAt : Date.now();
     const open = (key) => {
       for (let i = mmTransfers.length - 1; i >= 0; i--) {
-        if (mmTransfers[i].key === key && now - mmTransfers[i].last < MEDIAMESH_TRANSFER_IDLE_MS) return mmTransfers[i];
+        // within the idle time of either end (a rebuild goes newest first)
+        const o = mmTransfers[i];
+        if (o.key === key && now - o.lastSeen < MEDIAMESH_TRANSFER_IDLE_MS && o.firstSeen - now < MEDIAMESH_TRANSFER_IDLE_MS) return o;
       }
       return null;
     };
@@ -5003,8 +5020,9 @@
       el.setAttribute('tabindex', '0');
       el.setAttribute('role', 'button');
       el.style.cursor = 'pointer';
+      const ts = pkt && pkt._ts ? pkt._ts : now;
       t = { key, sid, kind: clip.talk ? 'voice' : '', total: 0, seconds: 0, caption: '', el, chunks: 0, repair: 0, maxHops: 0,
-        observers: [], hashes: new Set(), first: now, last: now, pkt, color, timer: null };
+        observers: [], hashes: new Set(), first: ts, last: ts, firstSeen: now, lastSeen: now, pkt, color, timer: null };
       const a = sid ? mmAnnounced.get(sid) : null;
       if (a) applyMediaMeshAnnouncement(t, a);
       el.addEventListener('click', () => showFeedCard(el, t.pkt, t.color));
@@ -5020,9 +5038,11 @@
   }
 
   // Counts a packet (or another observation of one) into its transfer and
-  // redraws the card at the top of the feed.
-  function updateMediaMeshTransfer(t, pkt, hops, isNew, feed) {
-    const now = Date.now();
+  // redraws the card at the top of the feed (feed null: leave it where it
+  // is, for rebuildFeedList). seenAt: when it was heard on the wall clock.
+  function updateMediaMeshTransfer(t, pkt, hops, isNew, feed, seenAt) {
+    const now = seenAt != null ? seenAt : Date.now();
+    const ts = pkt && pkt._ts ? pkt._ts : now;
     if (pkt.hash && !t.hashes.has(pkt.hash)) {
       t.hashes.add(pkt.hash);
       if (isNew && t.nextIsParity) t.repair++; else t.chunks++;
@@ -5031,9 +5051,11 @@
     t.maxHops = Math.max(t.maxHops, (hops || []).length);
     const ob = pkt.observer_name || pkt.observer || '';
     if (ob && t.observers.indexOf(ob) < 0) t.observers.push(ob);
-    t.last = now;
-    t.pkt = pkt;
-    t.el.innerHTML = mediaMeshTransferHtml(t, now);
+    if (ts < t.first) t.first = ts;
+    if (ts >= t.last) { t.last = ts; t.pkt = pkt; }
+    if (now > t.lastSeen) t.lastSeen = now;
+    if (now < t.firstSeen) t.firstSeen = now;
+    t.el.innerHTML = mediaMeshTransferHtml(t, Date.now());
     if (feed && feed.firstElementChild !== t.el) feed.prepend(t.el);
     if (feed) {
       while (feed.querySelectorAll('.live-feed-item').length > 25) {
@@ -5043,7 +5065,8 @@
     }
     // Redraw as done once it goes quiet.
     if (t.timer) clearTimeout(t.timer);
-    t.timer = setTimeout(() => { t.timer = null; t.el.innerHTML = mediaMeshTransferHtml(t, Date.now()); }, MEDIAMESH_TRANSFER_IDLE_MS + 50);
+    const left = t.lastSeen + MEDIAMESH_TRANSFER_IDLE_MS + 50 - Date.now();
+    if (left > 0) t.timer = setTimeout(() => { t.timer = null; t.el.innerHTML = mediaMeshTransferHtml(t, Date.now()); }, left);
   }
 
   function showFeedCard(anchor, pkt, color) {
