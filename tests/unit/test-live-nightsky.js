@@ -67,6 +67,11 @@ test('night sky text stays light on its own dark background', () => {
   assert.ok(/\.nightsky \{[^}]*background: #03050b/.test(css), 'the sky has its own background');
 });
 
+test('the transfer card keeps its height in a full feed', () => {
+  // the feed is a flex column of clipped rows: a card that may shrink gets squashed unreadable
+  assert.ok(/\.live-feed-item\.live-mm-transfer \{ flex-shrink: 0;/.test(pub('live.css')));
+});
+
 test('live.js wiring: button, feed while open, the replay endpoint', () => {
   const js = pub('live.js');
   assert.ok(js.includes('id="liveNightSkyBtn"') && js.includes('#ph-moon-stars'));

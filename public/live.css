@@ -1542,7 +1542,9 @@ input.live-node-filter-input:focus {
 /* MediaMesh: a hop number at the middle of each hop, and one feed card per
    photo or voice transfer instead of a row per packet. */
 .live-mm-hop span { display: flex; align-items: center; justify-content: center; width: 18px; height: 18px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid var(--mediamesh-path-color, #d946ef); background: var(--surface-1, #1e1630); color: var(--text, #f5d0fe); font-size: 10px; font-weight: 700; line-height: 1; }
-.live-feed-item.live-mm-transfer { display: block; border: 1px solid var(--mediamesh-path-color, #d946ef); border-radius: 8px; margin: 4px 0; padding: 7px 9px; box-shadow: 0 0 10px color-mix(in srgb, var(--mediamesh-path-color, #d946ef) 22%, transparent); }
+/* The feed is a flex column whose rows clip (overflow: hidden), so a full
+   feed squeezes them; the transfer card keeps its height and stays readable. */
+.live-feed-item.live-mm-transfer { flex-shrink: 0; display: block; border: 1px solid var(--mediamesh-path-color, #d946ef); border-radius: 8px; margin: 4px 0; padding: 7px 9px; box-shadow: 0 0 10px color-mix(in srgb, var(--mediamesh-path-color, #d946ef) 22%, transparent); }
 .live-mm-transfer-head { display: flex; align-items: center; gap: 6px; }
 .live-mm-transfer-icon { color: var(--mediamesh-path-color, #d946ef); display: inline-flex; }
 .live-mm-transfer-title { font-weight: 600; }
