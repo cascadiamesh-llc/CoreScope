@@ -481,6 +481,20 @@ function cellAt(cov, lat, lon) {
     const h = M.areaHistory(cov, ['1970-01-01T00:00:00.500Z', '1970-01-01T00:00:01.500Z'], steps);
     assert.strictEqual(h.length, 2);
     assert.ok(Math.abs(h[0].km2 - 20 * a) < 1e-9 && Math.abs(h[1].km2 - 40 * a) < 1e-9, JSON.stringify(h));
+    // the one-pass history matches a union per step, overlap, water, gaps and all
+    const big = { width: 30, height: 30, bounds: cov.bounds, water: new Uint8Array(900) };
+    for (let i = 0; i < 900; i += 7) big.water[i] = 1;
+    let seed = 3; const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    big.rasters = Array.from({ length: 6 }, () => {
+      const w = 5 + Math.floor(rnd() * 20), hh = 5 + Math.floor(rnd() * 20);
+      return { col0: Math.floor(rnd() * (30 - w)), row0: Math.floor(rnd() * (30 - hh)), w, h: hh,
+        data: Int16Array.from({ length: w * hh }, () => (rnd() < 0.3 ? -32768 : Math.round((rnd() - 0.4) * 300))) };
+    });
+    const firsts = ['', '1970-01-01T00:00:03Z', '1970-01-01T00:00:01Z', '1970-01-01T00:00:05Z', '1970-01-01T00:00:03Z', '1970-01-01T00:00:09Z'];
+    const st = [{ t: 4000 }, { t: 0 }, { t: 2000 }, { t: 6000 }, { t: 10000 }];
+    M.areaHistory(big, firsts, st).forEach((x, k) => {
+      assert.ok(Math.abs(x.km2 - M.unionKm2(big, M.presentAt(firsts, st[k].t))) < 1e-9, 'step ' + k);
+    });
   });
 
   await test('growth time-lapse: one step per day, counting the repeaters there by then', () => {

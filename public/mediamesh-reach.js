@@ -559,7 +559,7 @@
         const c = shown && M.cellAt(shown, ll[0], ll[1]);
         return !(c && c.margin >= 0);
       } : null;
-      cmp.overlay = L.imageOverlay(M.coverageImage(cov, mainRgb(), keep), [[b.south, b.west], [b.north, b.east]], { pane: 'mmMain', opacity: 0.85, className: 'mm-cov-overlay' }).addTo(map);
+      cmp.overlay = (M.canvasOverlay ? M.canvasOverlay(L, M.coverageCanvas(cov, mainRgb(), keep), [[b.south, b.west], [b.north, b.east]], { pane: 'mmMain', opacity: 0.85, className: 'mm-cov-overlay' }) : L.imageOverlay(M.coverageImage(cov, mainRgb(), keep), [[b.south, b.west], [b.north, b.east]], { pane: 'mmMain', opacity: 0.85, className: 'mm-cov-overlay' })).addTo(map);
       const mmPane = map.getPane('mmCoverage');
       if (mmPane) mmPane.style.visibility = cmp.mode === 'gaps' ? 'hidden' : '';
       divider.hidden = cmp.mode !== 'swipe';

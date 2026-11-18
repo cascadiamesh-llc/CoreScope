@@ -670,7 +670,7 @@ func (s *Store) UpdateMediaMeshNodeStats(now time.Time) int {
 		}
 		resolved = mediaMeshTrustedHops(&d, hops, resolved, mainPaths[txID])
 		day := time.Unix(ts, 0).UTC().Format("2006-01-02")
-		clipKey, channel := mediaClipKey(&d)
+		clipKey, channel, clipRead := "", -1, false
 		for i, r := range resolved {
 			if r == nil {
 				continue
@@ -682,6 +682,10 @@ func (s *Store) UpdateMediaMeshNodeStats(now time.Time) int {
 					relayed[pk] = map[string]bool{}
 				}
 				relayed[pk][hash] = true
+				if !clipRead {
+					clipKey, channel = mediaClipKey(&d)
+					clipRead = true
+				}
 				if clips[pk] == nil {
 					clips[pk] = &mediaClipTally{exact: map[string]bool{}}
 				}
@@ -713,12 +717,18 @@ func (s *Store) UpdateMediaMeshNodeStats(now time.Time) int {
 	if _, err := tx.Exec(`UPDATE mediamesh_node_stats SET relayed_7d = 0`); err != nil {
 		return fail()
 	}
-	for pk, ts := range first {
-		if _, err := tx.Exec(`INSERT INTO mediamesh_node_stats (public_key, first_seen, relayed_7d) VALUES (?, ?, ?)
+	// Prepared once: there can be tens of thousands of rows, and the
+	// ingest writer waits while this transaction holds writerMu.
+	insStat, err := tx.Prepare(`INSERT INTO mediamesh_node_stats (public_key, first_seen, relayed_7d) VALUES (?, ?, ?)
 			ON CONFLICT(public_key) DO UPDATE SET
 				first_seen = MIN(mediamesh_node_stats.first_seen, excluded.first_seen),
-				relayed_7d = excluded.relayed_7d`,
-			pk, time.Unix(ts, 0).UTC().Format(time.RFC3339), len(relayed[pk])); err != nil {
+				relayed_7d = excluded.relayed_7d`)
+	if err != nil {
+		return fail()
+	}
+	defer insStat.Close()
+	for pk, ts := range first {
+		if _, err := insStat.Exec(pk, time.Unix(ts, 0).UTC().Format(time.RFC3339), len(relayed[pk])); err != nil {
 			return fail()
 		}
 	}
@@ -729,25 +739,40 @@ func (s *Store) UpdateMediaMeshNodeStats(now time.Time) int {
 	if _, err := tx.Exec(`DELETE FROM mediamesh_edge`); err != nil {
 		return fail()
 	}
+	insEdge, err := tx.Prepare(`INSERT INTO mediamesh_edge (a, b, packets) VALUES (?, ?, ?)`)
+	if err != nil {
+		return fail()
+	}
+	defer insEdge.Close()
 	for k, hs := range edges {
-		if _, err := tx.Exec(`INSERT INTO mediamesh_edge (a, b, packets) VALUES (?, ?, ?)`, k.a, k.b, len(hs)); err != nil {
+		if _, err := insEdge.Exec(k.a, k.b, len(hs)); err != nil {
 			return fail()
 		}
 	}
 	if _, err := tx.Exec(`DELETE FROM mediamesh_node_clips`); err != nil {
 		return fail()
 	}
+	insClips, err := tx.Prepare(`INSERT INTO mediamesh_node_clips (public_key, clips_7d, estimated_7d) VALUES (?, ?, ?)`)
+	if err != nil {
+		return fail()
+	}
+	defer insClips.Close()
 	for pk, c := range clips {
 		n, estimated := c.count()
-		if _, err := tx.Exec(`INSERT INTO mediamesh_node_clips (public_key, clips_7d, estimated_7d) VALUES (?, ?, ?)`, pk, n, estimated); err != nil {
+		if _, err := insClips.Exec(pk, n, estimated); err != nil {
 			return fail()
 		}
 	}
 	if _, err := tx.Exec(`DELETE FROM mediamesh_node_daily`); err != nil {
 		return fail()
 	}
+	insDaily, err := tx.Prepare(`INSERT INTO mediamesh_node_daily (public_key, day, packets) VALUES (?, ?, ?)`)
+	if err != nil {
+		return fail()
+	}
+	defer insDaily.Close()
 	for k, hs := range daily {
-		if _, err := tx.Exec(`INSERT INTO mediamesh_node_daily (public_key, day, packets) VALUES (?, ?, ?)`, k.pk, k.day, len(hs)); err != nil {
+		if _, err := insDaily.Exec(k.pk, k.day, len(hs)); err != nil {
 			return fail()
 		}
 	}

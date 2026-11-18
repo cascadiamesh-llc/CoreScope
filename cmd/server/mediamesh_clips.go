@@ -253,13 +253,43 @@ func (s *Server) handleMediaMeshClips(w http.ResponseWriter, r *http.Request) {
 	if v, err := strconv.Atoi(r.URL.Query().Get("days")); err == nil && v >= 1 && v <= 28 {
 		days = v
 	}
-	now := time.Now().UTC()
-	out := &MediaMeshClips{To: now.Format(time.RFC3339), From: now.Add(-time.Duration(days) * 24 * time.Hour).Format(time.RFC3339),
-		Clips: []MediaMeshClip{}, Hours: []MediaMeshClipHour{}}
-	if s.store != nil {
-		s.store.mediaMeshClips(out.From, out)
+	build := func() interface{} {
+		now := time.Now().UTC()
+		out := &MediaMeshClips{To: now.Format(time.RFC3339), From: now.Add(-time.Duration(days) * 24 * time.Hour).Format(time.RFC3339),
+			Clips: []MediaMeshClip{}, Hours: []MediaMeshClipHour{}}
+		if s.store != nil {
+			s.store.mediaMeshClips(out.From, out)
+		}
+		return out
 	}
-	writeJSON(w, out)
+	if s.store == nil {
+		writeJSON(w, build())
+		return
+	}
+	writeJSON(w, s.store.cachedMediaMesh("mediamesh-clips|"+strconv.Itoa(days), build))
+}
+
+// mediaMeshEndpointTTL: how long a clips or replay answer is reused. Each
+// is a pass over every packet in memory, and the pages that ask (Insights,
+// the recap, the night sky, the kiosk) refetch at most once a minute.
+const mediaMeshEndpointTTL = 30 * time.Second
+
+// cachedMediaMesh is build's result, reused for mediaMeshEndpointTTL
+// through the shared analytics cache (rfCache).
+func (s *PacketStore) cachedMediaMesh(key string, build func() interface{}) interface{} {
+	s.cacheMu.Lock()
+	if c, ok := s.rfCache[key]; ok && time.Now().Before(c.expiresAt) {
+		s.cacheHits++
+		s.cacheMu.Unlock()
+		return c.data["result"]
+	}
+	s.cacheMisses++
+	s.cacheMu.Unlock()
+	res := build()
+	s.cacheMu.Lock()
+	s.rfCache[key] = &cachedResult{data: map[string]interface{}{"result": res}, expiresAt: time.Now().Add(mediaMeshEndpointTTL)}
+	s.cacheMu.Unlock()
+	return res
 }
 
 // mediaClipPayload is the clip bytes of a photo, video or voice packet's

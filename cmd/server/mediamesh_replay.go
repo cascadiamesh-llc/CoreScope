@@ -55,19 +55,21 @@ func (s *Server) handleMediaMeshReplay(w http.ResponseWriter, r *http.Request) {
 	if v, err := strconv.Atoi(r.URL.Query().Get("hours")); err == nil && v >= 1 && v <= 72 {
 		hours = v
 	}
-	now := time.Now().UTC()
-	out := &MediaMeshReplay{To: now.Format(time.RFC3339), Events: []MediaMeshReplayEvent{}, Announcements: []MediaMeshAnnouncement{}}
 	if s.store == nil {
-		out.From = out.To
-		writeJSON(w, out)
+		now := time.Now().UTC().Format(time.RFC3339)
+		writeJSON(w, &MediaMeshReplay{To: now, From: now, Events: []MediaMeshReplayEvent{}, Announcements: []MediaMeshAnnouncement{}})
 		return
 	}
-	since := now.Add(-time.Duration(hours) * time.Hour).Format(time.RFC3339)
-	s.store.mediaMeshReplay(since, out)
-	if out.From == "" {
-		out.From = since
-	}
-	writeJSON(w, out)
+	writeJSON(w, s.store.cachedMediaMesh("mediamesh-replay|"+strconv.Itoa(hours), func() interface{} {
+		now := time.Now().UTC()
+		out := &MediaMeshReplay{To: now.Format(time.RFC3339), Events: []MediaMeshReplayEvent{}, Announcements: []MediaMeshAnnouncement{}}
+		since := now.Add(-time.Duration(hours) * time.Hour).Format(time.RFC3339)
+		s.store.mediaMeshReplay(since, out)
+		if out.From == "" {
+			out.From = since
+		}
+		return out
+	}))
 }
 
 // trimHex keeps the first n hex characters of a payload field.

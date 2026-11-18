@@ -33,6 +33,10 @@ import (
 
 const (
 	mediaMeshFullReload = 10 * time.Minute
+	// The ingestor rebuilds the unknown repeaters, node stats, clips and
+	// backbone every half hour, so the per-tick refresh reads them at most
+	// this often rather than every second.
+	mediaMeshAuxReload = time.Minute
 	// A node's MediaMesh mark counts while its newest evidence is this recent.
 	mediaMeshEvidenceWindow = 7 * 24 * time.Hour
 	// A mark only from relaying MediaMesh (weaker evidence) fades sooner.
@@ -57,6 +61,7 @@ var (
 	mediaMeshEdges    atomic.Pointer[[]mediaMeshEdge]
 	mediaMeshDaily    atomic.Pointer[map[string]map[string]int]
 	mediaMeshMaxObsID int64
+	mediaMeshAuxAt    time.Time // last read of the half-hourly tables; under mediaMeshRefresh
 	mediaMeshNodes    atomic.Pointer[map[string]MediaMeshNode]
 	mediaMeshNodesTS  string     // newest last_seen loaded (incremental watermark)
 	mediaMeshRefresh  sync.Mutex // one refresh at a time
@@ -478,21 +483,8 @@ func refreshMediaMesh(conn *sql.DB, full bool) {
 		log.Printf("[mediamesh] main-radio copies: %v", err)
 		return
 	}
-	if unknown, err := loadMediaMeshUnknown(conn); err != nil {
-		log.Printf("[mediamesh] unknown repeaters: %v", err)
-	} else {
-		mediaMeshUnknown.Store(&unknown)
-	}
-	if stats, err := loadMediaMeshNodeStats(conn); err != nil {
-		log.Printf("[mediamesh] node stats: %v", err)
-	} else {
-		mediaMeshStats.Store(&stats)
-	}
-	if edges, daily, err := loadMediaMeshBackbone(conn); err != nil {
-		log.Printf("[mediamesh] backbone: %v", err)
-	} else {
-		mediaMeshEdges.Store(&edges)
-		mediaMeshDaily.Store(&daily)
+	if full || time.Since(mediaMeshAuxAt) >= mediaMeshAuxReload {
+		refreshMediaMeshAux(conn)
 	}
 	nodes, newest, err := loadMediaMeshNodes(conn, sinceTS)
 	if err != nil {
@@ -530,6 +522,28 @@ func refreshMediaMesh(conn *sql.DB, full bool) {
 			}
 		}
 		mediaMeshNodes.Store(&merged)
+	}
+}
+
+// refreshMediaMeshAux reads the tables the ingestor rebuilds every half
+// hour: unknown repeaters, node stats and clips, backbone and daily counts.
+func refreshMediaMeshAux(conn *sql.DB) {
+	mediaMeshAuxAt = time.Now()
+	if unknown, err := loadMediaMeshUnknown(conn); err != nil {
+		log.Printf("[mediamesh] unknown repeaters: %v", err)
+	} else {
+		mediaMeshUnknown.Store(&unknown)
+	}
+	if stats, err := loadMediaMeshNodeStats(conn); err != nil {
+		log.Printf("[mediamesh] node stats: %v", err)
+	} else {
+		mediaMeshStats.Store(&stats)
+	}
+	if edges, daily, err := loadMediaMeshBackbone(conn); err != nil {
+		log.Printf("[mediamesh] backbone: %v", err)
+	} else {
+		mediaMeshEdges.Store(&edges)
+		mediaMeshDaily.Store(&daily)
 	}
 }
 

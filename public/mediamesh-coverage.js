@@ -281,43 +281,23 @@
    * NaN where there is no terrain data.
    */
   function buildJob(rep, radio, elevAt, mode, g) {
-    const c = CONFIG;
+    const job = prepareJob(rep, radio, elevAt, mode, g);
+    sampleRays(job, elevAt, 0, job.rays);
+    return job;
+  }
+
+  /**
+   * buildJob without the terrain along the rays (elev and peak are left
+   * NaN for sampleRays to fill): everything the raster depends on besides
+   * the terrain, so it also identifies a raster already worked out.
+   */
+  function prepareJob(rep, radio, elevAt, mode, g, bare) {
     const dist = sampleDistances(mode);
     const n = dist.length, rays = mode.rays;
-    const elev = new Float32Array(rays * n), peak = new Float32Array(rays * n);
+    // bare: no room for the terrain yet (see withTerrainArrays)
+    const elev = bare ? null : new Float32Array(rays * n).fill(NaN), peak = bare ? null : new Float32Array(rays * n).fill(NaN);
     const txGround = elevAt(rep.lat, rep.lon);
     const mPerDegLon = M_PER_DEG_LAT * Math.cos(rep.lat * Math.PI / 180);
-    if (Number.isFinite(txGround)) {
-      // Where each sample's stretch starts and ends, and how many extra
-      // looks it takes to cover it at stepM.
-      const lo = new Float64Array(n), sub = new Int32Array(n), gap = new Float64Array(n);
-      for (let i = 0; i < n; i++) {
-        const before = i ? (dist[i] - dist[i - 1]) / 2 : 0;
-        const after = i < n - 1 ? (dist[i + 1] - dist[i]) / 2 : before;
-        const k = Math.ceil((before + after) / mode.stepM - 1e-9);
-        lo[i] = dist[i] - before; sub[i] = k > 1 ? k : 0; gap[i] = k > 1 ? (before + after) / k : 0;
-      }
-      for (let a = 0; a < rays; a++) {
-        const az = (a / rays) * 2 * Math.PI;
-        const kLat = Math.cos(az) / M_PER_DEG_LAT, kLon = Math.sin(az) / mPerDegLon;
-        const off = a * n;
-        let i = 0;
-        for (; i < n; i++) {
-          const e = elevAt(rep.lat + dist[i] * kLat, rep.lon + dist[i] * kLon);
-          if (!Number.isFinite(e)) break;
-          let p = e;
-          for (let m = 0; m < sub[i]; m++) {
-            const dd = lo[i] + (m + 0.5) * gap[i];
-            const e2 = elevAt(rep.lat + dd * kLat, rep.lon + dd * kLon);
-            if (e2 > p) p = e2;
-          }
-          elev[off + i] = e; peak[off + i] = p;
-        }
-        for (; i < n; i++) { elev[off + i] = NaN; peak[off + i] = NaN; }
-      }
-    } else {
-      elev.fill(NaN); peak.fill(NaN);
-    }
     // The part of the grid within the radius of this repeater.
     const padLat = mode.radiusKm * 1000 / M_PER_DEG_LAT, padLon = mode.radiusKm * 1000 / mPerDegLon;
     const col0 = Math.max(0, Math.floor((rep.lon - padLon - g.bounds.west) / g.cellLon));
@@ -331,8 +311,56 @@
       budgetDb: budgetDb(mode, radio), radiusM: mode.radiusKm * 1000,
       lat: rep.lat, lon: rep.lon, mPerDegLon,
       col0, row0, w: Math.max(0, col1 - col0 + 1), h: Math.max(0, row1 - row0 + 1),
-      west: g.bounds.west, north: g.bounds.north, cellLat: g.cellLat, cellLon: g.cellLon,
+      west: g.bounds.west, north: g.bounds.north, cellLat: g.cellLat, cellLon: g.cellLon, stepM: mode.stepM,
     };
+  }
+
+  function withTerrainArrays(job) {
+    job.elev = new Float32Array(job.rays * job.n).fill(NaN);
+    job.peak = new Float32Array(job.rays * job.n).fill(NaN);
+    return job;
+  }
+
+  /**
+   * Fills rays a0 to a1 (not included) of a prepared job with the terrain
+   * they cross: elev, the ground at each sample, and peak, the highest
+   * ground of the stretch the sample stands for. Left NaN past the end of
+   * the terrain data, and everywhere without ground under the repeater.
+   */
+  function sampleRays(job, elevAt, a0, a1) {
+    const { n, dist, elev, peak, rays, lat, lon, mPerDegLon, stepM } = job;
+    if (!Number.isFinite(job.txGround)) return;
+    // Where each sample's stretch starts and ends, and how many extra looks
+    // it takes to cover it at stepM.
+    let lo = job._lo, sub = job._sub, gap = job._gap;
+    if (!lo) {
+      lo = new Float64Array(n); sub = new Int32Array(n); gap = new Float64Array(n);
+      for (let i = 0; i < n; i++) {
+        const before = i ? (dist[i] - dist[i - 1]) / 2 : 0;
+        const after = i < n - 1 ? (dist[i + 1] - dist[i]) / 2 : before;
+        const k = Math.ceil((before + after) / stepM - 1e-9);
+        lo[i] = dist[i] - before; sub[i] = k > 1 ? k : 0; gap[i] = k > 1 ? (before + after) / k : 0;
+      }
+      Object.defineProperty(job, '_lo', { value: lo, configurable: true });
+      Object.defineProperty(job, '_sub', { value: sub, configurable: true });
+      Object.defineProperty(job, '_gap', { value: gap, configurable: true });
+    }
+    for (let a = a0; a < a1; a++) {
+      const az = (a / rays) * 2 * Math.PI;
+      const kLat = Math.cos(az) / M_PER_DEG_LAT, kLon = Math.sin(az) / mPerDegLon;
+      const off = a * n;
+      for (let i = 0; i < n; i++) {
+        const e = elevAt(lat + dist[i] * kLat, lon + dist[i] * kLon);
+        if (!Number.isFinite(e)) break;
+        let p = e;
+        for (let m = 0; m < sub[i]; m++) {
+          const dd = lo[i] + (m + 0.5) * gap[i];
+          const e2 = elevAt(lat + dd * kLat, lon + dd * kLon);
+          if (e2 > p) p = e2;
+        }
+        elev[off + i] = e; peak[off + i] = p;
+      }
+    }
   }
 
   /**
@@ -514,20 +542,123 @@
     const run = opts && opts.run;
     let done = 0;
     const pending = [];
+    let slice = now();
+    // Hands the page back every few milliseconds, so it stays responsive.
+    const breathe = async () => {
+      if (now() - slice < SLICE_MS) return;
+      await new Promise((res) => setTimeout(res, 0));
+      slice = now();
+    };
     for (let ri = 0; ri < reps.length; ri++) {
       const make = () => buildJob(reps[ri], radios[ri], elevAt, mode, g);
-      const job = make();
+      const job = prepareJob(reps[ri], radios[ri], elevAt, mode, g, true);
       const rect = { col0: job.col0, row0: job.row0, w: job.w, h: job.h };
-      const result = run ? run(job, make) : Promise.resolve(repRaster(job));
+      const key = rasterKey(job, modeKey);
+      const saved = key && await rasterStore.get(key);
+      let result;
+      if (saved && saved.length === job.w * job.h) {
+        result = Promise.resolve(saved);
+      } else {
+        withTerrainArrays(job);
+        for (let a = 0; a < job.rays; a += RAYS_PER_STEP) {
+          sampleRays(job, elevAt, a, Math.min(job.rays, a + RAYS_PER_STEP));
+          await breathe();
+        }
+        result = (run ? run(job, make) : Promise.resolve(repRaster(job)))
+          .then((data) => { if (key) rasterStore.put(key, data); return data; });
+      }
       pending.push(result.then((data) => {
         if (onProgress) onProgress(++done, reps.length);
         return Object.assign(rect, { data });
       }));
-      await new Promise((res) => setTimeout(res, 0));
+      await breathe();
     }
     const rasters = await Promise.all(pending);
     return merge({ rasters, reps, radios, width: g.width, height: g.height, bounds: g.bounds, modeKey, water: waterMask(g, elevAt) });
   }
+
+  const SLICE_MS = 12, RAYS_PER_STEP = 16;
+  const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
+  /**
+   * What identifies a repeater's raster besides the terrain, which is the
+   * same tiles for the same place: the model (this file's version, from its
+   * ?v= on the page) and every number the job carries. '' when the version
+   * is unknown (tests, workers): nothing is kept then.
+   */
+  function rasterKey(job, modeKey) {
+    const v = /[?&]v=([^&]+)/.exec(SCRIPT_URL);
+    if (!v) return '';
+    const parts = [v[1], modeKey, CONFIG.terrainUrl];
+    for (const k of Object.keys(job).sort()) {
+      const x = job[k];
+      if (typeof x === 'number' || typeof x === 'string') parts.push(k + '=' + x);
+    }
+    return parts.join('|');
+  }
+
+  /**
+   * Rasters already worked out, kept in the browser (IndexedDB) so the
+   * estimate comes back at once on the next visit. Best effort: anything
+   * that fails just means working it out again. Holds the most recent
+   * RASTERS_KEPT.
+   */
+  const RASTERS_KEPT = 400;
+  const rasterStore = (() => {
+    let dbp = null;
+    const open = () => {
+      if (dbp) return dbp;
+      dbp = new Promise((res) => {
+        try {
+          if (!root.indexedDB) return res(null);
+          const rq = root.indexedDB.open('mm-coverage', 1);
+          rq.onupgradeneeded = () => { const os = rq.result.createObjectStore('rasters'); os.createIndex('at', 'at'); };
+          rq.onsuccess = () => res(rq.result);
+          rq.onerror = () => res(null);
+          rq.onblocked = () => res(null);
+        } catch (_) { res(null); }
+      });
+      return dbp;
+    };
+    const tx = async (mode, fn) => {
+      const db = await open();
+      if (!db) return null;
+      return new Promise((res) => {
+        try {
+          const t = db.transaction('rasters', mode);
+          const out = fn(t.objectStore('rasters'));
+          t.oncomplete = () => res(out && 'result' in out ? out.result : null);
+          t.onerror = t.onabort = () => res(null);
+        } catch (_) { res(null); }
+      });
+    };
+    let puts = 0;
+    return {
+      async get(key) {
+        const rec = await tx('readonly', (os) => os.get(key));
+        return rec && rec.data instanceof Int16Array ? rec.data : null;
+      },
+      put(key, data) {
+        tx('readwrite', (os) => { os.put({ at: Date.now(), data }, key); });
+        // now and then, forget the oldest beyond RASTERS_KEPT
+        if (++puts % 20 === 1) {
+          tx('readwrite', (os) => {
+            const count = os.count();
+            count.onsuccess = () => {
+              let extra = count.result - RASTERS_KEPT;
+              if (extra <= 0) return;
+              os.index('at').openCursor().onsuccess = (e) => {
+                const c = e.target.result;
+                if (!c || extra-- <= 0) return;
+                c.delete(); c.continue();
+              };
+            };
+          });
+        }
+      },
+    };
+  })();
+
 
   // ---- Workers ----------------------------------------------------------------
 
@@ -1009,6 +1140,11 @@
   /** The coverage as an image for the map; rgb: another colour (the main
    * mesh's in the comparison); keep(i): only some cells. */
   function coverageImage(cov, rgbIn, keep) {
+    return coverageCanvas(cov, rgbIn, keep).toDataURL();
+  }
+
+  /** coverageImage as a canvas, for canvasOverlay. */
+  function coverageCanvas(cov, rgbIn, keep) {
     const cv = document.createElement('canvas');
     cv.width = cov.width; cv.height = cov.height;
     const ctx = cv.getContext('2d');
@@ -1027,7 +1163,18 @@
       }
     }
     ctx.putImageData(img, 0, 0);
-    return cv.toDataURL();
+    return cv;
+  }
+
+  /**
+   * A Leaflet overlay of a canvas, placed on the map as it is: Leaflet's SVG
+   * overlay positions whatever element it is given. Encoding the picture
+   * instead (toDataURL) froze the page for a few hundred milliseconds on a
+   * big estimate. An image overlay where that layer is missing.
+   */
+  function canvasOverlay(Lf, cv, latLngBounds, layerOpts) {
+    if (typeof Lf.svgOverlay === 'function') return Lf.svgOverlay(cv, latLngBounds, layerOpts);
+    return Lf.imageOverlay(cv.toDataURL(), latLngBounds, layerOpts);
   }
 
   /** The legend's gradient, matching rampColor. */
@@ -1104,35 +1251,56 @@
    * alone. */
   function unionKm2(cov, mask) {
     if (!cov || !cov.rasters) return 0;
+    // The same answer is asked for several times (the stats, the recap, the
+    // 3D view, the comparison): worked out once per cov and mask.
+    let memo = areaMemo.get(cov);
+    if (!memo || memo.rasters !== cov.rasters || memo.water !== cov.water) {
+      memo = { rasters: cov.rasters, water: cov.water, union: new Map(), each: null };
+      areaMemo.set(cov, memo);
+    }
+    const mk = mask && !mask.every(Boolean) ? mask.map((m) => (m ? 1 : 0)).join('') : '*';
+    if (memo.union.has(mk)) return memo.union.get(mk);
     const hit = new Uint8Array(cov.width * cov.height);
+    const water = cov.water;
     let n = 0;
     cov.rasters.forEach((r, ri) => {
-      if (!r || !r.data || (mask && !mask[ri])) return;
+      if (!r || !r.data || (mk !== '*' && !mask[ri])) return;
+      const data = r.data;
       for (let y = 0; y < r.h; y++) {
         let i = (r.row0 + y) * cov.width + r.col0, k = y * r.w;
         for (let x = 0; x < r.w; x++, i++, k++) {
-          const t = r.data[k];
-          if (t !== NO_DATA_I16 && t >= 0 && !hit[i] && isLand(cov, i)) { hit[i] = 1; n++; }
+          const t = data[k];
+          if (t >= 0 && !hit[i] && !(water && water[i])) { hit[i] = 1; n++; }
         }
       }
     });
-    return n * cellAreaKm2(cov);
+    const km2 = n * cellAreaKm2(cov);
+    memo.union.set(mk, km2);
+    return km2;
   }
+  const areaMemo = new WeakMap();
+
 
   /** km² each repeater covers on its own, by index into cov.reps. */
   function repAreasKm2(cov) {
     if (!cov || !cov.rasters) return [];
-    const a = cellAreaKm2(cov);
-    return cov.rasters.map((r) => {
+    unionKm2(cov); // sets up the memo
+    const memo = areaMemo.get(cov);
+    if (memo.each) return memo.each.slice();
+    const a = cellAreaKm2(cov), water = cov.water;
+    memo.each = cov.rasters.map((r) => {
       if (!r || !r.data) return 0;
+      const data = r.data;
       let n = 0;
       for (let y = 0; y < r.h; y++) {
         let i = (r.row0 + y) * cov.width + r.col0, k = y * r.w;
-        for (let x = 0; x < r.w; x++, i++, k++) if (r.data[k] !== NO_DATA_I16 && r.data[k] >= 0 && isLand(cov, i)) n++;
+        for (let x = 0; x < r.w; x++, i++, k++) if (data[k] >= 0 && !(water && water[i])) n++;
       }
       return n * a;
     });
+    return memo.each.slice();
   }
+
 
   /**
    * What a planned repeater adds: { newKm2 (covered by it and by nothing
@@ -1195,7 +1363,31 @@
    * holds every repeater's raster (placed order = first's order).
    */
   function areaHistory(cov, first, steps) {
-    return steps.map((st) => ({ t: st.t, count: st.count, km2: unionKm2(cov, presentAt(first, st.t)) }));
+    if (!cov || !cov.rasters) return steps.map((st) => ({ t: st.t, count: st.count, km2: 0 }));
+    // Repeaters only ever join as the days go on, so each step adds the
+    // newcomers' cells to the last step's: one pass over every raster in all,
+    // not one per day.
+    const order = steps.map((st, k) => k).sort((x, y) => steps[x].t - steps[y].t);
+    const hit = new Uint8Array(cov.width * cov.height), water = cov.water, added = new Uint8Array(cov.rasters.length);
+    const a = cellAreaKm2(cov), out = new Array(steps.length);
+    let n = 0;
+    order.forEach((k) => {
+      const here = presentAt(first, steps[k].t);
+      cov.rasters.forEach((r, ri) => {
+        if (added[ri] || !here[ri]) return;
+        added[ri] = 1;
+        if (!r || !r.data) return;
+        const data = r.data;
+        for (let y = 0; y < r.h; y++) {
+          let i = (r.row0 + y) * cov.width + r.col0, j = y * r.w;
+          for (let x = 0; x < r.w; x++, i++, j++) {
+            if (data[j] >= 0 && !hit[i] && !(water && water[i])) { hit[i] = 1; n++; }
+          }
+        }
+      });
+      out[k] = { t: steps[k].t, count: steps[k].count, km2: n * a };
+    });
+    return out;
   }
 
   /**
@@ -1851,7 +2043,7 @@
       if (overlay) { map.removeLayer(overlay); overlay = null; }
       if (!shown) return;
       const b = shown.bounds;
-      overlay = L.imageOverlay(coverageImage(shown), [[b.south, b.west], [b.north, b.east]],
+      overlay = canvasOverlay(L, coverageCanvas(shown), [[b.south, b.west], [b.north, b.east]],
         { pane: 'mmCoverage', opacity, className: 'mm-cov-overlay' }).addTo(map);
     }
     // The repeaters drawn: those counted in the picker, and during the
@@ -2070,7 +2262,7 @@
     terrainPlan, loadTerrainLevels, loadTerrain, rampColor, edgeFade, cellAt, cellCenter, readout,
     fitCalibration, calibrationText, setCalibration, getCalibration, CAL,
     backboneWeight, backboneTip, areaHistory, footprint, coverageImage, legendGradient,
-    growthSteps, presentAt, antennaHeight, cellAreaKm2, coveredKm2, unionKm2, repAreasKm2, planGain, planLinks, planHtml, PLAN_RGB,
+    growthSteps, presentAt, antennaHeight, coverageCanvas, canvasOverlay, cellAreaKm2, coveredKm2, unionKm2, repAreasKm2, planGain, planLinks, planHtml, PLAN_RGB,
     repNotes, repArea, repGroups, repSummaryHtml, repPanelHtml, repAction, assumptionsHtml, linkRows, linksTableHtml, init,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

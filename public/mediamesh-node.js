@@ -101,7 +101,7 @@
       if (!fp) { if (areaEl) areaEl.innerHTML = '<span class="text-muted">no terrain data</span>'; return map; }
       const b = fp.cov.bounds;
       M.merge(fp.cov);
-      L.imageOverlay(M.coverageImage(fp.cov), [[b.south, b.west], [b.north, b.east]], { pane: 'mmCoverage', className: 'mm-cov-overlay' }).addTo(map);
+      (M.canvasOverlay ? M.canvasOverlay(L, M.coverageCanvas(fp.cov), [[b.south, b.west], [b.north, b.east]], { pane: 'mmCoverage', className: 'mm-cov-overlay' }) : L.imageOverlay(M.coverageImage(fp.cov), [[b.south, b.west], [b.north, b.east]], { pane: 'mmCoverage', className: 'mm-cov-overlay' })).addTo(map);
       if (areaEl) areaEl.innerHTML = `${km(fp.km2)} km² <span class="text-muted">for people on the ground</span>`;
     } catch (_) {
       if (areaEl) areaEl.innerHTML = '<span class="text-muted">couldn\'t be worked out</span>';
