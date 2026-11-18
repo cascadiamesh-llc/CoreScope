@@ -1468,6 +1468,7 @@
             <span id="multibyteDesc" class="sr-only">Show only multibyte (≥2-byte path-hash) packets; hide unreliable single-byte traffic</span>
             <label class="live-mediamesh-toggle"><input type="checkbox" id="liveMediaMeshToggle" aria-describedby="mediaMeshDesc"> MediaMesh only</label>
             <span id="mediaMeshDesc" class="sr-only">Show only packets carried on MediaMesh (radio2), the photo and voice radio profile</span>
+            <button type="button" class="live-nightsky-btn" id="liveNightSkyBtn" title="Full-screen night sky of MediaMesh photos, video and voice"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-moon-stars"/></svg> Night sky</button>
             <label id="liveGeoFilterLabel" style="display:none"><input type="checkbox" id="liveGeoFilterToggle"> Mesh live area</label>
             </div>
             <div class="live-toggles">
@@ -2203,6 +2204,8 @@
         if (item) { e.preventDefault(); item.click(); }
       }
     });
+    const nightSkyBtn = document.getElementById('liveNightSkyBtn');
+    if (nightSkyBtn) nightSkyBtn.addEventListener('click', openNightSky);
     const feedHideBtn = document.getElementById('feedHideBtn');
     const feedShowBtn = document.getElementById('feedShowBtn');
     if (localStorage.getItem('live-feed-hidden') === 'true') {
@@ -3731,6 +3734,9 @@
       }
     }
 
+    // --- Night sky: MediaMesh media as comets, everything else as embers ---
+    if (window.LiveNightSky && LiveNightSky.isOpen()) feedNightSky(allPaths, typeName, payload);
+
     // --- Animate all unique paths simultaneously ---
     // First path gets audio sync hook, rest are visual-only
     var pktMeta = { hash: first.hash, ts: first._ts || Date.now() };
@@ -4883,6 +4889,70 @@
         }
       }
     }
+  }
+
+  // ---- Night sky (live-nightsky.js) ----
+
+  // The clip a MediaMesh packet belongs to, as the night sky counts it:
+  // { key, kind ('photo' | 'video' | 'voice' | 'clip'), seconds }, or null
+  // for a packet that isn't a photo, video or voice. announced: sid ->
+  // announcement (mmAnnounced, or the replay's own).
+  function mediaMeshSkyClip(typeName, payload, hops, announced) {
+    const clip = mediaMeshClipOf(typeName, payload);
+    if (!clip) return null;
+    let sid = clip.sid;
+    if (sid && !announced.has(sid) && announced.has(mediaMeshParitySid(sid))) sid = mediaMeshParitySid(sid);
+    const a = sid ? announced.get(sid) : null;
+    return {
+      key: mediaMeshTransferKey(sid, payload, hops),
+      kind: clip.talk ? 'voice' : (a ? a.kind : 'clip'),
+      seconds: a ? a.seconds : 0,
+    };
+  }
+
+  function nightSkyHops(hopPositions) {
+    return hopPositions.filter((h) => h && h.pos).map((h) => ({ lat: h.pos[0], lon: h.pos[1], name: h.name || '' }));
+  }
+
+  function feedNightSky(allPaths, typeName, payload) {
+    for (const p of allPaths) {
+      const hops = nightSkyHops(p.hopPositions);
+      if (!hops.length) continue;
+      const clip = p.mediamesh ? mediaMeshSkyClip(typeName, payload, (p.key || '').split(','), mmAnnounced) : null;
+      if (clip && hops.length >= 2) LiveNightSky.packet(Object.assign({ hops }, clip));
+      else LiveNightSky.ember(hops[0].lat, hops[0].lon);
+    }
+  }
+
+  function openNightSky() {
+    if (!window.LiveNightSky) return;
+    const nodes = () => Object.values(nodeData).filter((n) => Number.isFinite(n.lat) && Number.isFinite(n.lon) && !(n.lat === 0 && n.lon === 0))
+      .map((n) => ({ lat: n.lat, lon: n.lon, name: n.name, star: !!(window.MediaMesh && window.MediaMesh.info(n)) }));
+    LiveNightSky.open({
+      nodes,
+      focus: () => { const s = nodes().filter((n) => n.star); return s.length >= 2 ? s : nodes(); },
+      onReplay: replayNightSky,
+    });
+  }
+
+  // "A day in a minute": the last 24 hours' photos, video and voice.
+  async function replayNightSky() {
+    let data;
+    try { data = await api('/analytics/mediamesh/replay?hours=24', { ttl: 60000 }); } catch (_) { return; }
+    if (!data || !window.LiveNightSky || !LiveNightSky.isOpen()) return;
+    const announced = new Map();
+    (data.announcements || []).forEach((a) => { const p = mediaMeshParseAnnouncement(a.text); if (p) announced.set(p.sid, p); });
+    const events = [];
+    for (const ev of data.events || []) {
+      const hops = nightSkyHops(resolveHopPositions(ev.path || [], {}, null));
+      if (hops.length < 2) continue;
+      const clip = mediaMeshSkyClip(ev.type, ev, ev.path || [], announced);
+      if (!clip) continue;
+      events.push(Object.assign({ t: Date.parse(ev.ts), hops }, clip));
+    }
+    const from = Date.parse(data.from), to = Date.parse(data.to);
+    const hours = Math.max(1, Math.round((to - from) / 3600000));
+    LiveNightSky.replay(events, { from, to, durationMs: 60000, label: `The last ${hours} hour${hours === 1 ? '' : 's'} in a minute` });
   }
 
   // Open MediaMesh transfers, newest last, and the clips announced lately

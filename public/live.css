@@ -1557,3 +1557,39 @@ input.live-node-filter-input:focus {
 .live-mm-transfer-chunks b { font-size: 0.75em; font-weight: 600; color: var(--text-muted); margin-left: 2px; }
 @keyframes live-mm-next { from { opacity: 0.35; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .live-mm-transfer-chunks i.next { animation: none; } }
+
+/* Night sky (live-nightsky.js): a full-screen dark view, the same in either
+   theme, so its colours are its own. */
+.live-nightsky-btn { font: inherit; display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--mediamesh-path-color); background: transparent; color: var(--mediamesh-text-color, var(--text)); cursor: pointer; }
+.live-nightsky-btn:hover { background: color-mix(in srgb, var(--mediamesh-path-color) 14%, transparent); }
+.nightsky { position: fixed; inset: 0; z-index: 10000; background: #03050b; color: #e6e9ef; font-family: Inter, system-ui, sans-serif; overflow: hidden; }
+.nightsky-canvas { position: absolute; inset: 0; display: block; }
+.nightsky-brand { position: absolute; left: 32px; top: 26px; font-size: 14px; letter-spacing: 0.22em; color: #9aa4b6; }
+.nightsky-brand b { color: #f0abfc; font-weight: 600; }
+.nightsky-clock { position: absolute; right: 32px; top: 20px; text-align: right; font-size: 34px; font-weight: 300; font-variant-numeric: tabular-nums; letter-spacing: 0.04em; color: #e6e9ef; }
+.nightsky-clock small { display: block; font-size: 12px; letter-spacing: 0.18em; color: #8b93a7; margin-top: 2px; }
+.nightsky-counters { position: absolute; left: 32px; bottom: 28px; display: flex; gap: 32px; }
+.nightsky-counters div { font-size: 30px; font-weight: 300; font-variant-numeric: tabular-nums; color: #e6e9ef; }
+.nightsky-counters small { display: block; font-size: 11px; letter-spacing: 0.18em; color: #8b93a7; text-transform: uppercase; margin-top: 2px; }
+.nightsky-ticker { position: absolute; right: 32px; bottom: 28px; text-align: right; font-size: 14px; line-height: 1.7; color: #cbd5e1; max-width: 46vw; }
+.nightsky-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--c, #f0abfc); margin-right: 6px; vertical-align: 1px; }
+.nightsky-muted { color: #8b93a7; }
+.nightsky-controls { position: absolute; left: 50%; top: 22px; transform: translateX(-50%); display: flex; gap: 8px; opacity: 0.6; transition: opacity 0.2s; }
+.nightsky:hover .nightsky-controls, .nightsky-controls:focus-within { opacity: 1; }
+.nightsky-controls button { font: inherit; font-size: 13px; padding: 5px 14px; border-radius: 999px; border: 1px solid rgba(240, 171, 252, 0.6); background: rgba(15, 18, 32, 0.8); color: #f5d0fe; cursor: pointer; }
+.nightsky-controls button:hover { background: rgba(240, 171, 252, 0.18); }
+.nightsky-controls button:focus-visible { outline: 2px solid #f0abfc; outline-offset: 2px; }
+.nightsky-replay { position: absolute; left: 50%; top: 64px; transform: translateX(-50%); width: min(420px, 70vw); text-align: center; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: #cbd5e1; }
+.nightsky-replay[hidden] { display: block; visibility: hidden; }
+.nightsky-replay i { display: block; height: 3px; margin-top: 6px; border-radius: 2px; background: rgba(255, 255, 255, 0.12); overflow: hidden; }
+.nightsky-replay b { display: block; height: 100%; width: 0; background: #f0abfc; }
+@media (max-width: 640px) {
+  .nightsky-counters { gap: 10px 18px; left: 16px; right: 16px; bottom: 16px; flex-wrap: wrap; }
+  .nightsky-controls { top: 78px; opacity: 1; }
+  .nightsky-controls button { white-space: nowrap; }
+  .nightsky-replay { top: 120px; }
+  .nightsky-counters div { font-size: 20px; }
+  .nightsky-ticker { display: none; }
+  .nightsky-clock { right: 16px; font-size: 24px; }
+  .nightsky-brand { left: 16px; font-size: 11px; }
+}
