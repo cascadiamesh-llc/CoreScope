@@ -458,9 +458,59 @@ func (s *Store) UpdateMediaMeshPrefixNeighbours(now time.Time) int {
 	return written
 }
 
+// mediaMeshTrustedHops keeps the hops of a MediaMesh observation that say
+// the packet travelled on MediaMesh through that node, by the same rules as
+// relayed marks: a flood (a direct route's path is still to travel), hops
+// after any the main mesh also heard the packet through (a repeater with
+// radio2.cross on copies main-mesh floods onto radio2, path and all), and 2-
+// or 3-byte hashes (1-byte ones match too many nodes). The rest become nil,
+// so they are neither credited nor linked. resolved must be as long as hops.
+func mediaMeshTrustedHops(data *PacketData, hops []string, resolved []*string, mainPaths [][]string) []*string {
+	out := make([]*string, len(resolved))
+	if !pathHopsTransmitted(data) {
+		return out
+	}
+	onMain := mainMeshPathPrefix(hops, mainPaths)
+	for i, r := range resolved {
+		if r != nil && i >= onMain && len(hops[i]) >= 2*mediaMeshRelayedMinHashBytes {
+			out[i] = r
+		}
+	}
+	return out
+}
+
+// mainMeshPathsSince is mainMeshPaths for every packet with a MediaMesh
+// observation since the given time, by transmission id.
+func (s *Store) mainMeshPathsSince(since int64) (map[int64][][]string, error) {
+	rows, err := s.db.Query(`SELECT o.transmission_id, o.path_json FROM observations o
+		LEFT JOIN observation_mediamesh m ON m.observation_id = o.id
+		LEFT JOIN observation_mainmesh mm ON mm.observation_id = o.id
+		WHERE o.transmission_id IN (SELECT o2.transmission_id FROM observation_mediamesh m2
+				JOIN observations o2 ON o2.id = m2.observation_id WHERE o2.timestamp >= ?)
+		  AND (m.observation_id IS NULL OR mm.observation_id IS NOT NULL)
+		  AND o.path_json IS NOT NULL AND o.path_json != '[]'`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64][][]string{}
+	for rows.Next() {
+		var id int64
+		var pj string
+		if err := rows.Scan(&id, &pj); err != nil {
+			return nil, err
+		}
+		if hops := parsePathArray(pj); len(hops) > 0 {
+			out[id] = append(out[id], hops)
+		}
+	}
+	return out, rows.Err()
+}
+
 // UpdateMediaMeshNodeStats rebuilds mediamesh_node_stats from the stored
-// MediaMesh photo and voice packets (GRP_DATA, RAW_CUSTOM): for every node
-// that relayed one (a resolved hop of its path) or heard one (the observer),
+// MediaMesh photo and voice packets (GRP_DATA, RAW_CUSTOM that carry media):
+// for every node that relayed one (a hop mediaMeshTrustedHops keeps) or heard
+// one (the observer),
 // the earliest time, kept if earlier than the stored one; and the number of
 // different packets each relayed in the last week. Also rebuilds the
 // backbone (mediamesh_edge: who passed packets to whom this week) and the
@@ -468,14 +518,21 @@ func (s *Store) UpdateMediaMeshPrefixNeighbours(now time.Time) int {
 // some other way (a status report) get first_seen = their mark's time the
 // first time round. Returns the number of nodes with a row.
 func (s *Store) UpdateMediaMeshNodeStats(now time.Time) int {
-	rows, err := s.db.Query(`SELECT t.hash, COALESCE(o.path_json, ''), COALESCE(o.resolved_path, ''),
+	since := now.Add(-mediaMeshNodeRetention).Unix()
+	mainPaths, err := s.mainMeshPathsSince(since)
+	if err != nil {
+		log.Printf("[mediamesh] node stats main paths: %v", err)
+		return 0
+	}
+	rows, err := s.db.Query(`SELECT t.id, t.hash, t.payload_type, t.route_type, COALESCE(t.decoded_json, ''),
+			COALESCE(o.path_json, ''), COALESCE(o.resolved_path, ''),
 			COALESCE(obs.id, ''), COALESCE(o.direction, ''), o.timestamp
 		FROM observation_mediamesh m
 		JOIN observations o ON o.id = m.observation_id
 		JOIN transmissions t ON t.id = o.transmission_id
 		LEFT JOIN observers obs ON obs.rowid = o.observer_idx
 		WHERE o.timestamp >= ? AND t.payload_type IN (?, ?)`,
-		now.Add(-mediaMeshNodeRetention).Unix(), payloadGrpData, payloadRawCustom)
+		since, payloadGrpData, payloadRawCustom)
 	if err != nil {
 		log.Printf("[mediamesh] node stats: %v", err)
 		return 0
@@ -512,17 +569,26 @@ func (s *Store) UpdateMediaMeshNodeStats(now time.Time) int {
 		}
 	}
 	for rows.Next() {
-		var hash, pj, rj, observer, dir string
-		var ts int64
-		if rows.Scan(&hash, &pj, &rj, &observer, &dir, &ts) != nil {
+		var d PacketData
+		var txID, ts int64
+		var rj, dir string
+		if rows.Scan(&txID, &d.Hash, &d.PayloadType, &d.RouteType, &d.DecodedJSON, &d.PathJSON, &rj, &d.ObserverID, &dir, &ts) != nil {
+			continue
+		}
+		if dir != "" {
+			d.Direction = &dir
+		}
+		hash, observer := d.Hash, d.ObserverID
+		if !mediaMeshCarriesMedia(&d) {
 			continue
 		}
 		see(observer, ts)
-		hops := parsePathArray(pj)
+		hops := parsePathArray(d.PathJSON)
 		var resolved []*string
 		if rj == "" || json.Unmarshal([]byte(rj), &resolved) != nil || len(resolved) != len(hops) {
 			continue
 		}
+		resolved = mediaMeshTrustedHops(&d, hops, resolved, mainPaths[txID])
 		day := time.Unix(ts, 0).UTC().Format("2006-01-02")
 		for i, r := range resolved {
 			if r == nil {
