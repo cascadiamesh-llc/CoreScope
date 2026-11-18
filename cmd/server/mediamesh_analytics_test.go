@@ -460,3 +460,43 @@ func TestMediaMeshBackboneAndNodeReport(t *testing.T) {
 		t.Errorf("non-MediaMesh node = %+v", none)
 	}
 }
+
+func TestMediaMeshReplayHelpers(t *testing.T) {
+	for _, c := range []struct {
+		text string
+		want bool
+	}{{"Jade: VV1:79dcbh:15:c:9 Video Ferry", true}, {"VI1:abc:14:5:96 Photo", true}, {"VE3:a:1:3:4", true}, {"VV1 is great", false}, {"hello", false}} {
+		if got := mediaMeshAnnouncementRe.MatchString(c.text); got != c.want {
+			t.Errorf("%q: %v, want %v", c.text, got, c.want)
+		}
+	}
+	if got := trimHex("56A1B2C3D4E5F60708", 12); got != "56a1b2c3d4e5" {
+		t.Errorf("trimHex = %q", got)
+	}
+	if got := trimHex(nil, 12); got != "" {
+		t.Errorf("trimHex(nil) = %q", got)
+	}
+	if p := intField(float64(17)); p == nil || *p != 17 {
+		t.Errorf("intField = %v", p)
+	}
+	if intField("x") != nil {
+		t.Error("intField of a string")
+	}
+}
+
+// The replay lists radio2 photo/video/voice packets only, oldest first.
+func TestMediaMeshReplayEndpoint(t *testing.T) {
+	srv, router := setupTestServer(t)
+	seedMediaMesh(t, srv, `INSERT INTO observation_mediamesh (observation_id) VALUES (2)`)
+	var got MediaMeshReplay
+	getJSON(t, router, "/api/analytics/mediamesh/replay?hours=48", &got)
+	if got.Events == nil || got.Announcements == nil || got.To == "" || got.From == "" {
+		t.Fatalf("replay = %+v", got)
+	}
+	// the seeded radio2 observation is an ADVERT: not a photo, video or voice packet
+	for _, e := range got.Events {
+		if e.Type != "GRP_DATA" && e.Type != "RAW_CUSTOM" {
+			t.Errorf("event of type %s", e.Type)
+		}
+	}
+}
