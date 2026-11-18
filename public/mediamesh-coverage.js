@@ -67,6 +67,11 @@
         radiusKm: 60, stepM: 100, growth: 0.012, rays: 1440, cellM: 200,
       },
     },
+    // A quicker, coarser version of `ground`, for screening many spots or
+    // drawing hundreds of main-mesh repeaters.
+    quick: { rays: 360, radiusKm: 20, stepM: 100, cellM: 200 },
+    // The main mesh's preset (MeshCore's US recommended), for the comparison.
+    mainRadio: '910.525,62.5,7,5',
     // Terrain detail: zoom 12 (about 26 m per pixel at Seattle's latitude)
     // within nearKm of a repeater, zoom 11 within midKm, zoom 10 to the radius.
     terrain: { nearZoom: 12, nearKm: 1.5, midZoom: 11, midKm: 15, farZoom: 10 },
@@ -74,6 +79,9 @@
     terrainUrl: 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png',
     terrainAttribution: 'Terrain: Mapzen terrain tiles (SRTM, USGS NED and others)',
   };
+
+  // `quick`: people on the ground, coarser and shorter (see CONFIG.quick).
+  CONFIG.modes.quick = Object.assign({}, CONFIG.modes.ground, CONFIG.quick, { label: 'People on the ground (quick)' });
 
   // Correction fitted to the links actually heard on radio2 (fitCalibration),
   // added to every link budget. 0 until there are enough links.
@@ -608,8 +616,10 @@
    *   lineOfSight, fresnelClear, clutterDb, pathLossDb, eirpDbm, rxDbm,
    *   sensitivityDbm, fadeMarginDb, marginDb, modeKey }
    */
-  function pathProfile(rep, lat, lon, elevAt, modeKey, radio) {
-    const c = CONFIG, mode = c.modes[modeKey];
+  function pathProfile(rep, lat, lon, elevAt, modeKey, radio, popts) {
+    const c = CONFIG, base = c.modes[modeKey];
+    // popts.rxHeightM: the receiver's height instead of the mode's (an upstairs window)
+    const mode = popts && popts.rxHeightM > 0 ? Object.assign({}, base, { rxHeightM: popts.rxHeightM }) : base;
     const r = radio || radioFor(rep);
     const D = distanceM(rep.lat, rep.lon, lat, lon);
     const txGround = elevAt(rep.lat, rep.lon), rxGround = elevAt(lat, lon);
@@ -996,17 +1006,19 @@
     return [b.north - (row + 0.5) * (b.north - b.south) / cov.height, b.west + (col + 0.5) * (b.east - b.west) / cov.width];
   }
 
-  function coverageImage(cov) {
+  /** The coverage as an image for the map; rgb: another colour (the main
+   * mesh's in the comparison); keep(i): only some cells. */
+  function coverageImage(cov, rgbIn, keep) {
     const cv = document.createElement('canvas');
     cv.width = cov.width; cv.height = cov.height;
     const ctx = cv.getContext('2d');
     const img = ctx.createImageData(cov.width, cov.height);
-    const rgb = nodeColor();
+    const rgb = rgbIn || nodeColor();
     const radiusM = CONFIG.modes[cov.modeKey].radiusKm * 1000;
     for (let row = 0, i = 0; row < cov.height; row++) {
       for (let col = 0; col < cov.width; col++, i++) {
         const c = rampColor(cov.margins[i], rgb);
-        if (!c) continue;
+        if (!c || (keep && !keep(i))) continue;
         const rep = cov.reps[cov.best[i]];
         const ll = cellCenter(cov, col, row);
         const fade = rep ? edgeFade(distanceM(rep.lat, rep.lon, ll[0], ll[1]), radiusM) : 1;
@@ -1696,7 +1708,9 @@
       const cw = chart ? Math.round(chart.clientWidth) : 0;
       if (cw > 100 && cw !== 640) profEl.innerHTML = profileHtml(p, rep, cw);
     }
+    let pickHandler = null; // a plugin waiting for a point on the map
     map.on('click', (e) => {
+      if (pickHandler) { const h = pickHandler; pickHandler = null; mapEl.classList.remove('mm-cov-map--plan'); h(e.latlng); return; }
       if (planArmed) { placePlan(e.latlng); return; }
       if (shown) { picked = e.latlng; drawProfile(); }
     });
@@ -1917,6 +1931,7 @@
         drawProfile();
         drawLinks();
         reportStats();
+        shownListeners.forEach((f) => { try { f(shown, shownTerrain); } catch (_) { /* a plugin's business */ } });
         if (planned) computePlan();
         if (status) status.textContent = res.failed ? 'Some terrain could not be loaded; those areas are left blank.' : '';
         if (readoutEl && !readoutEl.textContent) readoutEl.textContent = hint;
@@ -2014,6 +2029,21 @@
     };
 
     el.addEventListener('click', onClick);
+    // Add-ons on the same card (mediamesh-reach.js): the address check, the
+    // best next spots, coverage in people and the main-mesh comparison.
+    const shownListeners = [];
+    let reach = null;
+    if (root.MediaMeshReach && typeof root.MediaMeshReach.attach === 'function') {
+      reach = root.MediaMeshReach.attach(el, {
+        L, map, mapEl, placed, loader, backbone,
+        shown: () => shown, terrain: () => shownTerrain, mode: () => current,
+        counted: () => placed.filter((_, i) => counted()[i]),
+        onShown: (f) => { shownListeners.push(f); if (shown) f(shown, shownTerrain); },
+        pick: (f) => { pickHandler = f; mapEl.classList.toggle('mm-cov-map--plan', !!f); },
+        plan: (lat, lon) => { if (L) placePlan(L.latLng(lat, lon)); },
+        onStats: opts && opts.onPeople,
+      });
+    }
     drawLinks();
     drawBackbone();
     show((opts && opts.mode) || 'ground');
@@ -2026,6 +2056,7 @@
       if (backboneToggle) backboneToggle.removeEventListener('change', onBackboneToggle);
       if (timeRange) timeRange.removeEventListener('input', onTimeInput);
       stopPlay();
+      if (reach) { try { reach(); } catch (_) { /* gone */ } }
       if (root.MediaMesh3D && root.MediaMesh3D.isOpen()) root.MediaMesh3D.close();
       if (linksToggle) linksToggle.removeEventListener('change', onLinksToggle);
       map.remove();
@@ -2036,7 +2067,7 @@
     CONFIG, fspl, knifeEdgeLoss, sensitivityDbm, parseRadio, radioFor, budgetDb, marginFor, band,
     worstEdge, cascadedKnifeEdge, planeEarthLoss, effectiveHeights, modeCalibration, waterMask, sampleDistances, gridFor, buildJob, polarMargins, repRaster, merge,
     computeCoverage, workerPool, pathProfile, profileVerdict, budgetRows, profileSvg, profileHtml,
-    terrainPlan, loadTerrainLevels, loadTerrain, rampColor, edgeFade, cellAt, readout,
+    terrainPlan, loadTerrainLevels, loadTerrain, rampColor, edgeFade, cellAt, cellCenter, readout,
     fitCalibration, calibrationText, setCalibration, getCalibration, CAL,
     backboneWeight, backboneTip, areaHistory, footprint, coverageImage, legendGradient,
     growthSteps, presentAt, antennaHeight, cellAreaKm2, coveredKm2, unionKm2, repAreasKm2, planGain, planLinks, planHtml, PLAN_RGB,

@@ -294,17 +294,17 @@
     components(g).forEach((c) => { const set = new Set(c); c.forEach((k) => { home[k] = set; }); });
     const cutOffOf = (comps, k) => {
       const mine = comps.filter((c) => home[k].has(c[0]));
-      return mine.length > 1 ? mine.slice(1).flat().map((x) => g.names[x]).sort() : [];
+      return mine.length > 1 ? mine.slice(1).flat().sort((x, y) => g.names[x].localeCompare(g.names[y])) : [];
     };
     g.keys.forEach((k) => {
-      const cutOff = cutOffOf(components(g, k), k);
-      if (cutOff.length) out.cuts.push({ key: k, name: g.names[k], cutOff });
+      const keys = cutOffOf(components(g, k), k);
+      if (keys.length) out.cuts.push({ key: k, name: g.names[k], cutOff: keys.map((x) => g.names[x]), cutOffKeys: keys });
     });
     Object.keys(g.w).forEach((ek) => {
       const [a, b] = ek.split('|');
       if (g.adj[a].size < 2 || g.adj[b].size < 2) return; // a spur: its own end says it
-      const cutOff = cutOffOf(components(g, null, ek), a);
-      if (cutOff.length) out.bridges.push({ a, b, aName: g.names[a], bName: g.names[b], cutOff });
+      const keys = cutOffOf(components(g, null, ek), a);
+      if (keys.length) out.bridges.push({ a, b, aName: g.names[a], bName: g.names[b], cutOff: keys.map((x) => g.names[x]), cutOffKeys: keys });
     });
     out.cuts.sort((x, y) => y.cutOff.length - x.cutOff.length || x.name.localeCompare(y.name));
     const total = Object.values(g.w).reduce((a, v) => a + v, 0);

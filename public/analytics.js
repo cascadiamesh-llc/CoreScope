@@ -943,6 +943,7 @@
       </div>
       <div class="analytics-row"><div class="analytics-card flex-1 mm-chart">${chart.html.replace('Packets /', 'radio2 packets /')}</div></div>
       ${mediaMeshCoverageCardHtml(reps)}
+      <div class="analytics-row"><div class="analytics-card flex-1 mm-ins-card" id="mmPeopleCard" hidden></div></div>
       ${mediaMeshLeaderboardHtml(mm)}
       ${window.MediaMeshInsights ? window.MediaMeshInsights.cardsHtml() : ''}
       <div class="analytics-row">

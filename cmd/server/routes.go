@@ -378,6 +378,8 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/analytics/relay-airtime-share", s.handleAnalyticsRelayAirtimeShare).Methods("GET")
 	r.HandleFunc("/api/analytics/mediamesh/replay", s.handleMediaMeshReplay).Methods("GET")
 	r.HandleFunc("/api/analytics/mediamesh/clips", s.handleMediaMeshClips).Methods("GET")
+	r.HandleFunc("/api/places/population", s.handlePopulation).Methods("GET")
+	r.HandleFunc("/api/places/near", s.handleNear).Methods("GET")
 	r.HandleFunc("/api/analytics/mediamesh", s.handleAnalyticsMediaMesh).Methods("GET")
 	r.HandleFunc("/api/analytics/retransmissions", s.handleAnalyticsRetransmissions).Methods("GET")
 

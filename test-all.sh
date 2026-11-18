@@ -25,6 +25,7 @@ node tests/unit/test-mediamesh-node.js
 node tests/unit/test-live-nightsky.js
 node tests/unit/test-mediamesh-3d.js
 node tests/unit/test-mediamesh-insights.js
+node tests/unit/test-mediamesh-reach.js
 node tests/unit/test-anl1-tooltip-render.js
 node tests/unit/test-area-filter.js
 node tests/unit/test-channel-color-picker.js
