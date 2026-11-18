@@ -500,3 +500,14 @@ func TestMediaMeshReplayEndpoint(t *testing.T) {
 		}
 	}
 }
+
+// The clips endpoint answers with empty lists when there's nothing to judge.
+func TestMediaMeshClipsEndpoint(t *testing.T) {
+	srv, router := setupTestServer(t)
+	seedMediaMesh(t, srv, `INSERT INTO observation_mediamesh (observation_id) VALUES (2)`)
+	var got MediaMeshClips
+	getJSON(t, router, "/api/analytics/mediamesh/clips?days=3", &got)
+	if got.Clips == nil || got.Hours == nil || got.From == "" || got.To == "" {
+		t.Fatalf("clips = %+v", got)
+	}
+}

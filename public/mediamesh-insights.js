@@ -1,0 +1,456 @@
+/* MediaMesh insights for the Analytics tab: did clips get through, how
+ * fast, when the network is busy (all from /api/analytics/mediamesh/clips),
+ * and where the week's backbone is fragile (from the tab's backbone).
+ * Pure functions build the figures and the HTML; init() fetches and draws. */
+'use strict';
+
+(function (root) {
+  const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+  const KIND_LABEL = { photo: 'Photo', video: 'Video', voice: 'Voice' };
+
+  function median(xs) {
+    const v = xs.filter(Number.isFinite).sort((a, b) => a - b);
+    if (!v.length) return null;
+    const m = v.length >> 1;
+    return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
+  }
+
+  /** Names for path hashes and observers: hash prefix -> repeater name. */
+  function namer(reps) {
+    const list = (reps || []).filter((r) => r.public_key).map((r) => ({ k: String(r.public_key).toLowerCase(), name: r.name || r.public_key.slice(0, 8) }));
+    return (hop) => {
+      const h = String(hop || '').toLowerCase();
+      if (!h) return '';
+      const hit = list.filter((r) => r.k.startsWith(h));
+      return hit.length === 1 ? hit[0].name : h.toUpperCase();
+    };
+  }
+
+  function clipLabel(c) {
+    return (KIND_LABEL[c.kind] || 'Clip') + (c.kind !== 'photo' && c.seconds ? `, ${c.seconds} s` : '');
+  }
+
+  /** "First Hill → … → Rainier View": the first repeater, then who heard it. */
+  function routeLabel(c, nameOf) {
+    const path = c.path || [];
+    const first = path.length ? nameOf(path[0]) : '';
+    const end = c.observerName || c.observer || '';
+    if (!first) return end || '—';
+    const names = path.length <= 2 ? [first].concat(path.slice(1).map(nameOf)) : [first, '…', nameOf(path[path.length - 1])];
+    if (end) names.push(end);
+    // the observer is often the last repeater itself
+    const out = names.filter((n, i) => n && n !== names[i - 1]);
+    return out.join(' → ');
+  }
+
+  // ---- Did it get through? ------------------------------------------------
+
+  /** The judged clips (heard at all) and their outcomes, overall and by hops. */
+  function deliverySummary(clips) {
+    const judged = (clips || []).filter((c) => c.outcome && c.outcome !== 'none');
+    const by = {};
+    judged.forEach((c) => {
+      const k = Math.min(5, Math.max(1, c.hops || 1));
+      by[k] = by[k] || { hops: k, n: 0, ok: 0 };
+      by[k].n++;
+      if (c.outcome !== 'partial') by[k].ok++;
+    });
+    return {
+      n: judged.length,
+      unheard: (clips || []).length - judged.length,
+      whole: judged.filter((c) => c.outcome === 'whole').length,
+      parity: judged.filter((c) => c.outcome === 'parity').length,
+      partial: judged.filter((c) => c.outcome === 'partial').length,
+      byHops: [1, 2, 3, 4, 5].map((k) => by[k] || { hops: k, n: 0, ok: 0 }),
+    };
+  }
+
+  function piecesHtml(c) {
+    const miss = new Set(c.missing || []), fix = new Set(c.rebuilt || []);
+    const n = Math.min(c.total, 60);
+    let h = '<span class="mm-pieces" aria-hidden="true">';
+    for (let i = 0; i < n; i++) h += `<span class="${miss.has(i) ? 'is-missing' : fix.has(i) ? 'is-rebuilt' : ''}"></span>`;
+    return h + (c.total > n ? '<span class="mm-pieces-more">…</span>' : '') + '</span>';
+  }
+
+  function outcomeText(c) {
+    if (c.outcome === 'whole') return 'whole';
+    if (c.outcome === 'parity') return 'whole, with parity';
+    if (c.outcome === 'partial') return `${c.total - (c.missing || []).length} of ${c.total}`;
+    return 'not heard';
+  }
+
+  function deliveryHtml(clips, nameOf, days) {
+    const s = deliverySummary(clips);
+    const head = `<h3>Did it get through?</h3><p class="text-muted mm-ins-sub">Each clip's announcement says how many pieces it has, so the pieces heard at the far end (the observer that heard it over the most hops) say whether it arrived. Clips announced on channels the analyzer can read, last ${days} days.</p>`;
+    if (!s.n) return head + '<p class="text-muted">No announced clips heard yet in this period.</p>';
+    const tiles = `<div class="mm-ins-tiles">
+      <div class="mm-ins-tile"><div class="mm-ins-big mm-ins-accent">${pct(s.whole + s.parity, s.n)}%</div><div class="mm-ins-label">of ${s.n.toLocaleString()} clips arrived whole</div></div>
+      <div class="mm-ins-tile"><div class="mm-ins-big">${pct(s.parity, s.n)}%</div><div class="mm-ins-label">whole thanks to parity pieces</div></div>
+      <div class="mm-ins-tile"><div class="mm-ins-big">${pct(s.partial, s.n)}%</div><div class="mm-ins-label">arrived incomplete</div></div>
+      <div class="mm-ins-tile"><div class="mm-ins-big">${s.unheard.toLocaleString()}</div><div class="mm-ins-label">announced but no piece heard by an observer</div></div>
+    </div>`;
+    const bars = s.byHops.filter((b) => b.n).map((b) => `<div class="mm-ins-bar-row"><span>${b.hops}${b.hops === 5 ? '+' : ''} hop${b.hops === 1 ? '' : 's'}</span>
+      <span class="mm-ins-bar" role="img" aria-label="${pct(b.ok, b.n)}% whole"><i style="width:${pct(b.ok, b.n)}%"></i></span><span class="mm-ins-num">${pct(b.ok, b.n)}%</span><span class="text-muted mm-ins-n">${b.n}</span></div>`).join('');
+    const recent = clips.filter((c) => c.outcome !== 'none').slice(0, 8).map((c) => `<tr><td>${esc(clipLabel(c))}</td><td>${esc(routeLabel(c, nameOf))}</td><td class="mm-ins-num">${c.hops}</td>
+      <td>${piecesHtml(c)}</td><td class="mm-ins-outcome mm-ins-outcome--${esc(c.outcome)}">${esc(outcomeText(c))}</td></tr>`).join('');
+    return head + tiles + `<div class="mm-ins-split">
+      <div class="mm-ins-col"><h4>Whole, by hops</h4>${bars}</div>
+      <div class="mm-ins-col mm-ins-wide"><h4>Recent clips</h4><div class="mm-ins-scroll"><table class="analytics-table mm-ins-table"><thead><tr><th scope="col">Clip</th><th scope="col">Route</th><th scope="col" class="mm-ins-num">Hops</th><th scope="col">Pieces</th><th scope="col">Arrived</th></tr></thead><tbody>${recent}</tbody></table></div>
+      <p class="text-muted mm-ins-key"><span class="mm-pieces"><span></span></span> heard · <span class="mm-pieces"><span class="is-rebuilt"></span></span> rebuilt from parity · <span class="mm-pieces"><span class="is-missing"></span></span> missing</p></div></div>`;
+  }
+
+  // ---- Speed ----------------------------------------------------------------
+
+  /** Clips with a time and size to go on: kbit/s and seconds. */
+  function speedRows(clips) {
+    return (clips || []).filter((c) => (c.outcome === 'whole' || c.outcome === 'parity') && c.durationS > 0 && c.bytes > 0)
+      .map((c) => Object.assign({}, c, { kbps: (c.bytes * 8) / c.durationS / 1000 }));
+  }
+
+  function speedSummary(clips, nameOf) {
+    const rows = speedRows(clips);
+    const byHops = [1, 2, 3, 4, 5].map((h) => {
+      const r = rows.filter((c) => Math.min(5, Math.max(1, c.hops || 1)) === h);
+      return { hops: h, n: r.length, kbps: median(r.map((c) => c.kbps)) };
+    });
+    const routes = {};
+    rows.forEach((c) => { const k = routeLabel(c, nameOf); (routes[k] = routes[k] || []).push(c.kbps); });
+    let fastest = null;
+    Object.keys(routes).forEach((k) => {
+      if (routes[k].length < 2) return;
+      const m = median(routes[k]);
+      if (!fastest || m > fastest.kbps) fastest = { route: k, kbps: m, n: routes[k].length };
+    });
+    const photo1 = median(rows.filter((c) => c.kind === 'photo' && c.hops <= 1).map((c) => c.durationS));
+    return { n: rows.length, kbps: median(rows.map((c) => c.kbps)), byHops, fastest, photo1, rows };
+  }
+
+  const fmtK = (v) => (v == null ? '—' : v < 10 ? v.toFixed(1) : String(Math.round(v)));
+
+  function speedHtml(clips, nameOf, days) {
+    const s = speedSummary(clips, nameOf);
+    const head = `<h3>How fast clips cross the mesh</h3><p class="text-muted mm-ins-sub">From the first piece the far end heard to the last, for clips that arrived whole. Last ${days} days.</p>`;
+    if (!s.n) return head + '<p class="text-muted">No whole clips with more than one piece yet.</p>';
+    const maxK = Math.max(...s.byHops.map((b) => b.kbps || 0), 0.1);
+    const tiles = `<div class="mm-ins-tiles">
+      <div class="mm-ins-tile"><div class="mm-ins-big">${fmtK(s.kbps)} kbit/s</div><div class="mm-ins-label">median speed, ${s.n} clips</div></div>
+      <div class="mm-ins-tile"><div class="mm-ins-big">${s.photo1 == null ? '—' : Math.round(s.photo1) + ' s'}</div><div class="mm-ins-label">a photo over one hop, typical</div></div>
+      <div class="mm-ins-tile mm-ins-tile--wide"><div class="mm-ins-big mm-ins-accent mm-ins-route">${s.fastest ? esc(s.fastest.route) : '—'}</div><div class="mm-ins-label">${s.fastest ? `fastest route this period, ${fmtK(s.fastest.kbps)} kbit/s over ${s.fastest.n} clips` : 'fastest route: needs two clips on one route'}</div></div>
+    </div>`;
+    const bars = s.byHops.filter((b) => b.n).map((b) => `<div class="mm-ins-bar-row"><span>${b.hops}${b.hops === 5 ? '+' : ''} hop${b.hops === 1 ? '' : 's'}</span>
+      <span class="mm-ins-bar"><i style="width:${Math.round(((b.kbps || 0) / maxK) * 100)}%"></i></span><span class="mm-ins-num">${fmtK(b.kbps)}</span><span class="text-muted mm-ins-n">${b.n}</span></div>`).join('');
+    const rows = s.rows.slice(0, 8).map((c) => `<tr><td>${esc(routeLabel(c, nameOf))}</td><td class="mm-ins-num">${c.hops}</td><td>${esc(clipLabel(c))}, ${(c.bytes / 1000).toFixed(1)} kB</td>
+      <td class="mm-ins-num">${Math.round(c.durationS)} s</td><td class="mm-ins-num"><strong>${fmtK(c.kbps)}</strong></td></tr>`).join('');
+    return head + tiles + `<div class="mm-ins-split">
+      <div class="mm-ins-col"><h4>kbit/s by hops (median)</h4>${bars}</div>
+      <div class="mm-ins-col mm-ins-wide"><h4>Recent clips</h4><div class="mm-ins-scroll"><table class="analytics-table mm-ins-table"><thead><tr><th scope="col">Route</th><th scope="col" class="mm-ins-num">Hops</th><th scope="col">Clip</th><th scope="col" class="mm-ins-num">Time</th><th scope="col" class="mm-ins-num">kbit/s</th></tr></thead><tbody>${rows}</tbody></table></div></div></div>`;
+  }
+
+  // ---- When it's busy -------------------------------------------------------
+
+  const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  /** Average per weekday and hour (local time), Monday first:
+   * { grid[7][24] {packets, clips, partial}, weeks }. */
+  function busyGrid(hours, from, to) {
+    const grid = DAYS.map(() => Array.from({ length: 24 }, () => ({ packets: 0, clips: 0, partial: 0 })));
+    (hours || []).forEach((h) => {
+      const d = new Date(h.t);
+      if (isNaN(d)) return;
+      const cell = grid[(d.getDay() + 6) % 7][d.getHours()];
+      cell.packets += h.packets || 0; cell.clips += h.clips || 0; cell.partial += h.partial || 0;
+    });
+    const span = (Date.parse(to) - Date.parse(from)) / (7 * 86400000);
+    const weeks = span > 1 ? span : 1;
+    grid.forEach((row) => row.forEach((c) => { c.packets /= weeks; c.clips /= weeks; c.partial /= weeks; }));
+    return { grid, weeks };
+  }
+
+  const hourLabel = (h) => (h === 0 ? '12 am' : h < 12 ? h + ' am' : h === 12 ? '12 pm' : (h - 12) + ' pm');
+
+  function busyHtml(b, metric, days) {
+    metric = metric || 'packets';
+    const label = { packets: 'packets', clips: 'clips', partial: 'incomplete clips' }[metric];
+    let max = 0, best = null, quiet = null;
+    b.grid.forEach((row, d) => row.forEach((c, h) => {
+      if (c[metric] > max) { max = c[metric]; best = { d, h, v: c[metric] }; }
+    }));
+    // the quietest 3-hour stretch
+    for (let d = 0; d < 7; d++) {
+      for (let h = 0; h < 22; h++) {
+        const v = b.grid[d][h][metric] + b.grid[d][h + 1][metric] + b.grid[d][h + 2][metric];
+        if (!quiet || v < quiet.v) quiet = { d, h, v };
+      }
+    }
+    const head = `<div class="mm-ins-head"><div><h3>When MediaMesh is busy</h3><p class="text-muted mm-ins-sub">Photos, video and voice by weekday and hour, your time, averaged over the last ${days} days.</p></div>
+      <div class="mm-ins-toggle" role="group" aria-label="What to count">${['packets', 'clips', 'partial'].map((m) => `<button type="button" class="tab-btn${m === metric ? ' active' : ''}" data-mm-busy="${m}" aria-pressed="${m === metric}">${{ packets: 'Packets', clips: 'Clips', partial: 'Incomplete' }[m]}</button>`).join('')}</div></div>`;
+    if (!max) return head + `<p class="text-muted">Nothing to show yet: no ${label} in this period.</p>`;
+    const cols = Array.from({ length: 24 }, (_, h) => `<th scope="col">${h % 3 === 0 ? hourLabel(h).replace(' ', '') : ''}</th>`).join('');
+    const body = b.grid.map((row, d) => `<tr><th scope="row">${DAYS[d]}</th>${row.map((c, h) => {
+      const v = c[metric], a = v ? Math.round(8 + (v / max) * 84) : 0;
+      return `<td style="--a:${a}%"${best && best.d === d && best.h === h ? ' class="is-peak"' : ''} title="${DAYS[d]} ${hourLabel(h)}: ${v < 10 ? v.toFixed(1) : Math.round(v)} ${label} a week"></td>`;
+    }).join('')}</tr>`).join('');
+    const fmtV = (v) => (v < 10 ? v.toFixed(1) : String(Math.round(v)));
+    return head + `<div class="mm-ins-scroll"><table class="mm-ins-heat" aria-label="${esc(label)} by weekday and hour"><thead><tr><th></th>${cols}</tr></thead><tbody>${body}</tbody></table></div>
+      <div class="mm-ins-tiles mm-ins-tiles--3">
+        <div class="mm-ins-tile"><div class="mm-ins-strong">Busiest: ${DAYS[best.d]}, ${hourLabel(best.h)}–${hourLabel((best.h + 1) % 24)}</div><div class="mm-ins-label">${fmtV(best.v)} ${label} in that hour, on average</div></div>
+        <div class="mm-ins-tile"><div class="mm-ins-strong">Quietest: ${DAYS[quiet.d]}, ${hourLabel(quiet.h)}–${hourLabel((quiet.h + 3) % 24)}</div><div class="mm-ins-label">${metric === 'partial' ? 'fewest incomplete clips' : 'a good time for big transfers'}</div></div>
+        <div class="mm-ins-tile"><div class="mm-ins-strong">${fmtV(b.grid.reduce((a, r) => a + r.reduce((x, c) => x + c[metric], 0), 0))} ${label}</div><div class="mm-ins-label">in a typical week</div></div>
+      </div>`;
+  }
+
+  // ---- Weak spots in the backbone -------------------------------------------
+
+  /** The backbone as a graph: { keys, names, pos, adj (Set per key), w (packets per edge key) }. */
+  function backboneGraph(backbone) {
+    const names = {}, pos = {}, adj = {}, w = {};
+    (backbone || []).forEach((e) => {
+      const a = String(e.a || '').toLowerCase(), b = String(e.b || '').toLowerCase();
+      if (!a || !b || a === b) return;
+      names[a] = e.a_name || names[a] || a.slice(0, 8); names[b] = e.b_name || names[b] || b.slice(0, 8);
+      if (Number.isFinite(e.a_lat) && Number.isFinite(e.a_lon)) pos[a] = [e.a_lat, e.a_lon];
+      if (Number.isFinite(e.b_lat) && Number.isFinite(e.b_lon)) pos[b] = [e.b_lat, e.b_lon];
+      (adj[a] = adj[a] || new Set()).add(b); (adj[b] = adj[b] || new Set()).add(a);
+      const k = a < b ? a + '|' + b : b + '|' + a;
+      w[k] = (w[k] || 0) + (e.packets || 0);
+    });
+    return { keys: Object.keys(adj).sort(), names, pos, adj, w };
+  }
+
+  /** Components of the graph without `skip` (a node) or `cut` (an edge key). */
+  function components(g, skip, cut) {
+    const seen = new Set(), out = [];
+    g.keys.forEach((k) => {
+      if (k === skip || seen.has(k)) return;
+      const comp = [], stack = [k];
+      seen.add(k);
+      while (stack.length) {
+        const x = stack.pop();
+        comp.push(x);
+        g.adj[x].forEach((y) => {
+          if (y === skip || seen.has(y)) return;
+          if (cut && (x < y ? x + '|' + y : y + '|' + x) === cut) return;
+          seen.add(y); stack.push(y);
+        });
+      }
+      out.push(comp);
+    });
+    return out.sort((a, b) => b.length - a.length);
+  }
+
+  const pairs = (comps) => comps.reduce((a, c) => a + (c.length * (c.length - 1)) / 2, 0);
+
+  /** 0..100: with each repeater in turn gone, the share of the other
+   * repeaters' pairs still connected; half the average, half the worst case
+   * (an average alone hides one repeater everything hangs on). */
+  function resilienceScore(g) {
+    const n = g.keys.length;
+    if (n < 3) return null;
+    const all = components(g), before = pairs(all);
+    const compOf = {};
+    all.forEach((c) => c.forEach((k) => { compOf[k] = c.length; }));
+    let sum = 0, worst = 1;
+    g.keys.forEach((k) => {
+      // the pairs connected before, among the rest
+      const was = before - (compOf[k] - 1);
+      const f = was > 0 ? pairs(components(g, k)) / was : 1;
+      sum += f;
+      worst = Math.min(worst, f);
+    });
+    return Math.round(((sum / n + worst) / 2) * 100);
+  }
+
+  function withEdge(g, a, b) {
+    const adj = {};
+    g.keys.forEach((k) => { adj[k] = new Set(g.adj[k]); });
+    adj[a].add(b); adj[b].add(a);
+    return Object.assign({}, g, { adj });
+  }
+
+  function distKm(p, q) {
+    const R = 6371, toR = Math.PI / 180;
+    const dLat = (q[0] - p[0]) * toR, dLon = (q[1] - p[1]) * toR;
+    const s = Math.sin(dLat / 2) ** 2 + Math.cos(p[0] * toR) * Math.cos(q[0] * toR) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(s));
+  }
+
+  /**
+   * Weak spots: { score, cuts [{ key, name, cutOff: [names] }], bridges
+   * [{ a, b, aName, bName, cutOff }], hub { key, name, share }, fix { a, b,
+   * aName, bName, km, score } }. A cut is a repeater whose loss splits the
+   * backbone; cutOff are the repeaters that would be separated from the
+   * largest part. The fix is the one new link (between repeaters within
+   * maxKm) that raises the score most.
+   */
+  function weakSpots(backbone, maxKm) {
+    const g = backboneGraph(backbone);
+    const out = { n: g.keys.length, score: resilienceScore(g), cuts: [], bridges: [], hub: null, fix: null, graph: g };
+    if (out.score === null) return out;
+    // Only what was connected to it before counts as cut off: a separate
+    // little backbone elsewhere was never reachable through it.
+    const home = {};
+    components(g).forEach((c) => { const set = new Set(c); c.forEach((k) => { home[k] = set; }); });
+    const cutOffOf = (comps, k) => {
+      const mine = comps.filter((c) => home[k].has(c[0]));
+      return mine.length > 1 ? mine.slice(1).flat().map((x) => g.names[x]).sort() : [];
+    };
+    g.keys.forEach((k) => {
+      const cutOff = cutOffOf(components(g, k), k);
+      if (cutOff.length) out.cuts.push({ key: k, name: g.names[k], cutOff });
+    });
+    Object.keys(g.w).forEach((ek) => {
+      const [a, b] = ek.split('|');
+      if (g.adj[a].size < 2 || g.adj[b].size < 2) return; // a spur: its own end says it
+      const cutOff = cutOffOf(components(g, null, ek), a);
+      if (cutOff.length) out.bridges.push({ a, b, aName: g.names[a], bName: g.names[b], cutOff });
+    });
+    out.cuts.sort((x, y) => y.cutOff.length - x.cutOff.length || x.name.localeCompare(y.name));
+    const total = Object.values(g.w).reduce((a, v) => a + v, 0);
+    g.keys.forEach((k) => {
+      let s = 0;
+      g.adj[k].forEach((y) => { s += g.w[k < y ? k + '|' + y : y + '|' + k] || 0; });
+      if (total && (!out.hub || s > out.hub.packets)) out.hub = { key: k, name: g.names[k], packets: s, share: Math.round((s / total) * 100) };
+    });
+    if (out.cuts.length || out.bridges.length) {
+      const lim = maxKm || 10;
+      g.keys.forEach((a) => g.keys.forEach((b) => {
+        if (a >= b || g.adj[a].has(b) || !g.pos[a] || !g.pos[b]) return;
+        const km = distKm(g.pos[a], g.pos[b]);
+        if (km > lim) return;
+        const sc = resilienceScore(withEdge(g, a, b));
+        if (sc > out.score && (!out.fix || sc > out.fix.score || (sc === out.fix.score && km < out.fix.km))) {
+          out.fix = { a, b, aName: g.names[a], bName: g.names[b], km, score: sc };
+        }
+      }));
+    }
+    return out;
+  }
+
+  function scoreWord(s) { return s >= 85 ? 'strong' : s >= 65 ? 'fair' : 'fragile'; }
+
+  function weakHtml(ws) {
+    const head = '<h3>Where one repeater going down would split MediaMesh</h3><p class="text-muted mm-ins-sub">From the week\'s backbone: repeaters and hops photos, video and voice have no way around.</p>';
+    if (ws.score === null) return head + '<p class="text-muted">Needs a backbone of at least three repeaters this week.</p>';
+    const ring = 2 * Math.PI * 50, frac = ws.score / 100;
+    const gauge = `<svg class="mm-ins-gauge mm-ins-gauge--${scoreWord(ws.score)}" viewBox="0 0 120 120" role="img" aria-label="Resilience ${ws.score} of 100"><circle cx="60" cy="60" r="50" class="mm-ins-gauge-bg"/><circle cx="60" cy="60" r="50" class="mm-ins-gauge-fg" stroke-dasharray="${(frac * ring).toFixed(1)} ${ring.toFixed(1)}" transform="rotate(-90 60 60)"/><text x="60" y="66" text-anchor="middle" class="mm-ins-gauge-num">${ws.score}</text><text x="60" y="84" text-anchor="middle" class="mm-ins-gauge-of">of 100</text></svg>`;
+    const list = (xs) => (xs.length > 3 ? xs.slice(0, 3).map(esc).join(', ') + ` and ${xs.length - 3} more` : xs.map(esc).join(xs.length === 2 ? ' and ' : ', ').replace(/, ([^,]*)$/, ' and $1'));
+    const rows = ws.cuts.map((c) => `<tr><td><span class="mm-ins-dot mm-ins-dot--bad"></span><strong>${esc(c.name)}</strong></td><td>The only way to ${list(c.cutOff)}</td></tr>`)
+      .concat(ws.bridges.map((b) => `<tr><td><span class="mm-ins-dot mm-ins-dot--bad"></span><strong>${esc(b.aName)} ↔ ${esc(b.bName)}</strong></td><td>The only hop to ${list(b.cutOff)}</td></tr>`));
+    if (ws.hub && ws.hub.share >= 40) rows.push(`<tr><td><span class="mm-ins-dot mm-ins-dot--warn"></span><strong>${esc(ws.hub.name)}</strong></td><td>On ${ws.hub.share}% of the week's hops</td></tr>`);
+    const summary = ws.cuts.length || ws.bridges.length
+      ? `${ws.cuts.length} repeater${ws.cuts.length === 1 ? '' : 's'} and ${ws.bridges.length} hop${ws.bridges.length === 1 ? '' : 's'} are the only way through for part of the backbone.`
+      : 'Every repeater on the backbone has a way around any one that goes down.';
+    const fix = ws.fix ? `<div class="mm-ins-callout"><strong>Biggest fix</strong><div>A link between ${esc(ws.fix.aName)} and ${esc(ws.fix.bName)} (${ws.fix.km.toFixed(1)} km apart, if they can hear each other) would raise the score from ${ws.score} to ${ws.fix.score}.</div></div>` : '';
+    return head + `<div class="mm-ins-split"><div class="mm-ins-col mm-ins-wide">
+      <div class="mm-ins-score">${gauge}<div><div class="mm-ins-strong">Resilience: ${scoreWord(ws.score)}</div><div class="text-muted">${summary}</div></div></div>
+      ${rows.length ? `<table class="analytics-table mm-ins-table"><tbody>${rows.join('')}</tbody></table>` : ''}${fix}
+      <p class="text-muted mm-ins-key">The score: with each repeater in turn gone, the share of the others that can still reach each other; half the average, half the worst case. Only hops seen this week count: a link that exists but carried nothing isn't in it.</p>
+    </div><div class="mm-ins-col mm-ins-wide"><div class="mm-ins-map" id="mmWeakMap" role="img" aria-label="The week's backbone, with weak spots marked"></div></div></div>`;
+  }
+
+  function cssColor(name, fallback) {
+    const v = typeof getComputedStyle === 'function' ? getComputedStyle(document.documentElement).getPropertyValue(name).trim() : '';
+    return /^#[0-9a-f]{3,8}$/i.test(v) ? v : fallback;
+  }
+
+  function drawWeakMap(el, ws) {
+    const L = root.L, box = el.querySelector('#mmWeakMap');
+    if (!L || !box) return null;
+    const g = ws.graph, pts = g.keys.filter((k) => g.pos[k]).map((k) => g.pos[k]);
+    if (!pts.length) { box.hidden = true; return null; }
+    const map = L.map(box, { zoomControl: true, attributionControl: true, scrollWheelZoom: false });
+    const tileUrl = typeof root.getTileUrl === 'function' ? root.getTileUrl() : null;
+    if (tileUrl) L.tileLayer(tileUrl, { maxZoom: 18 }).addTo(map);
+    map.fitBounds(L.latLngBounds(pts).pad(0.15));
+    const line = cssColor('--mediamesh-node-color', '#d946ef'), bad = cssColor('--status-red', '#dc2626'), warn = cssColor('--status-amber', '#d97706'), fixC = '#0891b2';
+    const maxW = Math.max(1, ...Object.values(g.w));
+    const isBridge = new Set(ws.bridges.map((b) => (b.a < b.b ? b.a + '|' + b.b : b.b + '|' + b.a)));
+    Object.keys(g.w).forEach((ek) => {
+      const [a, b] = ek.split('|');
+      if (!g.pos[a] || !g.pos[b]) return;
+      const br = isBridge.has(ek);
+      L.polyline([g.pos[a], g.pos[b]], { color: br ? bad : line, weight: 2 + 4 * Math.log1p(g.w[ek]) / Math.log1p(maxW), opacity: 0.9, dashArray: br ? '8 5' : null })
+        .bindTooltip(`${esc(g.names[a])} ↔ ${esc(g.names[b])}: ${g.w[ek]} packets this week${br ? ' (the only way through)' : ''}`, { sticky: true }).addTo(map);
+    });
+    const cut = new Set(ws.cuts.map((c) => c.key));
+    g.keys.forEach((k) => {
+      if (!g.pos[k]) return;
+      L.circleMarker(g.pos[k], { radius: 5, weight: 2, color: '#ffffff', fillColor: line, fillOpacity: 1 }).bindTooltip(esc(g.names[k])).addTo(map);
+      if (cut.has(k) || (ws.hub && ws.hub.key === k && ws.hub.share >= 40)) {
+        L.circleMarker(g.pos[k], { radius: 12, weight: 3, color: cut.has(k) ? bad : warn, fill: false, interactive: false }).addTo(map);
+      }
+    });
+    if (ws.fix && g.pos[ws.fix.a] && g.pos[ws.fix.b]) {
+      L.polyline([g.pos[ws.fix.a], g.pos[ws.fix.b]], { color: fixC, weight: 3, dashArray: '2 7', opacity: 0.95 })
+        .bindTooltip(`Suggested link: ${esc(ws.fix.aName)} ↔ ${esc(ws.fix.bName)}`, { sticky: true }).addTo(map);
+    }
+    return map;
+  }
+
+  // ---- Wiring ---------------------------------------------------------------
+
+  const DAYS_BACK = 7;
+  let state = null;
+
+  /** Fills the tab's insight cards: #mmDeliveryCard, #mmSpeedCard,
+   * #mmBusyCard (from the clips endpoint) and #mmWeakCard (from mm.backbone). */
+  async function init(el, mm, opts) {
+    destroy();
+    const nameOf = namer(mm && mm.repeaters);
+    const me = state = { el, maps: [] };
+    const weak = el.querySelector('#mmWeakCard');
+    if (weak) {
+      const ws = weakSpots(mm && mm.backbone, 10);
+      weak.innerHTML = weakHtml(ws);
+      const m = drawWeakMap(weak, ws);
+      if (m) me.maps.push(m);
+    }
+    const fetcher = (opts && opts.api) || root.api;
+    if (typeof fetcher !== 'function') return;
+    let data;
+    try {
+      data = await fetcher('/analytics/mediamesh/clips?days=' + DAYS_BACK, { ttl: 60000 });
+    } catch (_) {
+      ['#mmDeliveryCard', '#mmSpeedCard', '#mmBusyCard'].forEach((s) => { const c = el.querySelector(s); if (c) c.innerHTML = '<p class="text-muted">Couldn\'t load the clips.</p>'; });
+      return;
+    }
+    if (state !== me) return;
+    const clips = (data && data.clips) || [];
+    const days = Math.max(1, Math.round((Date.parse(data.to) - Date.parse(data.from)) / 86400000)) || DAYS_BACK;
+    const put = (sel, html) => { const c = el.querySelector(sel); if (c) c.innerHTML = html; };
+    put('#mmDeliveryCard', deliveryHtml(clips, nameOf, days));
+    put('#mmSpeedCard', speedHtml(clips, nameOf, days));
+    const grid = busyGrid(data.hours, data.from, data.to);
+    put('#mmBusyCard', busyHtml(grid, 'packets', days));
+    const busy = el.querySelector('#mmBusyCard');
+    if (busy) {
+      me.onBusy = (e) => {
+        const b = e.target.closest('[data-mm-busy]');
+        if (b) busy.innerHTML = busyHtml(grid, b.dataset.mmBusy, days);
+      };
+      busy.addEventListener('click', me.onBusy);
+    }
+  }
+
+  function destroy() {
+    if (!state) return;
+    state.maps.forEach((m) => { try { m.remove(); } catch (_) { /* gone */ } });
+    const busy = state.el.querySelector('#mmBusyCard');
+    if (busy && state.onBusy) busy.removeEventListener('click', state.onBusy);
+    state = null;
+  }
+
+  /** The tab's placeholders for these cards. */
+  function cardsHtml() {
+    const card = (id, title) => `<div class="analytics-row"><div class="analytics-card flex-1 mm-ins-card" id="${id}"><h3>${title}</h3><p class="text-muted">Loading…</p></div></div>`;
+    return card('mmDeliveryCard', 'Did it get through?') + card('mmSpeedCard', 'How fast clips cross the mesh')
+      + card('mmWeakCard', 'Where one repeater going down would split MediaMesh') + card('mmBusyCard', 'When MediaMesh is busy');
+  }
+
+  root.MediaMeshInsights = {
+    init, destroy, cardsHtml, namer, routeLabel, clipLabel, deliverySummary, deliveryHtml, speedRows, speedSummary, speedHtml,
+    busyGrid, busyHtml, backboneGraph, components, resilienceScore, weakSpots, weakHtml, median,
+  };
+})(typeof window !== 'undefined' ? window : globalThis);

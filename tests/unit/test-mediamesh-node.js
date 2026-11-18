@@ -58,7 +58,7 @@ test('MediaMesh styles never fix a text colour: text follows the theme', () => {
         if (!d) continue;
         const v = d[2].trim();
         // a theme variable, or inheriting, is fine; a literal colour is not
-        if (/^var\(--/.test(v) || /^(inherit|currentColor|transparent)$/i.test(v) || /^color-mix\(.*var\(--/.test(v)) continue;
+        if (/^var\(--/.test(v) || /^(inherit|currentColor|transparent|none)$/i.test(v) || /^color-mix\(.*var\(--/.test(v)) continue;
         bad.push(`${file}: ${sel} { ${d[1]}: ${v} }`);
       }
     }

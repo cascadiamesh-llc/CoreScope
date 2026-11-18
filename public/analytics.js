@@ -623,6 +623,7 @@
     initMediaMeshCoverage(el, Array.isArray(mm.repeaters) ? mm.repeaters : [], Array.isArray(mm.links) ? mm.links : [],
       Array.isArray(mm.backbone) ? mm.backbone : []);
     showMediaMeshMilestone(el, mediaMeshMilestone(mm, null, Date.now()));
+    if (window.MediaMeshInsights) window.MediaMeshInsights.init(el, mm);
   }
 
   let _mmCoverageDestroy = null;
@@ -943,6 +944,7 @@
       <div class="analytics-row"><div class="analytics-card flex-1 mm-chart">${chart.html.replace('Packets /', 'radio2 packets /')}</div></div>
       ${mediaMeshCoverageCardHtml(reps)}
       ${mediaMeshLeaderboardHtml(mm)}
+      ${window.MediaMeshInsights ? window.MediaMeshInsights.cardsHtml() : ''}
       <div class="analytics-row">
         <div class="analytics-card flex-1">
           <h3>MediaMesh repeaters</h3>
