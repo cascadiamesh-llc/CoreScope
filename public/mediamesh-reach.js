@@ -31,6 +31,46 @@
   // ---- Can I join from here? ------------------------------------------------
 
   /**
+   * "Pike & Boren", "Pike and Boren", "Pike at Boren", "Pike / Boren",
+   * "Pike @ Boren": the two street names, or null when it isn't a crossing.
+   * Anything after a comma ("…, Seattle") is the place, not a street; a
+   * name starting with a house number is an address.
+   */
+  function splitIntersection(q) {
+    const s = String(q || '').split(',')[0].trim();
+    const parts = s.split(/\s*(?:&|@|\/|\+|\band\b|\bat\b)\s*/i).map((p) => p.trim()).filter(Boolean);
+    if (parts.length !== 2 || parts.some((p) => /^\d/.test(p) || p.length < 2)) return null;
+    return parts;
+  }
+
+  /** The points ([lat, lon]) where two sets of lines (GeoJSON [lon, lat]
+   * coordinate lists) cross, nearest to near ([lat, lon]) first. */
+  function crossings(linesA, linesB, near) {
+    const kx = Math.cos(((near && near[0]) || 47.6) * Math.PI / 180);
+    const segs = (ls) => ls.flatMap((l) => l.slice(1).map((p, i) => [l[i], p]));
+    const out = [];
+    const sb = segs(linesB);
+    for (const [p, p2] of segs(linesA)) {
+      for (const [q, q2] of sb) {
+        const r = [(p2[0] - p[0]) * kx, p2[1] - p[1]], u = [(q2[0] - q[0]) * kx, q2[1] - q[1]], w = [(q[0] - p[0]) * kx, q[1] - p[1]];
+        const den = r[0] * u[1] - r[1] * u[0];
+        if (Math.abs(den) < 1e-18) continue;
+        const t = (w[0] * u[1] - w[1] * u[0]) / den, v = (w[0] * r[1] - w[1] * r[0]) / den;
+        if (t < -1e-9 || t > 1 + 1e-9 || v < -1e-9 || v > 1 + 1e-9) continue;
+        out.push([p[1] + (p2[1] - p[1]) * t, p[0] + (p2[0] - p[0]) * t]);
+      }
+    }
+    if (near) out.sort((a, b) => distKm(a[0], a[1], near[0], near[1]) - distKm(b[0], b[1], near[0], near[1]));
+    return out;
+  }
+
+  /** The street lines of a geocoder answer (jsonv2 with polygon_geojson). */
+  function streetLines(hits) {
+    return (Array.isArray(hits) ? hits : []).filter((h) => h && h.category === 'highway' && h.geojson)
+      .flatMap((h) => (h.geojson.type === 'LineString' ? [h.geojson.coordinates] : h.geojson.type === 'MultiLineString' ? h.geojson.coordinates : []));
+  }
+
+  /**
    * Every repeater counted within reach of a point, best first:
    * [{ rep, km, p (pathProfile), margin, band }]. elevAt from the card's
    * terrain; heightM the antenna's height above the ground there.
@@ -81,7 +121,7 @@
     return `<form class="mm-reach-join" data-mm-join role="search" aria-label="Can I join from here?">
       <label class="mm-reach-title" for="mmJoinQ">Can I join from here?</label>
       <div class="mm-reach-row">
-        <input id="mmJoinQ" type="search" class="mm-reach-input" placeholder="An address or place, e.g. 1420 E Pine St" autocomplete="street-address" enterkeyhint="search">
+        <input id="mmJoinQ" type="search" class="mm-reach-input" placeholder="An address, a place or a crossing, e.g. 1420 E Pine St or Pike &amp; Boren" autocomplete="street-address" enterkeyhint="search">
         <select id="mmJoinH" class="mm-reach-select" aria-label="Antenna height">${HEIGHTS.map(([h, l], i) => `<option value="${h}"${i === 2 ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>
         <button type="submit" class="tab-btn active">Check</button>
         <button type="button" class="tab-btn" data-mm-join-pick aria-pressed="false">Pick on the map</button>
@@ -345,12 +385,35 @@
       const q = form.querySelector('#mmJoinQ').value.trim();
       if (!q) return;
       out.innerHTML = '<p class="text-muted">Looking it up…</p>';
-      const b = map.getBounds().pad(1);
-      const url = `${GEOCODER}?format=jsonv2&limit=1&countrycodes=us,ca&viewbox=${b.getWest()},${b.getNorth()},${b.getEast()},${b.getSouth()}&q=${encodeURIComponent(q)}`;
+      const b = map.getBounds().pad(1), c = map.getCenter();
+      const look = async (params, w, n, e, s) => {
+        const res = await fetch(`${GEOCODER}?format=jsonv2&countrycodes=us,ca&viewbox=${w},${n},${e},${s}&${params}`, { headers: { Accept: 'application/json' } });
+        return res.ok ? res.json() : [];
+      };
       try {
-        const res = await fetch(url, { headers: { Accept: 'application/json' } });
-        const hits = res.ok ? await res.json() : [];
-        if (!hits.length) { out.innerHTML = '<p class="text-muted">Couldn\'t find that. Try a street address with the city, or pick the spot on the map.</p>'; return; }
+        // A crossing ("Pike & Boren"): the geocoder doesn't know those, so
+        // fetch both streets' lines near the middle of the map and find
+        // where they meet. One request a second, as the geocoder asks.
+        const two = splitIntersection(q);
+        if (two) {
+          const dLat = Math.min(0.2, (b.getNorth() - b.getSouth()) / 2), dLon = Math.min(0.3, (b.getEast() - b.getWest()) / 2);
+          const lines = [];
+          for (const name of two) {
+            if (lines.length) await new Promise((r) => setTimeout(r, 1100));
+            lines.push(streetLines(await look(`limit=40&dedupe=0&bounded=1&polygon_geojson=1&polygon_threshold=0&q=${encodeURIComponent(name)}`,
+              c.lng - dLon, c.lat + dLat, c.lng + dLon, c.lat - dLat)));
+          }
+          const hit = crossings(lines[0], lines[1], [c.lat, c.lng])[0];
+          if (hit) { check(hit[0], hit[1], `${two[0]} & ${two[1]}`); return; }
+          await new Promise((r) => setTimeout(r, 1100));
+        }
+        const hits = await look(`limit=1&q=${encodeURIComponent(q)}`, b.getWest(), b.getNorth(), b.getEast(), b.getSouth());
+        if (!hits.length) {
+          out.innerHTML = two
+            ? `<p class="text-muted">Couldn't find where ${esc(two[0])} meets ${esc(two[1])} near this map. Check the spelling, move the map there, or pick the spot on the map.</p>`
+            : '<p class="text-muted">Couldn\'t find that. Try a street address, a crossing like "Pike &amp; Boren", or pick the spot on the map.</p>';
+          return;
+        }
         check(Number(hits[0].lat), Number(hits[0].lon), hits[0].display_name.split(',').slice(0, 3).join(','));
       } catch (_) {
         out.innerHTML = '<p class="text-muted">The address search isn\'t answering. Pick the spot on the map instead.</p>';
@@ -638,5 +701,5 @@
     return () => { cleanup.reverse().forEach((f) => { try { f(); } catch (_) { /* gone */ } }); };
   }
 
-  root.MediaMeshReach = { attach, reachFrom, verdict, heightThatWorks, peopleIn, peopleSummary, peopleWith, splitPlace, candidateSpots, spotGain, HEIGHTS, joinResultHtml, peopleHtml };
+  root.MediaMeshReach = { attach, reachFrom, splitIntersection, crossings, streetLines, verdict, heightThatWorks, peopleIn, peopleSummary, peopleWith, splitPlace, candidateSpots, spotGain, HEIGHTS, joinResultHtml, peopleHtml };
 })(typeof window !== 'undefined' ? window : globalThis);

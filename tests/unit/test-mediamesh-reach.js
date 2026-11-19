@@ -77,6 +77,28 @@ async function test(name, fn) {
     assert.ok(g.km2 < 5 && g.people === 0, JSON.stringify(g));
   });
 
+  await test('a crossing like "Pike & Boren" is split and found where the streets meet', () => {
+    assert.deepStrictEqual(R.splitIntersection('Pike & Boren'), ['Pike', 'Boren']);
+    assert.deepStrictEqual(R.splitIntersection('Pike and Boren, Seattle'), ['Pike', 'Boren']);
+    assert.deepStrictEqual(R.splitIntersection('E Pine St at Broadway'), ['E Pine St', 'Broadway']);
+    assert.deepStrictEqual(R.splitIntersection('Pike/Boren'), ['Pike', 'Boren']);
+    assert.strictEqual(R.splitIntersection('1420 E Pine St'), null);
+    assert.strictEqual(R.splitIntersection('Pike Place Market'), null);
+    assert.strictEqual(R.splitIntersection('Andover Park'), null, '"and" inside a word is not a crossing');
+    assert.strictEqual(R.splitIntersection('Pike & 3rd & Pine'), null);
+    // Pike Street east-west, Boren Avenue running north-west, as OpenStreetMap
+    // draws them (way segments in [lon, lat]); a far-off Pike crossing a far-off Boren
+    const pike = R.streetLines([{ category: 'highway', geojson: { type: 'LineString', coordinates: [[-122.3310, 47.6127], [-122.3295, 47.6132], [-122.3280, 47.6137]] } },
+      { category: 'highway', geojson: { type: 'LineString', coordinates: [[-122.10, 47.40], [-122.08, 47.40]] } },
+      { category: 'leisure', geojson: { type: 'Polygon', coordinates: [[[0, 0], [1, 1], [1, 0], [0, 0]]] } }]);
+    const boren = R.streetLines([{ category: 'highway', geojson: { type: 'MultiLineString', coordinates: [[[-122.3280, 47.6120], [-122.3292, 47.6136], [-122.3300, 47.6150]], [[-122.09, 47.39], [-122.09, 47.41]]] } }]);
+    assert.strictEqual(pike.length, 2);
+    const hits = R.crossings(pike, boren, [47.61, -122.33]);
+    assert.strictEqual(hits.length, 2);
+    assert.ok(Math.abs(hits[0][0] - 47.6133) < 0.0005 && Math.abs(hits[0][1] + 122.3292) < 0.0005, JSON.stringify(hits[0]));
+    assert.deepStrictEqual(R.crossings(pike, [], null), []);
+  });
+
   await test('wiring and readable colours', () => {
     const c = pub('mediamesh-coverage.js');
     assert.ok(c.includes('root.MediaMeshReach.attach(el, {') && c.includes('shownListeners.forEach'));
