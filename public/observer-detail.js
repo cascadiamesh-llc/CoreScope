@@ -190,6 +190,9 @@ window.ObserverDetailNaiveBanner = {
       // Only the latest load of the current visit owns the detail view.
       if (generation !== detailGeneration) return;
       renderDetail(obs);
+      // MediaMesh (mediamesh-observer.js): stays hidden for an observer that
+      // has nothing to do with it.
+      if (window.MediaMeshObserver) window.MediaMeshObserver.load(document.getElementById('obsMediaMesh'), obs, days);
       analyticsRequest.then(result => {
         if (generation !== detailGeneration) return;
         const el = document.getElementById('obsAnalytics');
@@ -348,6 +351,7 @@ window.ObserverDetailNaiveBanner = {
       </div>
       <div id="obsClockOffset" aria-busy="true"><div class="text-muted" role="status" style="margin-bottom:20px">Loading clock calibration…</div></div>
       ${window.ObserverDetailRadioHistory ? window.ObserverDetailRadioHistory.render(obs.radio_history) : ''}
+      <div id="obsMediaMesh" class="mm-obs-wrap" hidden></div>
       ${window.ObserverNeighbors ? window.ObserverNeighbors.detailHtml(obs.neighbor_report) : ''}
       <div id="obsAnalytics" aria-busy="true"><div class="text-muted" role="status">Loading analytics…</div></div>`;
   }

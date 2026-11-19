@@ -6454,3 +6454,24 @@ tr.pk-mm-row > td:first-child { box-shadow: inset 3px 0 0 var(--mediamesh-path-c
 .filter-bar .btn.pk-mm-toggle.active, [data-theme="dark"] .filter-bar .btn.pk-mm-toggle.active, .filter-group .btn.pk-mm-toggle.active { border-color: var(--mediamesh-badge-bg); background: var(--mediamesh-badge-bg); color: var(--mediamesh-on-color); box-shadow: 0 0 10px color-mix(in srgb, var(--mediamesh-path-color) 50%, transparent); }
 .filter-bar .btn.pk-mm-toggle.active .pk-mm-count, .filter-group .btn.pk-mm-toggle.active .pk-mm-count { background: var(--mediamesh-on-color); color: var(--mediamesh-badge-bg); }
 .mm-ins-map-actions { display: flex; justify-content: flex-end; margin-top: 6px; }
+
+/* MediaMesh on an observer's page (mediamesh-observer.js) */
+.mm-obs-wrap { margin-bottom: 20px; }
+.mm-obs-card { padding: 14px; border-color: color-mix(in srgb, var(--mediamesh-node-color) 45%, var(--border)); }
+.mm-obs-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.mm-obs-head h4 { margin: 0; }
+.mm-obs-more { margin-left: auto; font-size: 0.85em; color: var(--accent); }
+.mm-obs-listens { margin: 8px 0 12px; font-size: 0.9em; color: var(--text); }
+.mm-obs-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.mm-obs-stat .stat-value { font-size: 1.35em; }
+.mm-obs-sub { font-size: 0.75em; color: var(--text-muted); margin-top: 2px; }
+.mm-obs-heard { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 14px; align-items: start; }
+.mm-obs-heard--nomap { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 900px) { .mm-obs-heard { grid-template-columns: minmax(0, 1fr); } }
+.mm-obs-table { overflow-x: auto; min-width: 0; }
+.mm-obs-table .data-table { font-size: 0.85em; width: 100%; }
+.mm-obs-table .data-table th, .mm-obs-table .data-table td { white-space: nowrap; max-width: none; overflow: visible; text-overflow: clip; }
+.mm-obs-num { text-align: right; font-variant-numeric: tabular-nums; }
+.mm-obs-map { height: 300px; border-radius: 8px; }
+.mm-obs-note { font-size: 0.8em; margin: 6px 0 0; color: var(--text-muted); }
+.mm-obs-repeater { margin-top: 14px; }

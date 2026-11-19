@@ -33,7 +33,7 @@
   }
 
   /** The card's HTML (the footprint map fills #mmNodeMap afterwards). */
-  function cardHtml(rep, report, now) {
+  function cardHtml(rep, report, now, opts) {
     const r = report.repeater || {};
     const name = r.name || String(report.public_key || '').slice(0, 8);
     const first = Date.parse(r.first_seen);
@@ -53,7 +53,7 @@
       return `<li><a href="#/nodes/${encodeURIComponent(p.pk)}">${esc(p.name || p.pk.slice(0, 8))}</a> <span class="text-muted">${Number(e.packets).toLocaleString()}</span></li>`;
     }).join('');
     const placed = Number.isFinite(rep && rep.lat) && Number.isFinite(rep && rep.lon) && !(rep.lat === 0 && rep.lon === 0);
-    return `<h4>${ICON('ph-share-network')} MediaMesh</h4>
+    return `<h4>${ICON('ph-share-network')} ${opts && opts.title ? esc(opts.title) : 'MediaMesh'}</h4>
       <div class="mm-node-tiles">
         <div class="mm-node-tile"><div class="mm-node-label">On MediaMesh since</div><div class="mm-node-value">${joined}</div></div>
         <div class="mm-node-tile"><div class="mm-node-label">Media packets relayed this week</div><div class="mm-node-value">${week.toLocaleString()} <span class="text-muted">${esc(rank)}</span></div>${clips ? `<div class="text-muted mm-node-sub">${clips}</div>` : ''}</div>
@@ -252,7 +252,7 @@
   let current = null;
 
   /** Fills el (hidden until there's something to show) for node n. */
-  async function load(el, pubkey, n) {
+  async function load(el, pubkey, n, opts) {
     if (!el || !pubkey) return;
     if (current) {
       current.gone = true;
@@ -268,7 +268,7 @@
     } catch (_) { return; }
     if (current !== token || !report || !report.repeater || !el.isConnected) return;
     const rep = { name: report.repeater.name || (n && n.name), lat: Number(n && n.lat), lon: Number(n && n.lon), radio: report.repeater.radio };
-    el.innerHTML = cardHtml(rep, report, Date.now());
+    el.innerHTML = cardHtml(rep, report, Date.now(), opts);
     el.hidden = false;
     if (el.querySelector('#mmNodeMap')) {
       token.map = await drawMap(el.querySelector('#mmNodeMap'), rep, report, el.querySelector('#mmNodeArea'));

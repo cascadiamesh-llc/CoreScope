@@ -107,7 +107,10 @@ type covPointsStore struct {
 }
 
 func openCovPointsStore(path string) (*covPointsStore, error) {
-	db, err := sql.Open("sqlite3", "file:"+path+"?_busy_timeout=5000&_journal_mode=WAL")
+	// Its own file, never the analyzer's database (which the server only
+	// reads, readonly_invariant_test.go); the default rollback journal is
+	// plenty for a few uploads an hour.
+	db, err := sql.Open("sqlite3", "file:"+path+"?_busy_timeout=5000")
 	if err != nil {
 		return nil, err
 	}
