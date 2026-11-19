@@ -1291,3 +1291,12 @@ func TestMatchScopeIsOrderIndependent(t *testing.T) {
 		}
 	}
 }
+
+// The fork always reads #mediamesh (channel hash 0xFF), config or not.
+func TestLoadChannelKeysBuiltinMediaMesh(t *testing.T) {
+	t.Setenv("CHANNEL_KEYS_PATH", "")
+	keys := loadChannelKeys(&Config{}, filepath.Join(t.TempDir(), "config.json"))
+	if got := keys["#mediamesh"]; got != "b9ec7b4d14ca1f9b4b4bc4a5266e1512" {
+		t.Errorf("#mediamesh key = %q", got)
+	}
+}

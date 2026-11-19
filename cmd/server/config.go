@@ -1307,7 +1307,8 @@ func (n *channelKeyNames) UnmarshalJSON(b []byte) error {
 // written except the well-known casing fix (public becomes Public).
 // Case-sensitive, like the ingestor's key map.
 func (c *Config) configuredChannelNames() map[string]bool {
-	names := map[string]bool{}
+	// The CascadiaMesh fork's ingestor always decrypts #mediamesh.
+	names := map[string]bool{"#mediamesh": true}
 	if c == nil {
 		return names
 	}

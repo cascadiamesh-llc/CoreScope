@@ -305,7 +305,7 @@ func TestChannelKeyNamesKeepsNoKeyMaterial(t *testing.T) {
 
 func TestConfiguredChannelNames(t *testing.T) {
 	got := configuredChannelsConfig(t).configuredChannelNames()
-	want := map[string]bool{"#mesh": true, "#Club": true, "#secret": true, "Public": true}
+	want := map[string]bool{"#mesh": true, "#Club": true, "#secret": true, "Public": true, "#mediamesh": true}
 	if len(got) != len(want) {
 		t.Fatalf("configured names = %v; want %v", got, want)
 	}
@@ -315,8 +315,9 @@ func TestConfiguredChannelNames(t *testing.T) {
 		}
 	}
 	var nilCfg *Config
-	if len(nilCfg.configuredChannelNames()) != 0 {
-		t.Fatal("nil config has configured names")
+	// the fork's ingestor reads #mediamesh whatever the config says
+	if got := nilCfg.configuredChannelNames(); len(got) != 1 || !got["#mediamesh"] {
+		t.Fatalf("nil config: configured names = %v; want only #mediamesh", got)
 	}
 }
 

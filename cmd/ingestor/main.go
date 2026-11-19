@@ -1858,8 +1858,17 @@ func builtinChannelKeys() map[string]string {
 		// Default Public channel — well-known PSK from the MeshCore companion
 		// protocol spec. Channel-hash byte = 0x11.
 		"Public": "8b3387e9c5cdea6ac9e5edbaa115cd72",
+		// CascadiaMesh fork: the MediaMesh hashtag channel, so the photo,
+		// video and voice announcements and channel data sent on it can be
+		// read (clip kinds, the flight recorder, whole-clip counts).
+		// Channel-hash byte = 0xFF.
+		mediaMeshHashChannel: deriveHashtagChannelKey(mediaMeshHashChannel),
 	}
 }
+
+// mediaMeshHashChannel is always decrypted by this fork, as if it were in
+// every config's hashChannels.
+const mediaMeshHashChannel = "#mediamesh"
 
 // loadChannelKeys loads channel decryption keys from config and/or a JSON file.
 // Merge priority: builtin (lowest) → rainbow → derived from hashChannels → explicit config (highest).
