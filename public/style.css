@@ -6016,6 +6016,9 @@ body.embed #app.app-fixed {
 .mm-cov-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
 .mm-cov-head h3 { margin: 0; }
 .mm-cov-intro { margin: 4px 0 0; font-size: 0.85em; }
+.mm-cov-title > span { font-weight: 400; }
+.mm-cov-title > strong { font-weight: 700; }
+.mm-cov-observer-note { display: inline-block; font-size: 0.62em; font-weight: 400; color: var(--text-muted); }
 .mm-cov-toggle { display: flex; gap: 4px; flex-wrap: wrap; }
 .mm-cov-map { height: 520px; border-radius: 8px; margin-top: 12px; }
 @media (max-width: 640px) { .mm-cov-map { height: 380px; } }
@@ -6445,3 +6448,4 @@ tr.pk-mm-row > td:first-child { box-shadow: inset 3px 0 0 var(--mediamesh-path-c
 .pk-mm-toggle { color: var(--mediamesh-text-color, var(--text)); }
 .filter-bar .btn.pk-mm-toggle.active, [data-theme="dark"] .filter-bar .btn.pk-mm-toggle.active, .filter-group .btn.pk-mm-toggle.active { border-color: var(--mediamesh-badge-bg); background: var(--mediamesh-badge-bg); color: var(--mediamesh-on-color); box-shadow: 0 0 10px color-mix(in srgb, var(--mediamesh-path-color) 50%, transparent); }
 .filter-bar .btn.pk-mm-toggle.active .pk-mm-count, .filter-group .btn.pk-mm-toggle.active .pk-mm-count { background: var(--mediamesh-on-color); color: var(--mediamesh-badge-bg); }
+.mm-ins-map-actions { display: flex; justify-content: flex-end; margin-top: 6px; }

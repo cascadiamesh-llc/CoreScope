@@ -347,7 +347,8 @@
       <div class="mm-ins-score">${gauge}<div><div class="mm-ins-strong">Resilience: ${scoreWord(ws.score)}</div><div class="text-muted">${summary}</div></div></div>
       ${rows.length ? `<table class="analytics-table mm-ins-table"><tbody>${rows.join('')}</tbody></table>` : ''}${fix}
       <p class="text-muted mm-ins-key">The score: with each repeater in turn gone, the share of the others that can still reach each other; half the average, half the worst case. Only hops seen this week count: a link that exists but carried nothing isn't in it.</p>
-    </div><div class="mm-ins-col mm-ins-wide"><div class="mm-ins-map" id="mmWeakMap" role="img" aria-label="The week's backbone, with weak spots marked"></div></div></div>`;
+    </div><div class="mm-ins-col mm-ins-wide"><div class="mm-ins-map" id="mmWeakMap" role="img" aria-label="The week's backbone, with weak spots marked"></div>
+      <div class="mm-ins-map-actions"><button type="button" class="btn-secondary" data-mm-weak-png title="Save the map, with the score and what's marked, as a picture to share">Download map (PNG)</button></div></div></div>`;
   }
 
   function cssColor(name, fallback) {
@@ -362,7 +363,8 @@
     if (!pts.length) { box.hidden = true; return null; }
     const map = L.map(box, { zoomControl: true, attributionControl: true, scrollWheelZoom: false });
     const tileUrl = typeof root.getTileUrl === 'function' ? root.getTileUrl() : null;
-    if (tileUrl) L.tileLayer(tileUrl, { maxZoom: 18 }).addTo(map);
+    // fetched with CORS, so the map can be saved as a picture (mapPng)
+    if (tileUrl) L.tileLayer(tileUrl, { maxZoom: 18, crossOrigin: 'anonymous' }).addTo(map);
     map.fitBounds(L.latLngBounds(pts).pad(0.15));
     const line = cssColor('--mediamesh-node-color', '#d946ef'), bad = cssColor('--status-red', '#dc2626'), warn = cssColor('--status-amber', '#d97706'), fixC = '#0891b2';
     const maxW = Math.max(1, ...Object.values(g.w));
@@ -389,6 +391,95 @@
     return map;
   }
 
+  // ---- Saving a map ------------------------------------------------------------
+
+  /**
+   * A Leaflet map as a PNG Blob: its tiles, its lines and circles (the SVG
+   * overlay), a heading and footer lines, at twice the size for sharp text.
+   * opts: { title, subtitle, legend: [[css colour, label]], footer }. Tiles
+   * that can't be drawn (no CORS) are left out rather than failing.
+   */
+  async function mapPng(map, opts) {
+    const o = opts || {};
+    const box = map.getContainer(), rect = box.getBoundingClientRect();
+    const W = Math.round(rect.width), H = Math.round(rect.height);
+    const head = 64, foot = 40, k = 2;
+    const cv = document.createElement('canvas');
+    cv.width = W * k; cv.height = (H + head + foot) * k;
+    const g = cv.getContext('2d');
+    g.scale(k, k);
+    const dark = document.documentElement.dataset.theme === 'dark' || (!document.documentElement.dataset.theme && root.matchMedia && root.matchMedia('(prefers-color-scheme: dark)').matches);
+    const bg = dark ? '#0f172a' : '#ffffff', fg = dark ? '#e2e8f0' : '#0f172a', muted = dark ? '#94a3b8' : '#475569';
+    g.fillStyle = bg; g.fillRect(0, 0, W, H + head + foot);
+    g.fillStyle = getComputedStyle(box).backgroundColor || bg; g.fillRect(0, head, W, H);
+    // tiles where they sit
+    const tiles = [...box.querySelectorAll('img.leaflet-tile')].filter((im) => im.complete && im.naturalWidth);
+    for (const im of tiles) {
+      const r = im.getBoundingClientRect();
+      try {
+        g.save(); g.beginPath(); g.rect(0, head, W, H); g.clip();
+        g.globalAlpha = Number(getComputedStyle(im).opacity) || 1;
+        g.drawImage(im, r.left - rect.left, r.top - rect.top + head, r.width, r.height);
+        g.restore();
+      } catch (_) { g.restore(); }
+    }
+    // the overlay: Leaflet draws lines and circles as one SVG
+    const svg = box.querySelector('.leaflet-overlay-pane svg');
+    if (svg) {
+      const r = svg.getBoundingClientRect();
+      const copy = svg.cloneNode(true);
+      copy.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+      copy.setAttribute('width', String(r.width)); copy.setAttribute('height', String(r.height));
+      copy.style.transform = '';
+      const url = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new XMLSerializer().serializeToString(copy));
+      await new Promise((res) => {
+        const im = new Image();
+        im.onload = () => {
+          g.save(); g.beginPath(); g.rect(0, head, W, H); g.clip();
+          g.drawImage(im, r.left - rect.left, r.top - rect.top + head, r.width, r.height);
+          g.restore(); res();
+        };
+        im.onerror = res;
+        im.src = url;
+      });
+    }
+    // names of what's marked, beside their circles
+    (o.labels || []).forEach(([lat, lon, text]) => {
+      const p = map.latLngToContainerPoint([lat, lon]);
+      g.font = '600 12px Inter, system-ui, sans-serif';
+      g.lineWidth = 3; g.lineJoin = 'round'; g.strokeStyle = bg; g.fillStyle = fg;
+      g.strokeText(text, p.x + 14, p.y + head + 4); g.fillText(text, p.x + 14, p.y + head + 4);
+    });
+    // the heading, smaller if it would run off a narrow map
+    const fitText = (text, weight, size, min, y, colour) => {
+      let px = size;
+      do { g.font = `${weight} ${px}px Inter, system-ui, sans-serif`; } while (g.measureText(text).width > W - 28 && --px > min);
+      g.fillStyle = colour; g.fillText(text, 14, y);
+    };
+    fitText(o.title || '', 600, 18, 12, 28, fg);
+    fitText(o.subtitle || '', 400, 13, 9, 50, muted);
+    let x = 14;
+    (o.legend || []).forEach(([c, label]) => {
+      g.fillStyle = c; g.fillRect(x, H + head + 15, 14, 4);
+      g.fillStyle = muted; g.font = '12px Inter, system-ui, sans-serif';
+      g.fillText(label, x + 20, H + head + 21);
+      x += 30 + g.measureText(label).width;
+    });
+    g.textAlign = 'right';
+    g.fillText(o.footer || '', W - 14, H + head + 21);
+    return new Promise((res) => {
+      try { cv.toBlob((b) => res(b), 'image/png'); } catch (_) { res(null); }
+    });
+  }
+
+  function saveBlob(blob, name) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  }
+
   // ---- Wiring ---------------------------------------------------------------
 
   const DAYS_BACK = 7;
@@ -406,6 +497,26 @@
       weak.innerHTML = weakHtml(ws);
       const m = drawWeakMap(weak, ws);
       if (m) me.maps.push(m);
+      const btn = weak.querySelector('[data-mm-weak-png]');
+      if (btn && !m) btn.hidden = true;
+      if (btn && m) {
+        btn.addEventListener('click', async () => {
+          btn.disabled = true;
+          const g = ws.graph, day = new Date().toISOString().slice(0, 10);
+          const labels = ws.cuts.map((c) => [...g.pos[c.key], c.name]).concat(ws.hub && ws.hub.share >= 40 && g.pos[ws.hub.key] ? [[...g.pos[ws.hub.key], ws.hub.name]] : [])
+            .concat(ws.fix && g.pos[ws.fix.a] && g.pos[ws.fix.b] ? [[...g.pos[ws.fix.a], ws.fix.aName], [...g.pos[ws.fix.b], ws.fix.bName]] : []);
+          const blob = await mapPng(m, {
+            title: `MediaMesh backbone · resilience ${ws.score} of 100 (${scoreWord(ws.score)})`,
+            subtitle: `Hops photos, video and voice took in the week to ${day}`,
+            legend: [[cssColor('--mediamesh-node-color', '#d946ef'), 'hop this week'], [cssColor('--status-red', '#dc2626'), 'only way through'], [cssColor('--status-amber', '#d97706'), 'on most hops'], ['#0891b2', 'suggested link']],
+            // the map's credits travel with the picture
+            footer: [((m.getContainer().querySelector('.leaflet-control-attribution') || {}).textContent || '').replace(/^\W*Leaflet\s*\|?\s*/, '').trim(), (root.location && root.location.host) || ''].filter(Boolean).join(' · '),
+            labels,
+          });
+          btn.disabled = false;
+          if (blob) saveBlob(blob, `mediamesh-resilience-${day}.png`);
+        });
+      }
     }
     const fetcher = (opts && opts.api) || root.api;
     if (typeof fetcher !== 'function') return;
@@ -464,6 +575,6 @@
 
   root.MediaMeshInsights = {
     init, destroy, cardsHtml, namer, routeLabel, clipLabel, deliverySummary, deliveryHtml, speedRows, speedSummary, speedHtml,
-    busyGrid, busyHtml, backboneGraph, components, resilienceScore, weakSpots, weakHtml, median,
+    busyGrid, busyHtml, backboneGraph, components, resilienceScore, weakSpots, weakHtml, median, mapPng,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

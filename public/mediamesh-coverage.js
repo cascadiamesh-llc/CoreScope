@@ -1827,12 +1827,15 @@
     };
     const markers = placed.map((r, i) => {
       const relayed = r.source === 'relayed';
+      // placed from its name (it never sent a position): hollow and dashed
+      const guessed = !!r.position_from_name;
       const m = L.circleMarker([r.lat, r.lon], {
         radius: 5, weight: 2,
-        color: relayed ? weak : '#fff',
-        fillColor: relayed ? '#fff' : strong,
-        fillOpacity: 1, bubblingMouseEvents: false,
-      }).bindTooltip(repName(r)).addTo(map);
+        color: guessed ? strong : relayed ? weak : '#fff',
+        fillColor: guessed ? '#fff' : relayed ? '#fff' : strong,
+        dashArray: guessed ? '2 2' : null,
+        fillOpacity: guessed ? 0.6 : 1, bubblingMouseEvents: false,
+      }).bindTooltip(repName(r) + (guessed ? ` · position guessed from its name (${r.near || ''})` : '')).addTo(map);
       m.bindPopup(() => {
         const div = document.createElement('div');
         div.className = 'mm-cov-popup';

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -68,6 +69,9 @@ type MediaMeshRepeater struct {
 	// contents the analyzer can't read.
 	ClipsWeek          int `json:"media_clips_7d"`
 	ClipsEstimatedWeek int `json:"media_clips_estimated_7d"`
+	// PositionFromName: it never sent a position; Lat/Lon is the middle of
+	// the place its name names (Near), a guess.
+	PositionFromName bool `json:"position_from_name,omitempty"`
 	MediaMeshNode
 }
 
@@ -132,7 +136,8 @@ func mediaMeshLinks(aggs map[string]*mediaMeshLinkAgg, nodes map[string]nodeInfo
 	out := make([]MediaMeshLink, 0, len(aggs))
 	pos := func(pk string) (*float64, *float64) {
 		n, ok := nodes[strings.ToLower(pk)]
-		if !ok || (n.Lat == 0 && n.Lon == 0) {
+		// a position guessed from a name is no good for measuring a link
+		if !ok || (n.Lat == 0 && n.Lon == 0) || n.GuessedPlace != "" {
 			return nil, nil
 		}
 		lat, lon := n.Lat, n.Lon
@@ -584,6 +589,35 @@ func (s *PacketStore) mediaMeshNodeInfo() map[string]nodeInfo {
 	for _, n := range nodes {
 		names[strings.ToLower(n.PublicKey)] = n
 	}
+	// MediaMesh repeaters that never sent a position: where their name says
+	// (Rainier Vista East, UpperFremont), near the middle of the others
+	p := mediaMeshNodes.Load()
+	if p == nil {
+		return names
+	}
+	var sLat, sLon float64
+	placed := 0
+	for pk := range *p {
+		if n, ok := names[pk]; ok && !(n.Lat == 0 && n.Lon == 0) {
+			sLat += n.Lat
+			sLon += n.Lon
+			placed++
+		}
+	}
+	cLat, cLon := math.NaN(), math.NaN()
+	if placed > 0 {
+		cLat, cLon = sLat/float64(placed), sLon/float64(placed)
+	}
+	for pk := range *p {
+		n, ok := names[pk]
+		if !ok || !(n.Lat == 0 && n.Lon == 0) || n.Name == "" {
+			continue
+		}
+		if lat, lon, label, ok := guessPlace(n.Name, cLat, cLon); ok {
+			n.Lat, n.Lon, n.GuessedPlace = lat, lon, label
+			names[pk] = n
+		}
+	}
 	return names
 }
 
@@ -592,6 +626,9 @@ func nodeNear(nodes map[string]nodeInfo, pubkey string) string {
 	n, ok := nodes[strings.ToLower(pubkey)]
 	if !ok || (n.Lat == 0 && n.Lon == 0) {
 		return ""
+	}
+	if n.GuessedPlace != "" {
+		return n.GuessedPlace
 	}
 	return nearPlaceNamed(n.Lat, n.Lon, n.Name)
 }
@@ -628,6 +665,7 @@ func (s *PacketStore) mediaMeshRepeaters(now time.Time, names map[string]nodeInf
 		if info, ok := names[pk]; ok && !(info.Lat == 0 && info.Lon == 0) {
 			lat, lon := info.Lat, info.Lon
 			rep.Lat, rep.Lon = &lat, &lon
+			rep.PositionFromName = info.GuessedPlace != ""
 		}
 		out = append(out, rep)
 	}

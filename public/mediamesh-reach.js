@@ -163,9 +163,9 @@
   function peopleHtml(s, monthAgo) {
     const sea = s.cities.find((c) => c.city === 'Seattle');
     const tiles = `<div class="mm-ins-tiles">
-      ${sea ? `<div class="mm-ins-tile"><div class="mm-ins-big mm-ins-accent">${Math.round((sea.reached / sea.total) * 100)}%</div><div class="mm-ins-label">of Seattle residents · about ${fmtN(Math.round(sea.reached / 1000) * 1000)} of ${fmtN(Math.round(sea.total / 1000) * 1000)}</div></div>` : ''}
-      <div class="mm-ins-tile"><div class="mm-ins-big">${fmtN(s.reached)}</div><div class="mm-ins-label">people within reach, all told</div></div>
-      ${monthAgo !== null ? `<div class="mm-ins-tile"><div class="mm-ins-big">${s.reached - monthAgo >= 0 ? '+' : '−'}${fmtN(Math.abs(s.reached - monthAgo))}</div><div class="mm-ins-label">people in the last 30 days, from new repeaters</div></div>` : ''}
+      ${sea ? `<div class="mm-ins-tile"><div class="mm-ins-big mm-ins-accent">${Math.round((sea.reached / sea.total) * 100)}%</div><div class="mm-ins-label">of Seattle residents potentially in reach · about ${fmtN(Math.round(sea.reached / 1000) * 1000)} of ${fmtN(Math.round(sea.total / 1000) * 1000)}</div></div>` : ''}
+      <div class="mm-ins-tile"><div class="mm-ins-big">${fmtN(s.reached)}</div><div class="mm-ins-label">people potentially within reach, all told</div></div>
+      ${monthAgo !== null ? `<div class="mm-ins-tile"><div class="mm-ins-big">${s.reached - monthAgo >= 0 ? '+' : '−'}${fmtN(Math.abs(s.reached - monthAgo))}</div><div class="mm-ins-label">people potentially reached by repeaters new in the last 30 days</div></div>` : ''}
     </div>`;
     const bars = s.cities.slice(0, 8).map((c) => {
       const p = Math.round((c.reached / c.total) * 100);
@@ -173,7 +173,7 @@
     }).join('');
     const least = s.hoods.filter((h) => h.total >= 2000).sort((a, b) => a.reached / a.total - b.reached / b.total || b.total - a.total).slice(0, 6);
     const leastHtml = least.length ? `<h4>Seattle neighbourhoods least covered</h4><ul class="mm-reach-least">${least.map((h) => `<li>${esc(h.hood)} <span class="text-muted">${Math.round((h.reached / h.total) * 100)}% of ${fmtN(h.total)}</span></li>`).join('')}</ul>` : '';
-    return `<h3>How many people MediaMesh reaches</h3><p class="text-muted mm-ins-sub">The coverage estimate for people on the ground, weighted by where people live: 2020 Census block groups (600 to 3,000 people each), counted by their centre of population.</p>
+    return `<h3>How many people MediaMesh potentially reaches</h3><p class="text-muted mm-ins-sub">Where the coverage estimate says a companion or standalone radio on the ground could get through, weighted by where people live (not how many people use MediaMesh): 2020 Census block groups (600 to 3,000 people each), counted by their centre of population.</p>
       ${tiles}<div class="mm-ins-split"><div class="mm-ins-col"><h4>By place, within the estimate's area</h4>${bars}${leastHtml}</div>
       <div class="mm-ins-col mm-ins-wide"><div class="mm-ins-map" id="mmPeopleMap" role="img" aria-label="Where people live, reached or not"></div>
       <p class="text-muted mm-ins-key"><span class="mm-reach-dot mm-reach-dot--mm"></span>reached · <span class="mm-reach-dot mm-reach-dot--none"></span>not yet · dot size: people</p></div></div>
@@ -378,7 +378,10 @@
         const p = peopleSummary(peopleIn(shown, pts));
         let monthAgo = null;
         const firstSeen = shown.reps.map((r) => r.first_seen || '');
-        if (firstSeen.some(Boolean) && M.presentAt) {
+        // only once the history reaches back further than the 30 days: until
+        // then every repeater looks new, and the change is the whole total
+        const known = firstSeen.map((f) => Date.parse(f)).filter(Number.isFinite);
+        if (known.length && Math.min(...known) < Date.now() - 30 * 86400000 && M.presentAt) {
           const was = M.presentAt(firstSeen, Date.now() - 30 * 86400000);
           const on = shown.enabled || shown.reps.map(() => true);
           monthAgo = peopleWith(shown, pts.filter(([la, lo]) => la >= shown.bounds.south && la <= shown.bounds.north && lo >= shown.bounds.west && lo <= shown.bounds.east), on.map((x, i) => x && was[i]));

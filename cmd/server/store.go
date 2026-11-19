@@ -7262,6 +7262,10 @@ type nodeInfo struct {
 	LastSeen         time.Time
 	FirstSeen        string // RFC3339; populated by buildNodeInfoMap for callers that need it (e.g. /api/nodes/{pk}/reach)
 	ObservationCount int    // count of advertisements/observations; used for tier-3 tiebreak in resolveWithContext
+	// GuessedPlace: set (the place's label) only by mediaMeshNodeInfo, for a
+	// MediaMesh repeater that never sent a position, placed by its name
+	// (place_guess.go).
+	GuessedPlace string
 }
 
 // schemaDegradationLogged is now a PacketStore field (see type definition) so

@@ -638,13 +638,15 @@
   // The coverage estimate card (mediamesh-coverage.js draws the map into it).
   function mediaMeshCoverageCardHtml(reps) {
     const unplaced = reps.filter((r) => !(Number.isFinite(r.lat) && Number.isFinite(r.lon))).map((r) => r.name || (r.public_key || '').slice(0, 8));
-    const missing = unplaced.length
+    const guessed = reps.filter((r) => r.position_from_name).map((r) => `${r.name || ''} (${r.near || ''})`);
+    const fromName = guessed.length ? ` Placed from their names, as they never sent a position: ${guessed.slice(0, 4).map((n) => esc(n)).join(', ')}${guessed.length > 4 ? '…' : ''}; drawn hollow.` : '';
+    const missing = fromName + (unplaced.length
       ? ` Repeaters without a saved position (${unplaced.slice(0, 4).map((n) => esc(n)).join(', ')}${unplaced.length > 4 ? '…' : ''}) and unknown repeaters aren't drawn.`
-      : ' Unknown repeaters aren\'t drawn.';
+      : ' Unknown repeaters aren\'t drawn.');
     return `<div class="analytics-row"><div class="analytics-card flex-1" id="mmCoverageCard">
       <div class="mm-cov-head">
         <div>
-          <h3>MediaMesh coverage estimate</h3>
+          <h3 class="mm-cov-title"><span>MediaMesh coverage estimate</span> <strong>based on data from MediaMesh observers</strong> <small class="mm-cov-observer-note">(some areas with MediaMesh may not appear if there is no observer to hear it)</small></h3>
           <p class="text-muted mm-cov-intro">Where photos, video and voice on 911.150 MHz should get through, from each MediaMesh repeater's position and the terrain. Conservative: 22 dBm, antennas 10 m up, a 10 dB safety margin. Click the map for the terrain profile to any point.</p>
         </div>
         <div class="mm-cov-toggle">
@@ -904,7 +906,7 @@
       const rowClass = r.source === 'relayed' ? ' class="mm-row--relayed"' : '';
       return `<tr${rowClass}>
         <td data-value="${esc(name.toLowerCase())}"><span class="mm-dot mm-dot--${r.mode === 'rxtx' ? 'rxtx' : 'rx'}" aria-hidden="true"></span><a href="#/nodes/${encodeURIComponent(r.public_key || '')}">${esc(name)}</a></td>
-        <td>${esc(r.near || '—')}</td>
+        <td>${esc(r.near || '—')}${r.position_from_name ? ' <span class="text-muted mm-from-name" title="It never sent its position: placed in the middle of the place its name names">(from its name)</span>' : ''}</td>
         <td>${esc(r.role || '—')}</td>
         <td>${mode}</td>
         <td>${esc(mediaMeshRadioText(r.radio))}</td>
