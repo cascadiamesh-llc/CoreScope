@@ -79,6 +79,14 @@ test('the transfer card keeps its height in a full feed', () => {
   assert.ok(/\.live-feed-item\.live-mm-transfer \{ flex-shrink: 0;/.test(pub('live.css')));
 });
 
+test('counters: clips of unknown kind shown, relays counted once per packet', () => {
+  const ns = pub('live-nightsky.js'), js = pub('live.js');
+  assert.ok(ns.includes('data-ns-count="unknown"') && ns.includes('kind unknown'), 'unreadable clips get their own count');
+  assert.ok(ns.includes('data-ns-count="relays"') && !ns.includes('hops crossed'));
+  assert.ok(/st\.relayed\.get\(p\.hash\)/.test(ns), 'a packet heard over several paths counts its longest once');
+  assert.ok(/feedNightSky\(allPaths, typeName, payload, first\.hash\)/.test(js) && /hash: ev\.hash, relays: \(ev\.path \|\| \[\]\)\.length/.test(js), 'live and replay pass the hash and the whole path');
+});
+
 test('live.js wiring: button, feed while open, the replay endpoint', () => {
   const js = pub('live.js');
   assert.ok(js.includes('id="liveNightSkyBtn"') && js.includes('#ph-moon-stars'));

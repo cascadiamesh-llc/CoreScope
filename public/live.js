@@ -3752,7 +3752,7 @@
     }
 
     // --- Night sky: MediaMesh media as comets, everything else as embers ---
-    if (window.LiveNightSky && window.LiveNightSky.isOpen()) feedNightSky(allPaths, typeName, payload);
+    if (window.LiveNightSky && window.LiveNightSky.isOpen()) feedNightSky(allPaths, typeName, payload, first.hash);
 
     // --- Animate all unique paths simultaneously ---
     // First path gets audio sync hook, rest are visual-only
@@ -4931,12 +4931,13 @@
     return hopPositions.filter((h) => h && h.pos).map((h) => ({ lat: h.pos[0], lon: h.pos[1], name: h.name || '' }));
   }
 
-  function feedNightSky(allPaths, typeName, payload) {
+  function feedNightSky(allPaths, typeName, payload, hash) {
     for (const p of allPaths) {
       const hops = nightSkyHops(p.hopPositions);
       if (!hops.length) continue;
-      const clip = p.mediamesh ? mediaMeshSkyClip(typeName, payload, (p.key || '').split(','), mmAnnounced) : null;
-      if (clip && hops.length >= 2) window.LiveNightSky.packet(Object.assign({ hops }, clip));
+      const path = (p.key || '').split(',').filter(Boolean);
+      const clip = p.mediamesh ? mediaMeshSkyClip(typeName, payload, path, mmAnnounced) : null;
+      if (clip && hops.length >= 2) window.LiveNightSky.packet(Object.assign({ hops, hash, relays: path.length || hops.length }, clip));
       else window.LiveNightSky.ember(hops[0].lat, hops[0].lon);
     }
   }
@@ -4965,7 +4966,7 @@
       if (hops.length < 2) continue;
       const clip = mediaMeshSkyClip(ev.type, ev, ev.path || [], announced);
       if (!clip) continue;
-      events.push(Object.assign({ t: Date.parse(ev.ts), hops }, clip));
+      events.push(Object.assign({ t: Date.parse(ev.ts), hops, hash: ev.hash, relays: (ev.path || []).length || hops.length }, clip));
     }
     const from = Date.parse(data.from), to = Date.parse(data.to);
     const hours = Math.max(1, Math.round((to - from) / 3600000));

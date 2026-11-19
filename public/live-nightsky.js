@@ -70,7 +70,8 @@
         <div><span data-ns-count="photo">0</span><small>photos</small></div>
         <div><span data-ns-count="video">0</span><small>videos</small></div>
         <div><span data-ns-count="voice">0</span><small>voice clips</small></div>
-        <div><span data-ns-count="hops">0</span><small>hops crossed</small></div>
+        <div title="Sent on a channel the analyzer has no key for, so whether it is a photo, video or voice can't be told"><span data-ns-count="unknown">0</span><small>kind unknown</small></div>
+        <div title="Each time a repeater passed on a photo, video or voice packet"><span data-ns-count="relays">0</span><small>repeater relays</small></div>
       </div>
       <div class="nightsky-ticker" data-ns-ticker aria-live="polite"></div>
       <div class="nightsky-replay" data-ns-replay hidden><span data-ns-replay-label></span><i><b data-ns-replay-bar></b></i></div>
@@ -82,7 +83,7 @@
     const cv = el.querySelector('canvas');
     st = {
       el, cv, g: cv.getContext('2d'), opts: opts || {}, comets: [], pulses: [], embers: [],
-      transfers: new Map(), counts: { all: 0, photo: 0, video: 0, voice: 0, hops: 0 }, ticker: [],
+      transfers: new Map(), counts: { all: 0, photo: 0, video: 0, voice: 0, relays: 0 }, relayed: new Map(), ticker: [],
       stars: [], w: 0, h: 0, raf: 0, replay: null, startedAt: performance.now(),
     };
     resize();
@@ -145,14 +146,25 @@
   function isOpen() { return !!st; }
 
   /** A photo, video or voice packet: { key (its transfer), kind, hops:
-   * [{lat, lon, name}], seconds }. now: ms on the sky's clock (default now). */
+   * [{lat, lon, name}] (those with a position), seconds, hash, relays (the
+   * repeaters on its path, placed or not) }. now: ms on the sky's clock. */
   function packet(p, now) {
     if (!st || !p || !p.hops || p.hops.length < 2) return;
     const t = (now == null ? performance.now() : now) / 1000;
     const kind = kindOf(p.kind);
     const pts = p.hops.map((h) => st.proj.P(h.lat, h.lon));
     st.comets.push({ pts, kind, t0: t, names: p.hops });
-    st.counts.hops += p.hops.length - 1;
+    // Relays: each repeater on its path passed it on once. Observers hear one
+    // packet over several paths that share their start, so a packet counts
+    // its longest path once, not each copy heard.
+    const relays = Number.isFinite(p.relays) ? p.relays : p.hops.length;
+    if (p.hash) {
+      const before = st.relayed.get(p.hash) || 0;
+      if (relays > before) { st.counts.relays += relays - before; st.relayed.set(p.hash, relays); }
+      if (st.relayed.size > 5000) st.relayed.delete(st.relayed.keys().next().value);
+    } else {
+      st.counts.relays += relays;
+    }
     // one ticker line and one count per transfer
     const key = p.key || (kind + '|' + p.hops[0].lat + ',' + p.hops[0].lon);
     let tr = st.transfers.get(key);
@@ -183,7 +195,8 @@
   function replay(events, opts) {
     if (!st) return;
     const dur = (opts && opts.durationMs) || 60000;
-    st.counts = { all: 0, photo: 0, video: 0, voice: 0, hops: 0 };
+    st.counts = { all: 0, photo: 0, video: 0, voice: 0, relays: 0 };
+    st.relayed = new Map();
     st.transfers.clear(); st.ticker = []; st.comets = [];
     st.replay = { events: events.slice().sort((a, b) => a.t - b.t), i: 0, start: performance.now(), dur, from: opts.from, to: opts.to, label: opts.label || 'Replay' };
     const box = st.el.querySelector('[data-ns-replay]');
@@ -308,7 +321,9 @@
     lastHud = sig;
     st.el.querySelector('[data-ns-time]').textContent = time;
     st.el.querySelector('[data-ns-date]').textContent = date;
-    for (const k of ['all', 'photo', 'video', 'voice', 'hops']) st.el.querySelector(`[data-ns-count="${k}"]`).textContent = st.counts[k].toLocaleString();
+    const c = st.counts;
+    const shown = Object.assign({ unknown: Math.max(0, c.all - c.photo - c.video - c.voice) }, c);
+    for (const k of ['all', 'photo', 'video', 'voice', 'unknown', 'relays']) st.el.querySelector(`[data-ns-count="${k}"]`).textContent = shown[k].toLocaleString();
     st.el.querySelector('[data-ns-ticker]').innerHTML = tick;
   }
 
