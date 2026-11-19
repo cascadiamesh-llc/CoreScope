@@ -385,6 +385,8 @@
   --mediamesh-text-color: #a21caf;
   --mediamesh-on-color: #ffffff; /* text on a filled MediaMesh badge, both themes */
   --mediamesh-badge-bg: #a21caf; /* fuchsia 700: white text on it reads at 6:1 */
+  /* measured MediaMesh coverage, as the apps colour their coverage dots */
+  --mm-field-good: #16a34a; --mm-field-marginal: #f59e0b; --mm-field-out: #dc2626; --mm-field-none: #6b7280;
 
   /* #1128: documented z-index scale. Use these custom props for any new
    * stacking context decision. Existing legacy z-index values that work are
@@ -6020,6 +6022,8 @@ body.embed #app.app-fixed {
 .mm-cov-title > strong { font-weight: 700; }
 .mm-cov-observer-note { display: inline-block; font-size: 0.62em; font-weight: 400; color: var(--text-muted); }
 .mm-cov-toggle { display: flex; gap: 4px; flex-wrap: wrap; }
+.mm-cov-places { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+.mm-cov-places-label { font-size: 0.85em; color: var(--text-muted); margin-right: 4px; }
 .mm-cov-map { height: 520px; border-radius: 8px; margin-top: 12px; }
 @media (max-width: 640px) { .mm-cov-map { height: 380px; } }
 .mm-cov-legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 10px; font-size: 0.85em; align-items: center; }
@@ -6122,6 +6126,7 @@ body.embed #app.app-fixed {
 .mm-cov-popup .mm-cov-chip { margin-top: 6px; color: var(--text); border-color: var(--mediamesh-node-color); background: color-mix(in srgb, var(--mediamesh-node-color) 12%, transparent); }
 .mm-cov-popup .mm-cov-chip:hover { background: color-mix(in srgb, var(--mediamesh-node-color) 24%, transparent); }
 .mm-cov-sw--link { width: 18px; height: 0; border-radius: 0; border-top: 2px dashed var(--text); vertical-align: 3px; }
+.mm-cov-sw--field { background: linear-gradient(90deg, var(--mm-field-good) 0 33%, var(--mm-field-marginal) 33% 66%, var(--mm-field-out) 66%); }
 .mm-cov-links-key { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
 .mm-cov-links-key[hidden], .mm-cov-details[hidden], .mm-cov-profile[hidden] { display: none; }
 .mm-cov-map { cursor: crosshair; }

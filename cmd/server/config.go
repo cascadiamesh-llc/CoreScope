@@ -199,6 +199,10 @@ type Config struct {
 	// see UserManagementEnabled.
 	UserManagement *UserManagementConfig `json:"userManagement,omitempty"`
 
+	// MediaMeshCoverage: coverage points sent by MeshCore Open TAK and
+	// Wadamesh TAK standalones (mediamesh_coverage_points.go). On by default.
+	MediaMeshCoverage *MediaMeshCoverageConfig `json:"mediameshCoverage,omitempty"`
+
 	// HashChannels and ChannelKeys are the ingestor's channel configuration,
 	// read here for the names only: a channel proposal for a configured name
 	// is refused (see configuredChannelNames). ChannelKeys drops the key

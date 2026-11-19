@@ -42,6 +42,9 @@ type Server struct {
 	commit    string
 	buildTime string
 
+	// covPoints: the MediaMesh coverage points store, opened on first use.
+	covPoints covPointsService
+
 	// reportedNodes caches /api/nodes/reported (reported_nodes.go).
 	reportedNodes reportedNodesCache
 
@@ -382,6 +385,9 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/places/population", s.handlePopulation).Methods("GET")
 	r.HandleFunc("/api/places/near", s.handleNear).Methods("GET")
 	r.HandleFunc("/api/analytics/mediamesh", s.handleAnalyticsMediaMesh).Methods("GET")
+	r.HandleFunc("/api/mediamesh/coverage-points", s.handleCoveragePointsGet).Methods("GET")
+	r.HandleFunc("/api/mediamesh/coverage-points", s.handleCoveragePointsPost).Methods("POST")
+	r.HandleFunc("/api/mediamesh/coverage-points", s.handleCoveragePointsDelete).Methods("DELETE")
 	r.HandleFunc("/api/analytics/retransmissions", s.handleAnalyticsRetransmissions).Methods("GET")
 
 	// Other endpoints

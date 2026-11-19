@@ -584,6 +584,7 @@ func main() {
 
 		// 3b. Close users.db (user management, opt-in; no-op when off).
 		srv.closeUserManagement()
+		srv.closeCoveragePoints()
 
 		// 4. Close database (release SQLite WAL lock)
 		if err := dbClose(); err != nil {

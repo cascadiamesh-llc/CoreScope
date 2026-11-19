@@ -60,15 +60,25 @@ function cellAt(cov, lat, lon) {
     assert.ok(slow.sensitivityDbm < -130);
   });
 
-  await test('margin uses the conservative budget (22 dBm, 10 dB fade, ground clutter)', () => {
+  await test('margin uses the conservative budget (22 dBm, 10 dB fade, a handheld\'s antenna)', () => {
     const g = M.CONFIG.modes.ground, r = M.CONFIG.modes.repeater;
-    // 22 + 2 - 1 + 0 + 121 - 10 - 10 = 124 dB of path loss at 0 margin on the ground
-    assert.strictEqual(M.marginFor(124, g), 0);
-    assert.strictEqual(M.marginFor(124, r), 12);
-    assert.strictEqual(M.budgetDb(g), 124);
+    // 22 + 2 - 1 - 4 + 121 - 10 = 130 dB of path loss at 0 margin on the
+    // ground, before the clutter (by distance, in the rays)
+    assert.strictEqual(M.marginFor(130, g), 0);
+    assert.strictEqual(M.marginFor(130, r), 6);
+    assert.strictEqual(M.budgetDb(g), 130);
     // a more sensitive setting has that much more to spend
     const slow = M.radioFor({ radio: '911.15,125,9,5' });
-    assert.ok(Math.abs(M.marginFor(124, g, slow) - (-121 - slow.sensitivityDbm)) < 1e-9);
+    assert.ok(Math.abs(M.marginFor(130, g, slow) - (-121 - slow.sensitivityDbm)) < 1e-9);
+  });
+
+  await test('city clutter: ITU-R P.2108 by distance, 18 dB close in, 23 dB from 500 m', () => {
+    assert.ok(Math.abs(M.clutterLossDb(0.25) - 18.2) < 0.05, String(M.clutterLossDb(0.25)));
+    assert.strictEqual(M.clutterLossDb(0.05), M.clutterLossDb(0.25), 'no less than at 250 m');
+    assert.ok(Math.abs(M.clutterLossDb(1) - 23.1) < 0.05 && Math.abs(M.clutterLossDb(20) - 23.1) < 0.05);
+    assert.ok(M.clutterLossDb(0.5) > 22 && M.clutterLossDb(0.5) < 23.1);
+    assert.strictEqual(M.CONFIG.modes.ground.clutter, 'p2108');
+    assert.ok(!M.CONFIG.modes.repeater.clutter, 'repeater to repeater: antennas above the clutter');
   });
 
   // A 10 km path between two 10 m antennas on flat ground at sea level
@@ -150,7 +160,8 @@ function cellAt(cov, lat, lon) {
         const D = job.dist[j];
         const hr = job.elev[off + j] - D * D / (2 * effR) + mode.rxHeightM;
         const ref = M.cascadedKnifeEdge(job.dist, h, j, job.txGround + M.CONFIG.txHeightM, D, hr, radio.lambdaM);
-        const want = M.budgetDb(mode, radio) - M.fspl(D / 1000, radio.freqMHz) - ref.loss;
+        const clutter = job.elev[off + j] > 0.5 ? M.clutterLossDb(D / 1000, radio.freqMHz) : 0;
+        const want = M.budgetDb(mode, radio) - M.fspl(D / 1000, radio.freqMHz) - ref.loss - clutter;
         assert.ok(Math.abs(polar[off + j] - want) < 1e-3, `ray ${a} sample ${j}: ${polar[off + j]} vs ${want}`);
         checked++;
       });
@@ -307,7 +318,7 @@ function cellAt(cov, lat, lon) {
     assert.deepStrictEqual(viaPool.margins, direct.margins);
     // a job is plain data, so it can be posted to a worker
     assert.ok(jobs[0].elev instanceof Float32Array && jobs[0].peak instanceof Float32Array);
-    assert.ok(Object.values(jobs[0]).every((v) => typeof v === 'number' || ArrayBuffer.isView(v)));
+    assert.ok(Object.values(jobs[0]).every((v) => typeof v === 'number' || typeof v === 'string' || ArrayBuffer.isView(v)));
   });
 
   // 120 m ridge 3 km north of the repeater, flat elsewhere
@@ -323,7 +334,9 @@ function cellAt(cov, lat, lon) {
     assert.ok(p.diff.loss > 20);
     assert.ok(p.edges.length >= 1 && p.edges.some((e) => e.principal && Math.abs(e.d - 3000) < 200), JSON.stringify(p.edges));
     assert.strictEqual(p.eirpDbm, 23);
-    assert.ok(Math.abs(p.rxDbm - (23 + 0 - p.fsplDb - p.diff.loss - 10)) < 1e-9);
+    // the ridge stands in the sea (0 m): no clutter at the far end
+    assert.strictEqual(p.clutterDb, 0);
+    assert.ok(Math.abs(p.rxDbm - (23 - 4 - p.fsplDb - p.diff.loss)) < 1e-9);
     assert.ok(Math.abs(p.marginDb - (p.rxDbm + 121 - 10)) < 1e-9);
     assert.ok(Math.abs(p.marginDb - cellAt(cov, lat, -122.33)) < 3, `profile ${p.marginDb} vs map ${cellAt(cov, lat, -122.33)}`);
     assert.ok(/^No line of sight/.test(M.profileVerdict(p)));
@@ -342,11 +355,18 @@ function cellAt(cov, lat, lon) {
   });
 
   await test('path profile: budget rows read top to bottom and end in the margin', () => {
-    const p = M.pathProfile(rep[0], 47.6 + kmLat(6), -122.33, ridgeAt3, 'ground');
+    const onLand = (lat) => ridgeAt3(lat) + 10;
+    const p = M.pathProfile(rep[0], 47.6 + kmLat(6), -122.33, onLand, 'ground');
     const rows = M.budgetRows(p);
     assert.deepStrictEqual(rows[0], ['Sent: 22 dBm, 2 dBi antenna, 1 dB cable', '23 dBm', 'gain']);
     assert.ok(/^Free space over 6\.0 km$/.test(rows[1][0]) && /^−107\.\d dB$/.test(rows[1][1]), rows[1].join('|'));
-    assert.ok(rows.some((r) => /Buildings and trees/.test(r[0]) && r[1] === '−10 dB'));
+    assert.ok(rows.some((r) => r[0] === 'Buildings and trees (ITU-R P.2108, 6.0 km away)' && r[1] === '−23.1 dB'), JSON.stringify(rows));
+    assert.ok(rows.some((r) => r[0] === 'Receiving antenna (handheld, next to the body)' && r[1] === '−4 dB'));
+    const sea = M.budgetRows(M.pathProfile(rep[0], 47.6 + kmLat(6), -122.33, ridgeAt3, 'ground'));
+    assert.ok(sea.some((r) => r[0] === 'Buildings and trees (none on open water)' && r[1] === '0 dB'));
+    // where you are, and the measured correction, each a row
+    const car = M.budgetRows(M.pathProfile(rep[0], 47.6 + kmLat(6), -122.33, onLand, 'ground', null, { placeLossDb: 8, place: 'car' }));
+    assert.ok(car.some((r) => r[0] === 'In a car' && r[1] === '−8 dB'));
     assert.ok(rows.some((r) => r[0] === 'Receiver needs (SF7, 250 kHz)' && r[1] === '−121 dBm'));
     const last = rows[rows.length - 1];
     assert.strictEqual(last[0], 'Short by');
@@ -551,15 +571,18 @@ function cellAt(cov, lat, lon) {
     const radios = [M.radioFor({ radio: '911.15,250,7,5' }), M.radioFor({ radio: '911.15,125,9,5' }), M.radioFor({})];
     const g = M.assumptionsHtml('ground', radios), r = M.assumptionsHtml('repeater', radios);
     assert.ok(g.includes('22 dBm into a 2 dBi antenna through 1 dB of cable, 10 m above the ground'));
-    assert.ok(g.includes('held at 1.5 m') && g.includes('10 dB taken off for nearby buildings and trees'));
-    assert.ok(r.includes('another repeater') && !r.includes('held at'));
+    assert.ok(g.includes('held in the hand at 1.5 m') && g.includes('−4 dBi') && g.includes('ITU-R P.2108') && g.includes('18.2 dB at 250 m'));
+    assert.ok(g.includes('in a car, 8 dB more') && g.includes('indoors, 14 dB more (ITU-R P.2109'));
+    assert.ok(g.includes('<strong>Measured on the ground:</strong> Not yet checked against coverage measured on the ground.'));
+    assert.ok(r.includes('another repeater') && !r.includes('held in') && !r.includes('Measured on the ground'));
     assert.ok(g.includes('2 of 3 here, 1 not on the default preset'));
     assert.ok(g.includes('911.15 MHz, 250 kHz, SF7') && g.includes('−121 dBm') && g.includes('10 dB more as a safety margin'));
     assert.ok(g.includes('ITU-R P.526-11') && g.includes('k = 4/3') && g.includes('Fresnel'));
     assert.ok(g.includes('30 km from each repeater') && r.includes('60 km from each repeater'));
-    assert.ok(/Not modelled:<\/strong> buildings and trees/.test(g) && g.includes('interference'));
+    assert.ok(/Not modelled:<\/strong> the actual buildings and trees/.test(g) && g.includes('interference'));
     assert.ok(g.includes('plane-earth (two-ray) loss') && g.includes('km² count land only'));
-    assert.strictEqual((g.match(/<li>/g) || []).length, 8);
+    assert.strictEqual((g.match(/<li>/g) || []).length, 9);
+    assert.strictEqual((r.match(/<li>/g) || []).length, 8);
     assert.ok(g.includes('<strong>Checked:</strong> Not yet checked against real links'));
   });
 
@@ -573,10 +596,68 @@ function cellAt(cov, lat, lon) {
     const flat = (lat, lon) => 10 + 0.3 * Math.sin(lat * 3000) + 0.3 * Math.cos(lon * 3000);
     M.setCalibration(0);
     const at = (km) => M.pathProfile({ lat: 47.6, lon: -122.33 }, 47.6 + km / 111.32, -122.33, flat, 'ground');
-    assert.ok(at(3).marginDb > 0, 'reaches 3 km');
-    assert.ok(at(7).marginDb < 0, `not 7 km: ${at(7).marginDb}`);
-    assert.ok(at(7).groundDb > 3, 'the reflection is what costs it');
+    // a handheld among buildings: about 1.5 km on flat land
+    assert.ok(at(1).marginDb > 0, 'reaches 1 km');
+    assert.ok(at(3).marginDb < 0, `not 3 km: ${at(3).marginDb}`);
+    assert.ok(at(7).groundDb > 3, 'the reflection costs it too');
     assert.ok(M.budgetRows(at(7)).some((r) => r[0] === 'Reflection off the ground'));
+  });
+
+  await test('measured coverage: the correction fits the walks, each repeater and a car', async () => {
+    M.setCalibration(0); M.setField(null);
+    const land = (lat, lon) => 10 + 0.3 * Math.sin(lat * 3000) + 0.3 * Math.cos(lon * 3000);
+    const reps = [{ name: 'A', public_key: 'aaaaaaaa11', lat: 47.6, lon: -122.33 }, { name: 'B', public_key: 'bbbbbbbb22', lat: 47.6, lon: -122.322 }];
+    const raw = (r, lat, lon) => { const p = M.pathProfile(r, lat, lon, land, 'ground', null, { noField: true }); return p.rxDbm - p.sensitivityDbm; };
+    // walks north of A, the model 6 dB too hopeful; A answers out to where
+    // that leaves it above the main mesh's floor; B 3 dB worse than that again
+    const cells = [];
+    for (let k = 1; k <= 30; k++) {
+      const lat = 47.6 + kmLat(0.1 * k), lon = -122.33 + (k % 3) * 0.002;
+      const mA = raw(reps[0], lat, lon) - 6, mB = raw(reps[1], lat, lon) - 9;
+      const answered = [];
+      if (mA > -6) answered.push({ key: 'aaaaaaaa', n: 2, margin: Math.round(mA * 10) / 10 });
+      if (mB > -6) answered.push({ key: 'bbbbbbbb', n: 2, margin: Math.round(mB * 10) / 10 });
+      cells.push({ lat, lon, car: false, n: 2, none: answered.length ? 0 : 2, reps: answered });
+      // the same street driven: 10 dB worse again
+      const inCar = [[mA, 'aaaaaaaa'], [mB, 'bbbbbbbb']].filter(([m]) => m - 10 > -6).map(([m, key]) => ({ key, n: 1, margin: Math.round((m - 10) * 10) / 10 }));
+      cells.push({ lat, lon, car: true, n: 1, none: inCar.length ? 0 : 1, reps: inCar });
+    }
+    const f = M.fitField(cells, reps, land);
+    assert.ok(f.used, JSON.stringify(f));
+    assert.ok(f.offsetDb < -5 && f.offsetDb > -9, `offset ${f.offsetDb}`);
+    assert.ok(f.spreadDb < 3, `spread ${f.spreadDb}`);
+    assert.ok((f.reps.bbbbbbbb || 0) < (f.reps.aaaaaaaa || 0), JSON.stringify(f.reps));
+    assert.ok(f.carN >= 10 && Math.abs(f.carLossDb - 10) < 3, `car ${f.carLossDb} from ${f.carN}`);
+    assert.ok(/^Checked against \d+ spots measured on the ground from 3 radios: lowered by [\d.]+ dB to match/.test(M.fieldText(f, { radios: 3 })), M.fieldText(f, { radios: 3 }));
+    // too few: not used, and says how many it has
+    const few = M.fitField(cells.slice(0, 6), reps, land);
+    assert.ok(!few.used && /\(\d so far\)/.test(M.fieldText(few)));
+    assert.ok(/Share coverage points/.test(M.fieldText(null)));
+    assert.deepStrictEqual(M.fitField([], reps, land).used, false);
+    assert.strictEqual(M.fieldBand({ reps: [] }), 'none');
+    assert.strictEqual(M.fieldBand({ reps: [{ margin: -1 }, { margin: 6 }] }), 'good');
+
+    // applied: profiles and the map move by the correction, repeater to repeater doesn't
+    const lat = 47.6 + kmLat(1);
+    const before = M.pathProfile(reps[0], lat, -122.33, land, 'ground').marginDb;
+    const cov = await M.computeCoverage(reps.slice(0, 1), land, 'ground');
+    const at = (c) => { const x = M.cellAt(M.merge(c), lat, -122.33); return x && x.margin; };
+    const covBefore = at(cov);
+    M.setField(f);
+    const shift = f.offsetDb + (f.reps.aaaaaaaa || 0);
+    assert.ok(Math.abs(M.pathProfile(reps[0], lat, -122.33, land, 'ground').marginDb - (before + shift)) < 1e-9);
+    assert.ok(Math.abs(at(M.adjustCov(cov, 'outdoors')) - (covBefore + shift)) < 0.11);
+    assert.ok(Math.abs(at(M.adjustCov(cov, 'indoors')) - (covBefore + shift - 14)) < 0.11);
+    assert.ok(Math.abs(at(M.adjustCov(cov, 'car')) - (covBefore + shift - f.carLossDb)) < 0.11, 'a car costs what the drives measured');
+    assert.strictEqual(at(cov), covBefore, 'the estimate itself is left alone');
+    const rows = M.budgetRows(M.pathProfile(reps[0], lat, -122.33, land, 'ground'));
+    assert.ok(rows.some((r) => r[0] === 'Correction from coverage measured on the ground'), JSON.stringify(rows));
+    const rcov = await M.computeCoverage(reps.slice(0, 1), land, 'repeater');
+    assert.strictEqual(M.adjustCov(rcov, 'indoors'), rcov);
+    assert.strictEqual(M.fieldDbFor('repeater', reps[0]), 0);
+    M.setField(null);
+    assert.strictEqual(M.adjustCov(cov, 'outdoors'), cov, 'nothing to apply: the same estimate');
+    assert.strictEqual(M.placeLossDb('car'), 8);
   });
 
   await test('calibration: raises repeater to repeater only; lowers both', () => {

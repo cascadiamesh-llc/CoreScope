@@ -20,9 +20,13 @@
  *    just see over it.
  *  - Receiver sensitivity from the repeater's reported radio2 setting
  *    (bandwidth and spreading factor), the default preset when unknown.
- * Buildings and trees are not in the terrain data; ground mode adds a flat
- * clutter loss for them instead. Each map cell keeps the best repeater's
- * margin over the receiver's sensitivity.
+ * Buildings and trees are not in the terrain data; ground mode adds the
+ * city clutter loss of ITU-R P.2108 (by distance, not over open water) for
+ * a radio held among them, with a handheld's antenna. Where you are (out of
+ * doors, in a car, indoors) takes a little more off, and measured coverage
+ * points (the apps' coverage recorders, sent to the analyzer) correct the
+ * whole estimate and each repeater, up or down. Each map cell keeps the best
+ * repeater's margin over the receiver's sensitivity.
  *
  * The heavy part (repRaster) runs in Web Workers when the browser allows, on
  * the page otherwise. No dependencies for the maths, so
@@ -52,11 +56,15 @@
     modes: {
       ground: {
         label: 'People on the ground',
-        note: 'People on the ground: a companion or standalone radio at 1.5 m.',
-        rxHeightM: 1.5, rxGainDbi: 0, clutterDb: 10,
+        note: 'People on the ground: a companion or standalone radio held in the hand at 1.5 m, among buildings.',
+        // A radio held in the hand: a short antenna next to the body
+        // (about -4 dBi with the body's loss), among buildings and trees
+        // (clutter: ITU-R P.2108 by distance, clutterLossDb).
+        rxHeightM: 1.5, rxGainDbi: -4, clutterDb: 0, clutter: 'p2108',
         // The links heard on radio2 run between repeaters, mostly higher up
         // than the 10 m assumed, and only links strong enough to be heard
         // are in them: they can lower this estimate but never raise it.
+        // Measured coverage points replace them for this view (CONFIG.field).
         calibrateUp: false,
         radiusKm: 30, stepM: 50, growth: 0.012, rays: 1440, cellM: 100,
       },
@@ -67,6 +75,22 @@
         radiusKm: 60, stepM: 100, growth: 0.012, rays: 1440, cellM: 200,
       },
     },
+    // Where you are, for people on the ground: more taken off every path.
+    // A car body; an ordinary building (ITU-R P.2109, the median for a
+    // traditional building at 0.9 GHz).
+    places: [
+      { key: 'outdoors', label: 'Outdoors', lossDb: 0 },
+      { key: 'car', label: 'In a car', lossDb: 8 },
+      { key: 'indoors', label: 'Indoors', lossDb: 14 },
+    ],
+    // Fitting the estimate for people on the ground to measured coverage
+    // points (GET /api/mediamesh/coverage-points): at least minCells cells
+    // where a repeater answered, a correction within +maxUpDb / -maxDownDb;
+    // each repeater with repMinCells of its own gets its own, pulled towards
+    // the overall one (repShrink cells' worth). A repeater within nearKm of
+    // a cell that didn't answer there counts as below unheardDb (it would
+    // have answered on the main mesh, 6 dB more sensitive, above that).
+    field: { minCells: 15, maxUpDb: 10, maxDownDb: 25, repMinCells: 5, repShrink: 10, nearKm: 6, unheardDb: -6, maxPairs: 800, carMinCells: 10 },
     // A quicker, coarser version of `ground`, for screening many spots or
     // drawing hundreds of main-mesh repeaters.
     quick: { rays: 360, radiusKm: 20, stepM: 100, cellM: 200 },
@@ -90,6 +114,38 @@
   function getCalibration() { return calibrationDb; }
   /** The correction one mode takes: all of it, or only a lowering. */
   function modeCalibration(mode) { return mode && mode.calibrateUp === false ? Math.min(0, calibrationDb) : calibrationDb; }
+
+  /**
+   * Clutter loss (dB) for a radio among city buildings and trees, dKm from
+   * the other end: ITU-R P.2108-1 §3.2 (terrestrial, urban and suburban),
+   * the median (50% of locations). About 18 dB at 250 m, 23 dB from 500 m.
+   */
+  function clutterLossDb(dKm, freqMHz) {
+    const lf = Math.log10((freqMHz || 911.15) / 1000), d = Math.max(0.25, dKm);
+    const ll = 23.5 + 9.6 * lf, ls = 32.98 + 23.9 * Math.log10(d) + 3 * lf;
+    return -5 * Math.log10(Math.pow(10, -0.2 * ll) + Math.pow(10, -0.2 * ls));
+  }
+
+  // Correction from measured coverage points (fitField), for people on the
+  // ground: { used, offsetDb, reps: { key8: dB }, carLossDb }. null: none.
+  let field = null;
+  function setField(f) { field = f && f.used ? f : null; }
+  function getField() { return field; }
+  const key8 = (rep) => String((rep && rep.public_key) || '').slice(0, 8).toLowerCase();
+  /** What the measured points add to a path from rep in one mode (0 for
+   * repeater to repeater): the correction, in place of the links'. */
+  function fieldDbFor(modeKey, rep) {
+    const mode = CONFIG.modes[modeKey];
+    if (!field || !mode || !mode.clutter) return 0;
+    return field.offsetDb + (field.reps[key8(rep)] || 0) - modeCalibration(mode);
+  }
+  /** dB more taken off for where you are (CONFIG.places key). */
+  function placeLossDb(place) {
+    const p = CONFIG.places.find((x) => x.key === place);
+    if (!p) return 0;
+    if (p.key === 'car' && field && Number.isFinite(field.carLossDb)) return field.carLossDb;
+    return p.lossDb;
+  }
 
   const NO_DATA = -1e9;
   const NO_DATA_I16 = -32768;
@@ -308,7 +364,7 @@
       rays, n, dist, elev, peak, txGround,
       txHeightM: antennaHeight(rep), rxHeightM: mode.rxHeightM,
       lambdaM: radio.lambdaM, freqMHz: radio.freqMHz, effR: effRadius(),
-      budgetDb: budgetDb(mode, radio), radiusM: mode.radiusKm * 1000,
+      budgetDb: budgetDb(mode, radio), radiusM: mode.radiusKm * 1000, clutter: mode.clutter || '',
       lat: rep.lat, lon: rep.lon, mPerDegLon,
       col0, row0, w: Math.max(0, col1 - col0 + 1), h: Math.max(0, row1 - row0 + 1),
       west: g.bounds.west, north: g.bounds.north, cellLat: g.cellLat, cellLon: g.cellLon, stepM: mode.stepM,
@@ -374,10 +430,11 @@
     const out = new Float32Array(rays * n).fill(NaN);
     if (!Number.isFinite(job.txGround)) return out;
     const ht = job.txGround + job.txHeightM;
-    const drop = new Float64Array(n), fs = new Float64Array(n);
+    const drop = new Float64Array(n), fs = new Float64Array(n), cl = new Float64Array(n);
     for (let i = 0; i < n; i++) {
       drop[i] = dist[i] * dist[i] / (2 * effR);
       fs[i] = fspl(dist[i] / 1000, job.freqMHz);
+      cl[i] = job.clutter === 'p2108' ? clutterLossDb(dist[i] / 1000, job.freqMHz) : 0;
     }
     const pc = new Float64Array(n); // peaks, lowered by the earth's curve
     const gsum = new Float64Array(n + 1); // ground x length, running, for the mean ground
@@ -441,7 +498,8 @@
           }
         }
         const total = fs[j] + loss;
-        out[off + j] = job.budgetDb - (pe > total ? pe : total);
+        // no buildings on open water (the sea, at 0.5 m or lower)
+        out[off + j] = job.budgetDb - (pe > total ? pe : total) - (elev[off + j] > 0.5 ? cl[j] : 0);
       }
     }
     return out;
@@ -785,12 +843,17 @@
     const pathLossDb = fsplDb + diff.loss + groundDb;
     const eirpDbm = c.txDbm + c.txGainDbi - c.cableDb;
     const cal = modeCalibration(mode);
-    const rxDbm = eirpDbm + mode.rxGainDbi - pathLossDb - mode.clutterDb + cal;
+    const clutterDb = mode.clutter === 'p2108' ? (rxGround > 0.5 ? clutterLossDb(D / 1000, r.freqMHz) : 0) : mode.clutterDb;
+    // the measured points' correction (replacing cal's), and where you are
+    const fieldUsed = !!(field && mode.clutter && !(popts && popts.noField));
+    const fieldDb = fieldUsed ? fieldDbFor(modeKey, rep) : 0;
+    const placeDb = (popts && popts.placeLossDb) || 0;
+    const rxDbm = eirpDbm + mode.rxGainDbi - pathLossDb - clutterDb + cal + fieldDb - placeDb;
     return {
       distM: D, d, terrain, txGround, rxGround, txHeightM: antennaHeight(rep), rxHeightM: mode.rxHeightM,
       lambdaM: r.lambdaM, effR, radio: r, fsplDb, diff, edges, groundDb, planeEarthDb,
       lineOfSight: !(diff.vp > 0), fresnelClear: !(diff.vp > -0.78),
-      clutterDb: mode.clutterDb, calibrationDb: cal, pathLossDb, eirpDbm, rxDbm,
+      clutterDb, clutterModel: mode.clutter || '', calibrationDb: cal, fieldDb, fieldUsed, placeLossDb: placeDb, place: (popts && popts.place) || '', pathLossDb, eirpDbm, rxDbm,
       sensitivityDbm: r.sensitivityDbm, fadeMarginDb: c.fadeMarginDb,
       marginDb: rxDbm - r.sensitivityDbm - c.fadeMarginDb, modeKey,
     };
@@ -829,9 +892,19 @@
       ['Terrain (diffraction)', fmtLoss(p.diff.loss), 'loss'],
     ];
     if (p.groundDb > 0.05) rows.push(['Reflection off the ground', fmtLoss(p.groundDb), 'loss']);
-    if (mode.clutterDb) rows.push(['Buildings and trees (flat allowance)', fmtLoss(mode.clutterDb), 'loss']);
-    if (mode.rxGainDbi) rows.push(['Receiving antenna', '+' + fmtDb(mode.rxGainDbi) + ' dB', 'gain']);
-    if (p.calibrationDb) {
+    if (p.clutterModel === 'p2108') rows.push([p.clutterDb ? 'Buildings and trees (ITU-R P.2108, ' + fmtKm(p.distM) + ' away)' : 'Buildings and trees (none on open water)', fmtLoss(p.clutterDb), 'loss']);
+    else if (p.clutterDb) rows.push(['Buildings and trees (flat allowance)', fmtLoss(p.clutterDb), 'loss']);
+    if (mode.rxGainDbi) rows.push([mode.rxGainDbi < 0 ? 'Receiving antenna (handheld, next to the body)' : 'Receiving antenna', (mode.rxGainDbi > 0 ? '+' : '−') + fmtDb(Math.abs(mode.rxGainDbi)) + ' dB', mode.rxGainDbi > 0 ? 'gain' : 'loss']);
+    if (p.placeLossDb) {
+      const pl = CONFIG.places.find((x) => x.key === p.place);
+      rows.push([(pl ? pl.label : 'Where you are') + (p.place === 'car' && field && Number.isFinite(field.carLossDb) ? ' (measured)' : ''), fmtLoss(p.placeLossDb), 'loss']);
+    }
+    // measured points replace the links' correction for people on the ground
+    const fieldNet = p.fieldUsed ? p.fieldDb + p.calibrationDb : 0;
+    if (p.fieldUsed && Math.abs(fieldNet) >= 0.05) {
+      rows.push(['Correction from coverage measured on the ground', (fieldNet > 0 ? '+' : '−') + fmtDb(Math.abs(fieldNet)) + ' dB', fieldNet > 0 ? 'gain' : 'loss']);
+    }
+    if (p.calibrationDb && !p.fieldUsed) {
       rows.push(['Correction from links heard on radio2', (p.calibrationDb > 0 ? '+' : '−') + fmtDb(Math.abs(p.calibrationDb)) + ' dB',
         p.calibrationDb > 0 ? 'gain' : 'loss']);
     }
@@ -1674,26 +1747,28 @@
   }
 
   /** What the estimate assumes, as list items, with the numbers in use. */
-  function assumptionsHtml(modeKey, radios, cal) {
+  function assumptionsHtml(modeKey, radios, cal, f, info) {
     const c = CONFIG, mode = c.modes[modeKey], t = c.terrain;
     const def = DEFAULT_RADIO;
     const reported = (radios || []).filter((r) => r.reported).length;
     const other = (radios || []).filter((r) => r.reported && r.sensitivityDbm !== def.sensitivityDbm).length;
     const items = [
       `<strong>Sending:</strong> ${c.txDbm} dBm into a ${c.txGainDbi} dBi antenna through ${c.cableDb} dB of cable, ${c.txHeightM} m above the ground at every repeater.`,
-      modeKey === 'ground'
-        ? `<strong>Receiving:</strong> a companion or standalone radio held at ${mode.rxHeightM} m with a ${mode.rxGainDbi} dBi antenna, and ${mode.clutterDb} dB taken off for nearby buildings and trees.`
+      mode.clutter
+        ? `<strong>Receiving:</strong> a companion or standalone radio held in the hand at ${mode.rxHeightM} m: ${fmtDb(mode.rxGainDbi)} dBi for a short antenna next to the body, and buildings and trees by distance from the repeater (ITU-R P.2108, the median: ${fmtDb(clutterLossDb(0.25))} dB at 250 m, ${fmtDb(clutterLossDb(1))} dB from about 500 m on), none over open water.`
+          + ` <strong>Where you are:</strong> ${CONFIG.places.map((pl) => pl.lossDb ? `${pl.label.toLowerCase()}, ${fmtDb(placeLossDb(pl.key))} dB more${pl.key === 'car' && f && Number.isFinite(f.carLossDb) ? ' (measured on drives)' : pl.key === 'indoors' ? ' (ITU-R P.2109, a typical building)' : ''}` : pl.label.toLowerCase() + ' as drawn').join('; ')}.`
         : `<strong>Receiving:</strong> another repeater's ${mode.rxGainDbi} dBi antenna, ${mode.rxHeightM} m above the ground.`,
       `<strong>Radio:</strong> each repeater's reported radio2 setting where it has sent one (${reported} of ${(radios || []).length} here${other ? `, ${other} not on the default preset` : ''}), otherwise ${def.freqMHz} MHz, ${def.bwKHz} kHz, SF${def.sf}. That preset needs ${fmtDb(def.sensitivityDbm)} dBm at the receiver (SX1262 datasheet); the estimate asks for ${c.fadeMarginDb} dB more as a safety margin against fading.`,
       `<strong>Path:</strong> free-space loss, the earth's curve (k = 4/3), and diffraction over up to three ridges (ITU-R P.526-11, cascaded knife edges). Ground that only comes close to the line of sight costs signal too: a path has to clear its first Fresnel zone to count as clean. Over open water and flat ground the wave reflected off the surface cancels the direct one, so loss is at least the plane-earth (two-ray) loss for each antenna's height above the ground in between.`,
       `<strong>Terrain:</strong> Mapzen elevation tiles (SRTM, USGS), about ${t.nearZoom === 12 ? '25' : '50'} m per pixel next to a repeater and 50 to 100 m further out, worked out to ${mode.radiusKm} km from each repeater.`,
+      mode.clutter ? `<strong>Measured on the ground:</strong> ${esc(fieldText(f, info))}${f && f.used ? ' This correction is used for people on the ground in place of the one from links between repeaters.' : ''}` : '',
       `<strong>Checked:</strong> ${esc(calibrationText(cal))}${cal && cal.used && cal.offsetDb ? (cal.offsetDb > 0
         ? ' The raise applies repeater to repeater only: those links run between antennas often higher than 10 m, and only links strong enough to be heard are in them, so they never raise the estimate for people on the ground.'
         : ' The correction is added to every path, for both views.') : ''}`,
       '<strong>Areas:</strong> km² count land only; open water (the Sound, lakes) is drawn but not counted.',
-      '<strong>Not modelled:</strong> buildings and trees (the terrain data is bare ground), being indoors, interference and local noise, reflections, each site\'s real antenna, height and power. Downtown streets and inside buildings will be worse than drawn; a rooftop or a window facing the repeater can be better. Repeaters that only listen can hear you but won\'t send back.',
+      '<strong>Not modelled:</strong> the actual buildings and trees in the way (the terrain data is bare ground; the allowance above is an average), interference and local noise, reflections, each site\'s real antenna, height and power. A street lined with tall buildings will be worse than drawn; a rooftop or a window facing the repeater can be better. Repeaters that only listen can hear you but won\'t send back.',
     ];
-    return items.map((i) => `<li>${i}</li>`).join('');
+    return items.filter(Boolean).map((i) => `<li>${i}</li>`).join('');
   }
 
   /**
@@ -1726,7 +1801,7 @@
           : pathProfile({ lat: l.to_lat, lon: l.to_lon }, l.from_lat, l.from_lon, elevAt, 'ground', radio);
         if (p) {
           row.modelRssi = p.rxDbm;
-          row.rawModelRssi = p.rxDbm - p.calibrationDb;
+          row.rawModelRssi = p.rxDbm - p.calibrationDb - p.fieldDb;
           if (row.avgRssi !== null) {
             row.delta = row.avgRssi - p.rxDbm;
             row.rawDelta = row.avgRssi - row.rawModelRssi;
@@ -1778,6 +1853,138 @@
     return `Checked against ${cal.n} real links heard on radio2: ${adj}${limited}, and typically within ±${fmtDb(cal.spreadDb)} dB of them.`;
   }
 
+  // ---- Measured coverage points ------------------------------------------------
+
+  /** The correction (dB) that best fits pairs: { raw (the model's margin
+   * before any correction), meas (measured, heard) or limit (not heard: the
+   * margin was below it), w }. Least squares on the heard, and a penalty
+   * where the corrected model says a repeater that didn't answer should have. */
+  function fieldSolve(pairs) {
+    const cost = (d) => {
+      let s = 0;
+      for (const q of pairs) {
+        if (q.meas !== undefined) { const e = q.meas - q.raw - d; s += q.w * e * e; } else {
+          const e = q.raw + d - q.limit;
+          if (e > 0) s += q.w * e * e;
+        }
+      }
+      return s;
+    };
+    let lo = -40, hi = 25;
+    for (let k = 0; k < 60; k++) {
+      const a = lo + (hi - lo) / 3, b = hi - (hi - lo) / 3;
+      if (cost(a) <= cost(b)) hi = b; else lo = a;
+    }
+    return (lo + hi) / 2;
+  }
+
+  /**
+   * Fits the estimate for people on the ground to measured coverage points:
+   * cells is GET /api/mediamesh/coverage-points' cells, reps the placed
+   * repeaters, elevAt the terrain. Each cell and nearby repeater is a pair:
+   * the margin measured (from the main mesh's SNR, as the apps estimate it)
+   * or, where it didn't answer, a ceiling; against the model's margin with no
+   * safety margin taken off. Walks fit the correction; drives, where there
+   * are enough, what a car costs on top. Returns { used, n, cells, offsetDb,
+   * fitDb, spreadDb, reps: { key8: dB }, carLossDb, carN }.
+   */
+  function fitField(cells, reps, elevAt) {
+    const F = CONFIG.field;
+    const none = { used: false, n: 0, cells: 0, offsetDb: 0, fitDb: null, spreadDb: null, reps: {}, carLossDb: null, carN: 0 };
+    if (!elevAt || !Array.isArray(cells) || !cells.length) return none;
+    const byKey = new Map();
+    reps.forEach((r) => { if (Number.isFinite(r.lat) && Number.isFinite(r.lon) && key8(r)) byKey.set(key8(r), r); });
+    if (!byKey.size) return none;
+    const raw = (rep, cell) => {
+      const p = pathProfile(rep, cell.lat, cell.lon, elevAt, 'ground', radioFor(rep), { noField: true });
+      return p ? p.rxDbm - p.calibrationDb - p.sensitivityDbm : null;
+    };
+    const pairs = [];
+    const sorted = cells.filter((c) => c && c.n > 0 && Number.isFinite(c.lat) && Number.isFinite(c.lon)).sort((a, b) => b.n - a.n);
+    for (const c of sorted) {
+      if (pairs.length >= F.maxPairs) break;
+      const heard = new Map((c.reps || []).map((r) => [String(r.key || '').toLowerCase(), r]));
+      byKey.forEach((rep, k) => {
+        const h = heard.get(k);
+        if (!h && distanceM(rep.lat, rep.lon, c.lat, c.lon) > F.nearKm * 1000) return;
+        const m = raw(rep, c);
+        if (m === null) return;
+        if (h) pairs.push({ key: k, car: !!c.car, raw: m, meas: h.margin, w: Math.min(5, h.n || 1) });
+        // didn't answer in any of the cell's samples
+        else if (m > F.unheardDb - 15) pairs.push({ key: k, car: !!c.car, raw: m, limit: F.unheardDb, w: Math.min(5, c.n) });
+      });
+    }
+    const walk = pairs.filter((q) => !q.car), heardWalk = walk.filter((q) => q.meas !== undefined);
+    const out = Object.assign({}, none, { n: heardWalk.length, cells: sorted.length });
+    if (heardWalk.length < F.minCells) return out;
+    const fitDb = fieldSolve(walk);
+    const offsetDb = Math.round(Math.max(-F.maxDownDb, Math.min(F.maxUpDb, fitDb)) * 10) / 10;
+    const spreadDb = Math.round(median(heardWalk.map((q) => Math.abs(q.meas - q.raw - offsetDb))) * 10) / 10;
+    const repAdj = {};
+    byKey.forEach((_, k) => {
+      const mine = walk.filter((q) => q.key === k), n = mine.filter((q) => q.meas !== undefined).length;
+      if (n < F.repMinCells) return;
+      const own = Math.max(-F.maxDownDb, Math.min(F.maxUpDb, fieldSolve(mine)));
+      const adj = Math.round((own - offsetDb) * n / (n + F.repShrink) * 10) / 10;
+      if (adj) repAdj[k] = adj;
+    });
+    const car = pairs.filter((q) => q.car), carN = car.filter((q) => q.meas !== undefined).length;
+    let carLossDb = null;
+    if (carN >= F.carMinCells) {
+      // the walks' corrections, then what is left over is the car
+      const left = car.map((q) => Object.assign({}, q, { raw: q.raw + offsetDb + (repAdj[q.key] || 0) }));
+      carLossDb = Math.round(Math.max(0, Math.min(25, -fieldSolve(left))) * 10) / 10;
+    }
+    return Object.assign(out, { used: true, offsetDb, fitDb, spreadDb, reps: repAdj, carLossDb, carN });
+  }
+
+  /** One line on how the ground estimate compares with what was measured. */
+  function fieldText(f, info) {
+    const F = CONFIG.field;
+    if (!f || !f.used) {
+      return f && f.n
+        ? `Not yet checked against coverage measured on the ground: it needs ${F.minCells} spots where a repeater answered (${f.n} so far).`
+        : 'Not yet checked against coverage measured on the ground. Switch on Share coverage points in MeshCore Open TAK or a Wadamesh TAK standalone, then map MediaMesh coverage on a walk.';
+    }
+    const adj = f.offsetDb === 0 ? 'no correction needed' : `${f.offsetDb > 0 ? 'raised' : 'lowered'} by ${fmtDb(Math.abs(f.offsetDb))} dB to match`;
+    const capped = f.fitDb !== null && Math.abs(f.fitDb - f.offsetDb) > 0.05 ? ` (they suggest ${f.fitDb > 0 ? '+' : '−'}${fmtDb(Math.abs(f.fitDb))} dB; capped)` : '';
+    const nr = Object.keys(f.reps).length;
+    const who = info && info.radios ? ` from ${info.radios} radio${info.radios === 1 ? '' : 's'}` : '';
+    return `Checked against ${f.n} spots measured on the ground${who}: ${adj}${capped}, typically within ±${fmtDb(f.spreadDb)} dB.`
+      + (nr ? ` ${nr} repeater${nr === 1 ? ' has' : 's have'} a correction of ${nr === 1 ? 'its' : 'their'} own.` : '')
+      + (Number.isFinite(f.carLossDb) ? ` Drives put a car at ${fmtDb(f.carLossDb)} dB.` : '');
+  }
+
+  /** Measured cell colours, as the apps draw their coverage dots. */
+  const FIELD_RGB = { good: '#16a34a', marginal: '#f59e0b', out: '#dc2626', none: '#6b7280' };
+  function fieldBand(cell) {
+    const best = (cell.reps || []).reduce((m, r) => Math.max(m, r.margin), -Infinity);
+    if (best === -Infinity) return 'none';
+    return best >= 5 ? 'good' : best >= 0 ? 'marginal' : 'out';
+  }
+
+  /**
+   * The estimate with the measured correction and where you are applied:
+   * a copy of cov whose rasters are shifted, repeater by repeater (cov
+   * itself, untouched, when nothing applies). Repeater to repeater never.
+   */
+  function adjustCov(cov, place) {
+    if (!cov || !CONFIG.modes[cov.modeKey] || !CONFIG.modes[cov.modeKey].clutter) return cov;
+    const lossDb = placeLossDb(place);
+    const shift = cov.reps.map((r) => fieldDbFor(cov.modeKey, r) - lossDb);
+    if (shift.every((s) => Math.abs(s) < 0.05)) return cov;
+    const rasters = cov.rasters.map((r, ri) => {
+      if (!r || !r.data) return r;
+      const d = Math.round(shift[ri] * 10), src = r.data, data = new Int16Array(src.length);
+      for (let k = 0; k < src.length; k++) {
+        const v = src[k];
+        data[k] = v === NO_DATA_I16 ? v : Math.max(-32767, Math.min(32767, v + d));
+      }
+      return Object.assign({}, r, { data });
+    });
+    return Object.assign({}, cov, { rasters, margins: null, best: null, place, shiftDb: shift });
+  }
+
   /** The heard-links table. */
   function linksTableHtml(rows) {
     if (!rows.length) return '';
@@ -1792,7 +1999,17 @@
       + `</tr></thead><tbody>${body}</tbody></table></div>`;
   }
 
-  const session = { key: '', loader: null, linksSig: '', modes: {}, cal: null };
+  const session = { key: '', loader: null, linksSig: '', modes: {}, cal: null, place: 'outdoors', fieldInfo: null, fieldFit: null };
+
+  /** GET /api/mediamesh/coverage-points, or null. */
+  async function loadFieldPoints(opts) {
+    if (opts && opts.fieldPoints !== undefined) return opts.fieldPoints;
+    if (typeof fetch !== 'function') return null;
+    try {
+      const res = await fetch('/api/mediamesh/coverage-points', { headers: { Accept: 'application/json' } });
+      return res.ok ? await res.json() : null;
+    } catch (_) { return null; }
+  }
 
   /**
    * Draws the coverage card's map in el (which holds #mmCovMap, the mode
@@ -1864,7 +2081,9 @@
     const linksSig = JSON.stringify(((opts && opts.links) || []).map((l) => [l.from, l.observer_id]).sort());
     if (session.key !== key || session.loader !== loader || session.linksSig !== linksSig) {
       session.key = key; session.loader = loader; session.linksSig = linksSig; session.modes = {}; session.cal = null;
+      session.fieldInfo = null; session.fieldFit = null;
     }
+    setField(session.fieldFit);
     const cache = session.modes;
     let overlay = null, current = null, destroyed = false, shown = null, shownTerrain = null;
     let opacity = 1;
@@ -1940,8 +2159,9 @@
     if (backboneToggle) backboneToggle.addEventListener('change', onBackboneToggle);
     const calEl = el.querySelector('#mmCovCal');
     function drawCalibration() {
-      if (calEl) calEl.textContent = session.cal ? calibrationText(session.cal) : '';
-      if (howEl && current) howEl.innerHTML = assumptionsHtml(current, placed.map(radioFor), session.cal);
+      const onGround = current && CONFIG.modes[current].clutter;
+      if (calEl) calEl.textContent = onGround && session.fieldInfo ? fieldText(session.fieldFit, session.fieldInfo) : session.cal ? calibrationText(session.cal) : '';
+      if (howEl && current) howEl.innerHTML = assumptionsHtml(current, placed.map(radioFor), session.cal, session.fieldFit, session.fieldInfo);
     }
     if (session.cal) { setCalibration(session.cal.offsetDb); drawCalibration(); }
     if (linksToggle) linksToggle.addEventListener('change', onLinksToggle);
@@ -1969,7 +2189,9 @@
         });
       }
       const rep = shown.reps[ri];
-      const p = rep ? pathProfile(rep, picked.lat, picked.lng, shownTerrain, shown.modeKey, shown.radios[ri]) : null;
+      const onGround = CONFIG.modes[shown.modeKey].clutter;
+      const p = rep ? pathProfile(rep, picked.lat, picked.lng, shownTerrain, shown.modeKey, shown.radios[ri],
+        onGround ? { placeLossDb: placeLossDb(session.place), place: session.place } : null) : null;
       L.circleMarker(picked, { radius: 5, weight: 2, color: linkColor, fillColor: '#fff', fillOpacity: 1, interactive: false }).addTo(pick);
       profEl.hidden = false;
       if (!p) { profEl.innerHTML = '<p class="text-muted mm-cov-note">No terrain data for that point.</p>'; return; }
@@ -2036,13 +2258,14 @@
         if (token !== planToken || destroyed) return;
         const planCov = await computeCoverage([planned], cover.elevAt, modeKey, null, null);
         if (token !== planToken || destroyed) return;
-        const gain = planCov ? planGain(planCov, shown) : null;
+        const planView = planCov ? adjustCov(planCov, session.place) : null;
+        const gain = planView ? planGain(planView, shown) : null;
         const counted = placed.filter((_, i) => enabled[i]);
         const links = planLinks(planned, counted, reach.elevAt);
         if (planOverlay) { map.removeLayer(planOverlay); planOverlay = null; }
         if (planCov && gain) {
-          const b = planCov.bounds;
-          planOverlay = L.imageOverlay(planImage(planCov, gain), [[b.south, b.west], [b.north, b.east]],
+          const b = planView.bounds;
+          planOverlay = L.imageOverlay(planImage(planView, gain), [[b.south, b.west], [b.north, b.east]],
             { pane: 'mmCoverage', opacity: Math.max(opacity, 0.35), className: 'mm-cov-overlay' }).addTo(map);
         }
         planEl.innerHTML = planHtml(planned, gain, links, modeKey, false);
@@ -2154,11 +2377,60 @@
     }
     drawReps();
 
+    // ---- Where you are (people on the ground) ----
+    const placesEl = el.querySelector('#mmCovPlaces');
+    function drawPlaces() {
+      if (!placesEl) return;
+      placesEl.hidden = !(current && CONFIG.modes[current].clutter);
+      placesEl.querySelectorAll('[data-mm-cov-place]').forEach((b) => {
+        const on = b.dataset.mmCovPlace === session.place;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        const loss = placeLossDb(b.dataset.mmCovPlace);
+        b.title = loss ? `${fmtDb(loss)} dB more taken off every path` : 'As drawn';
+      });
+    }
+    function setPlace(place) {
+      if (!CONFIG.places.some((p) => p.key === place) || place === session.place) return;
+      session.place = place;
+      if (current) show(current);
+    }
+
+    // ---- Coverage measured on the ground (the apps' coverage recorders) ----
+    const fieldLayer = L.layerGroup();
+    const fieldToggle = el.querySelector('#mmCovFieldToggle');
+    const fieldKey = el.querySelector('#mmCovFieldKey');
+    const repByKey = new Map(placed.map((r) => [key8(r), r]));
+    function drawField() {
+      fieldLayer.clearLayers();
+      const cells = (session.fieldInfo && session.fieldInfo.cells) || [];
+      const onGround = current && CONFIG.modes[current].clutter;
+      if (fieldKey) fieldKey.hidden = !cells.length || !onGround;
+      if (!cells.length || !onGround || (fieldToggle && !fieldToggle.checked)) { map.removeLayer(fieldLayer); return; }
+      const half = ((session.fieldInfo.cell_m || 200) / 2) / M_PER_DEG_LAT;
+      cells.forEach((c) => {
+        const hl = half / Math.cos(c.lat * Math.PI / 180);
+        const bandKey = fieldBand(c);
+        const names = (c.reps || []).slice(0, 4).map((r) => `${esc(repName(repByKey.get(r.key)) || r.key)} ${r.margin >= 0 ? '+' : '−'}${fmtDb(Math.abs(r.margin))} dB`);
+        const tip = `Measured ${c.car ? 'in a vehicle' : 'on foot'} · ${c.n} sample${c.n === 1 ? '' : 's'}`
+          + (names.length ? '<br>' + names.join('<br>') : '<br>No MediaMesh repeater answered');
+        L.rectangle([[c.lat - half, c.lon - hl], [c.lat + half, c.lon + hl]], {
+          pane: 'mmCoverage', color: cssColor('--mm-field-' + bandKey, FIELD_RGB[bandKey]), weight: 1.5, dashArray: c.car ? '3 3' : null,
+          fillColor: cssColor('--mm-field-' + bandKey, FIELD_RGB[bandKey]), fillOpacity: 0.55, bubblingMouseEvents: false,
+        }).bindTooltip(tip, { sticky: true }).addTo(fieldLayer);
+      });
+      fieldLayer.addTo(map);
+    }
+    const onFieldToggle = () => drawField();
+    if (fieldToggle) fieldToggle.addEventListener('change', onFieldToggle);
+
     async function show(modeKey) {
       current = modeKey;
       el.querySelectorAll('[data-mm-cov]').forEach((b) => b.classList.toggle('active', b.dataset.mmCov === modeKey));
       if (noteEl) noteEl.textContent = CONFIG.modes[modeKey].note;
-      if (howEl) howEl.innerHTML = assumptionsHtml(modeKey, placed.map(radioFor), session.cal);
+      if (howEl) howEl.innerHTML = assumptionsHtml(modeKey, placed.map(radioFor), session.cal, session.fieldFit, session.fieldInfo);
+      drawPlaces();
+      drawField();
       shown = null; shownTerrain = null;
       set3dReady();
       drawOverlay();
@@ -2193,10 +2465,25 @@
       try {
         const res = await entry;
         if (destroyed || current !== modeKey) return;
+        // Measured coverage points: fetched and fitted once, with the
+        // terrain the ground view loaded.
+        if (CONFIG.modes[modeKey].clutter && !session.fieldInfo) {
+          const info = await loadFieldPoints(opts);
+          if (destroyed) return;
+          session.fieldInfo = info || { cells: [] };
+          session.fieldFit = fitField(session.fieldInfo.cells, placed, res.elevAt);
+          setField(session.fieldFit);
+          res.adj = null;
+          drawField();
+          drawPlaces();
+          if (current !== modeKey) return;
+        }
         // The entry may have been started by an earlier drawing of the card
         // (the tab re-renders): show the fit here too.
         drawCalibration();
-        shown = merge(res.cov, counted());
+        if (!res.adj) res.adj = {};
+        if (!res.adj[session.place]) res.adj[session.place] = adjustCov(res.cov, session.place);
+        shown = merge(res.adj[session.place], counted());
         shownTerrain = res.elevAt;
         set3dReady();
         drawOverlay();
@@ -2285,6 +2572,8 @@
       if (e.target.closest('[data-mm-cov-play]')) { if (playing) stopPlay(); else startPlay(); return; }
       const b = e.target.closest('[data-mm-cov]');
       if (b) { show(b.dataset.mmCov); return; }
+      const pl = e.target.closest('[data-mm-cov-place]');
+      if (pl) { setPlace(pl.dataset.mmCovPlace); return; }
       if (e.target.closest('[data-mm-cov-close]')) { clearProfile(); return; }
       if (e.target.closest('[data-mm-cov-panel]')) { panelOpen = !panelOpen; drawReps(); return; }
       if (e.target.closest('[data-mm-cov-plan]')) { armPlan(!planArmed); return; }
@@ -2331,6 +2620,7 @@
       if (reach) { try { reach(); } catch (_) { /* gone */ } }
       if (root.MediaMesh3D && root.MediaMesh3D.isOpen()) root.MediaMesh3D.close();
       if (linksToggle) linksToggle.removeEventListener('change', onLinksToggle);
+      if (fieldToggle) fieldToggle.removeEventListener('change', onFieldToggle);
       map.remove();
     };
   }
@@ -2341,6 +2631,7 @@
     computeCoverage, workerPool, pathProfile, profileVerdict, budgetRows, profileSvg, profileHtml,
     terrainPlan, loadTerrainLevels, loadTerrain, rampColor, edgeFade, cellAt, cellCenter, readout,
     fitCalibration, calibrationText, setCalibration, getCalibration, CAL,
+    clutterLossDb, setField, getField, fieldDbFor, placeLossDb, fitField, fieldSolve, fieldText, fieldBand, adjustCov, FIELD_RGB, loadFieldPoints, session,
     backboneWeight, backboneTip, areaHistory, footprint, coverageImage, legendGradient,
     growthSteps, presentAt, antennaHeight, coverageCanvas, canvasOverlay, whatIfBase, whatIfDefaults, whatIfJob, whatIfCoverage, whatIfCanvas, cellAreaKm2, coveredKm2, unionKm2, repAreasKm2, planGain, planLinks, planHtml, PLAN_RGB,
     repNotes, repArea, repGroups, repSummaryHtml, repPanelHtml, repAction, assumptionsHtml, linkRows, linksTableHtml, init,

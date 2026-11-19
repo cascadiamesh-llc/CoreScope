@@ -1,0 +1,647 @@
+package main
+
+import (
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"math"
+	"net/http"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/meshcore-analyzer/sigvalidate"
+)
+
+// MediaMesh coverage points: where people walking or driving with
+// MeshCore Open TAK or a Wadamesh TAK standalone found the MediaMesh
+// repeaters (their "Map MediaMesh coverage" recorder), sent here when they
+// switch on sharing. The coverage card checks its estimate against them.
+//
+// A batch is signed with the radio's own key, over
+// "corescope-coverage:" + the hex SHA-256 of the body, and only radios this
+// analyzer has heard are taken, so a stranger can't fill the map with made-up
+// points. The points are kept in their own SQLite file next to the analyzer's
+// database (the analyzer's own is read-only to the server). Nothing here is
+// shown point by point or by radio: the public answer is 200 m cells, with
+// the first and last 300 m of every trip left out, so nobody's home or
+// workplace shows.
+
+const (
+	covPointsMaxBody     = 512 << 10
+	covPointsMaxPerBatch = 500
+	covPointsCellM       = 200.0
+	covPointsTripGap     = 30 * time.Minute
+	covPointsTrimM       = 300.0
+	covPointsCarMS       = 6.0 // faster than this (m/s, about 22 km/h): in a vehicle
+	covPointsSignPrefix  = "corescope-coverage:"
+	covPointsDeletePref  = "corescope-coverage-delete:"
+	covPointsDefaultDays = 365
+	covPointsCacheTTL    = time.Minute
+)
+
+// MediaMeshCoverageConfig is config.json's "mediameshCoverage". On unless
+// enabled is false.
+type MediaMeshCoverageConfig struct {
+	Enabled           *bool  `json:"enabled,omitempty"`
+	DBPath            string `json:"dbPath,omitempty"`
+	RetentionDays     int    `json:"retentionDays,omitempty"`
+	RequireKnownRadio *bool  `json:"requireKnownRadio,omitempty"`
+}
+
+func (c *Config) mediaMeshCoverage() MediaMeshCoverageConfig {
+	if c == nil || c.MediaMeshCoverage == nil {
+		return MediaMeshCoverageConfig{}
+	}
+	return *c.MediaMeshCoverage
+}
+
+// covPointRep is one MediaMesh repeater that answered at a point.
+type covPointRep struct {
+	Key       string  `json:"key"`        // first 8 hex digits of its key
+	SNR       float64 `json:"snr"`        // ours of its reply, dB
+	RemoteSNR float64 `json:"remote_snr"` // its of our ask, dB
+	Margin    float64 `json:"margin"`     // radio2's estimated margin over what it decodes, dB
+}
+
+type covPoint struct {
+	T     int64         `json:"t"` // unix seconds
+	Lat   float64       `json:"lat"`
+	Lon   float64       `json:"lon"`
+	Acc   float64       `json:"acc,omitempty"`   // GPS accuracy, m
+	Speed float64       `json:"speed,omitempty"` // m/s
+	Reps  []covPointRep `json:"reps"`
+}
+
+type covRadio2 struct {
+	BwHz int `json:"bw_hz"`
+	SF   int `json:"sf"`
+}
+
+// covPointsBatch is the upload's body.
+type covPointsBatch struct {
+	V        int        `json:"v"`
+	Radio    string     `json:"radio"` // the radio's full public key, 64 hex
+	Sent     int64      `json:"sent"`
+	App      string     `json:"app,omitempty"`
+	Radio2   covRadio2  `json:"radio2"`
+	MainBwHz int        `json:"main_bw_hz"`
+	Points   []covPoint `json:"points"`
+}
+
+// covPointsStore holds the points.
+type covPointsStore struct {
+	db  *sql.DB
+	now func() time.Time
+
+	mu       sync.Mutex
+	cached   *covCellsResponse
+	cachedAt time.Time
+}
+
+func openCovPointsStore(path string) (*covPointsStore, error) {
+	db, err := sql.Open("sqlite3", "file:"+path+"?_busy_timeout=5000&_journal_mode=WAL")
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS points (
+		radio TEXT NOT NULL, t INTEGER NOT NULL, lat REAL NOT NULL, lon REAL NOT NULL,
+		acc REAL, speed REAL, reps TEXT NOT NULL, r2_bw INTEGER, r2_sf INTEGER, main_bw INTEGER,
+		app TEXT, received INTEGER NOT NULL, PRIMARY KEY (radio, t))`); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return &covPointsStore{db: db, now: time.Now}, nil
+}
+
+func (st *covPointsStore) close() {
+	if st != nil && st.db != nil {
+		st.db.Close()
+	}
+}
+
+// add stores a checked batch: how many points were new.
+func (st *covPointsStore) add(b *covPointsBatch) (int, error) {
+	tx, err := st.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO points (radio, t, lat, lon, acc, speed, reps, r2_bw, r2_sf, main_bw, app, received)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Close()
+	n := 0
+	now := st.now().Unix()
+	for _, p := range b.Points {
+		reps, _ := json.Marshal(p.Reps)
+		res, err := stmt.Exec(b.Radio, p.T, p.Lat, p.Lon, p.Acc, p.Speed, string(reps), b.Radio2.BwHz, b.Radio2.SF, b.MainBwHz, b.App, now)
+		if err != nil {
+			return 0, err
+		}
+		if k, _ := res.RowsAffected(); k > 0 {
+			n++
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	st.invalidate()
+	return n, nil
+}
+
+func (st *covPointsStore) removeRadio(radio string) (int64, error) {
+	res, err := st.db.Exec(`DELETE FROM points WHERE radio = ?`, radio)
+	if err != nil {
+		return 0, err
+	}
+	st.invalidate()
+	return res.RowsAffected()
+}
+
+func (st *covPointsStore) prune(days int) {
+	if days <= 0 {
+		return
+	}
+	cut := st.now().Add(-time.Duration(days) * 24 * time.Hour).Unix()
+	if res, err := st.db.Exec(`DELETE FROM points WHERE t < ?`, cut); err == nil {
+		if k, _ := res.RowsAffected(); k > 0 {
+			st.invalidate()
+		}
+	}
+}
+
+func (st *covPointsStore) invalidate() {
+	st.mu.Lock()
+	st.cached = nil
+	st.mu.Unlock()
+}
+
+// storedPoint is a point as read back, with its radio.
+type storedPoint struct {
+	radio string
+	covPoint
+}
+
+func (st *covPointsStore) all() ([]storedPoint, error) {
+	rows, err := st.db.Query(`SELECT radio, t, lat, lon, COALESCE(speed, 0), reps FROM points ORDER BY radio, t`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []storedPoint
+	for rows.Next() {
+		var p storedPoint
+		var reps string
+		if err := rows.Scan(&p.radio, &p.T, &p.Lat, &p.Lon, &p.Speed, &reps); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(reps), &p.Reps)
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// cells: the public answer, worked out at most once a minute.
+func (st *covPointsStore) cells() (*covCellsResponse, error) {
+	st.mu.Lock()
+	if st.cached != nil && st.now().Sub(st.cachedAt) < covPointsCacheTTL {
+		c := st.cached
+		st.mu.Unlock()
+		return c, nil
+	}
+	st.mu.Unlock()
+	pts, err := st.all()
+	if err != nil {
+		return nil, err
+	}
+	c := covCells(pts)
+	st.mu.Lock()
+	st.cached, st.cachedAt = c, st.now()
+	st.mu.Unlock()
+	return c, nil
+}
+
+// ---- Checking a batch ---------------------------------------------------------
+
+var errCovBatch = errors.New("bad batch")
+
+// checkCovBatch checks and tidies a batch in place: the radio's key, sane
+// times and places, at most covPointsMaxPerBatch points, repeater keys as 8
+// lower-case hex digits. now: the server's clock.
+func checkCovBatch(b *covPointsBatch, now time.Time, keepDays int) error {
+	k := strings.ToLower(strings.TrimSpace(b.Radio))
+	if len(k) != 64 {
+		return fmt.Errorf("%w: radio must be the radio's 64-hex-digit public key", errCovBatch)
+	}
+	if _, err := hex.DecodeString(k); err != nil {
+		return fmt.Errorf("%w: radio must be hex", errCovBatch)
+	}
+	b.Radio = k
+	if len(b.Points) == 0 {
+		return fmt.Errorf("%w: no points", errCovBatch)
+	}
+	if len(b.Points) > covPointsMaxPerBatch {
+		return fmt.Errorf("%w: at most %d points a batch", errCovBatch, covPointsMaxPerBatch)
+	}
+	if b.Radio2.BwHz < 7800 || b.Radio2.BwHz > 1625000 || b.Radio2.SF < 5 || b.Radio2.SF > 12 {
+		return fmt.Errorf("%w: radio2 needs bw_hz and sf", errCovBatch)
+	}
+	if b.App = strings.TrimSpace(b.App); len(b.App) > 64 {
+		b.App = b.App[:64]
+	}
+	if keepDays <= 0 {
+		keepDays = covPointsDefaultDays
+	}
+	oldest := now.Add(-time.Duration(keepDays) * 24 * time.Hour).Unix()
+	newest := now.Add(24 * time.Hour).Unix()
+	kept := b.Points[:0]
+	for _, p := range b.Points {
+		if p.T < oldest || p.T > newest || !(p.Lat >= -90 && p.Lat <= 90) || !(p.Lon >= -180 && p.Lon <= 180) || (p.Lat == 0 && p.Lon == 0) {
+			continue
+		}
+		if p.Acc < 0 || p.Acc > 1e4 || math.IsNaN(p.Acc) {
+			p.Acc = 0
+		}
+		if p.Speed < 0 || p.Speed > 100 || math.IsNaN(p.Speed) {
+			p.Speed = 0
+		}
+		reps := make([]covPointRep, 0, len(p.Reps))
+		for _, r := range p.Reps {
+			key := strings.ToLower(strings.TrimSpace(r.Key))
+			if len(key) > 8 {
+				key = key[:8]
+			}
+			if len(key) != 8 || !isHex(key) || !finiteDb(r.SNR) || !finiteDb(r.RemoteSNR) || !finiteDb(r.Margin) {
+				continue
+			}
+			r.Key = key
+			reps = append(reps, r)
+			if len(reps) == 12 {
+				break
+			}
+		}
+		p.Reps = reps
+		kept = append(kept, p)
+	}
+	if len(kept) == 0 {
+		return fmt.Errorf("%w: no usable points (times within the last %d days, real positions)", errCovBatch, keepDays)
+	}
+	b.Points = kept
+	return nil
+}
+
+func isHex(s string) bool {
+	_, err := hex.DecodeString(s)
+	return err == nil
+}
+
+func finiteDb(v float64) bool { return !math.IsNaN(v) && v > -100 && v < 100 }
+
+// covSignedMessage is what the radio signs for a body.
+func covSignedMessage(prefix string, body []byte) []byte {
+	sum := sha256.Sum256(body)
+	return []byte(prefix + hex.EncodeToString(sum[:]))
+}
+
+func verifyCovSignature(radioHex, sigHex string, msg []byte) bool {
+	pub, err := hex.DecodeString(radioHex)
+	if err != nil {
+		return false
+	}
+	sig, err := hex.DecodeString(strings.TrimSpace(sigHex))
+	if err != nil || len(sig) != 64 {
+		return false
+	}
+	ok, err := sigvalidate.VerifyMessage(pub, sig, msg)
+	return err == nil && ok
+}
+
+// ---- The public cells -----------------------------------------------------------
+
+// covCellRep: one repeater as measured in one cell.
+type covCellRep struct {
+	Key    string  `json:"key"`
+	N      int     `json:"n"`      // samples it answered in
+	Margin float64 `json:"margin"` // median estimated radio2 margin, dB
+}
+
+type covCell struct {
+	Lat  float64      `json:"lat"`
+	Lon  float64      `json:"lon"`
+	Car  bool         `json:"car"` // measured from a vehicle
+	N    int          `json:"n"`   // samples
+	None int          `json:"none"`
+	Reps []covCellRep `json:"reps"`
+}
+
+type covCellsResponse struct {
+	CellM   float64   `json:"cell_m"`
+	Points  int       `json:"points"`
+	Radios  int       `json:"radios"`
+	Trimmed int       `json:"trimmed"` // left out at the ends of trips
+	Updated string    `json:"updated,omitempty"`
+	Cells   []covCell `json:"cells"`
+}
+
+// covCells groups points into covPointsCellM cells, after leaving out the
+// first and last covPointsTrimM of each trip (a radio's points with no gap
+// over covPointsTripGap). pts must be sorted by radio, then time.
+func covCells(pts []storedPoint) *covCellsResponse {
+	out := &covCellsResponse{CellM: covPointsCellM, Cells: []covCell{}}
+	type acc struct {
+		lat, lon float64
+		car      bool
+		n, none  int
+		margins  map[string][]float64
+	}
+	cells := map[string]*acc{}
+	radios := map[string]bool{}
+	var newest int64
+	keep := trimTrips(pts)
+	for i, p := range pts {
+		if !keep[i] {
+			out.Trimmed++
+			continue
+		}
+		out.Points++
+		radios[p.radio] = true
+		if p.T > newest {
+			newest = p.T
+		}
+		lat, lon := snapCell(p.Lat, p.Lon)
+		car := p.Speed > covPointsCarMS
+		key := fmt.Sprintf("%.5f,%.5f,%t", lat, lon, car)
+		c := cells[key]
+		if c == nil {
+			c = &acc{lat: lat, lon: lon, car: car, margins: map[string][]float64{}}
+			cells[key] = c
+		}
+		c.n++
+		if len(p.Reps) == 0 {
+			c.none++
+		}
+		seen := map[string]bool{}
+		for _, r := range p.Reps {
+			if seen[r.Key] {
+				continue
+			}
+			seen[r.Key] = true
+			c.margins[r.Key] = append(c.margins[r.Key], r.Margin)
+		}
+	}
+	out.Radios = len(radios)
+	if newest > 0 {
+		out.Updated = time.Unix(newest, 0).UTC().Format(time.RFC3339)
+	}
+	for _, c := range cells {
+		cc := covCell{Lat: c.lat, Lon: c.lon, Car: c.car, N: c.n, None: c.none, Reps: []covCellRep{}}
+		for k, ms := range c.margins {
+			cc.Reps = append(cc.Reps, covCellRep{Key: k, N: len(ms), Margin: math.Round(medianF(ms)*10) / 10})
+		}
+		sort.Slice(cc.Reps, func(i, j int) bool { return cc.Reps[i].Margin > cc.Reps[j].Margin })
+		out.Cells = append(out.Cells, cc)
+	}
+	sort.Slice(out.Cells, func(i, j int) bool {
+		a, b := out.Cells[i], out.Cells[j]
+		if a.Lat != b.Lat {
+			return a.Lat > b.Lat
+		}
+		if a.Lon != b.Lon {
+			return a.Lon < b.Lon
+		}
+		return !a.Car && b.Car
+	})
+	return out
+}
+
+// trimTrips marks the points kept: all but those within covPointsTrimM of
+// where each trip started or ended.
+func trimTrips(pts []storedPoint) []bool {
+	keep := make([]bool, len(pts))
+	for s := 0; s < len(pts); {
+		e := s + 1
+		for e < len(pts) && pts[e].radio == pts[s].radio && time.Duration(pts[e].T-pts[e-1].T)*time.Second <= covPointsTripGap {
+			e++
+		}
+		first, last := pts[s], pts[e-1]
+		for i := s; i < e; i++ {
+			p := pts[i]
+			keep[i] = haversineKm(p.Lat, p.Lon, first.Lat, first.Lon)*1000 > covPointsTrimM &&
+				haversineKm(p.Lat, p.Lon, last.Lat, last.Lon)*1000 > covPointsTrimM
+		}
+		s = e
+	}
+	return keep
+}
+
+// snapCell is the middle of the covPointsCellM cell a point falls in.
+func snapCell(lat, lon float64) (float64, float64) {
+	dLat := covPointsCellM / 111320.0
+	row := math.Floor(lat / dLat)
+	cLat := (row + 0.5) * dLat
+	dLon := covPointsCellM / (111320.0 * math.Cos(cLat*math.Pi/180))
+	col := math.Floor(lon / dLon)
+	return math.Round(cLat*1e5) / 1e5, math.Round((col+0.5)*dLon*1e5) / 1e5
+}
+
+func medianF(xs []float64) float64 {
+	v := append([]float64(nil), xs...)
+	sort.Float64s(v)
+	n := len(v)
+	if n == 0 {
+		return 0
+	}
+	if n%2 == 1 {
+		return v[n/2]
+	}
+	return (v[n/2-1] + v[n/2]) / 2
+}
+
+// ---- Handlers --------------------------------------------------------------------
+
+type covPointsService struct {
+	once    sync.Once
+	st      *covPointsStore
+	err     error
+	limiter *rateLimiter
+	stop    chan struct{}
+}
+
+// coveragePoints opens the store on first use; nil (and the reason) when
+// switched off or the file can't be opened.
+func (s *Server) coveragePoints() (*covPointsStore, error) {
+	c := s.cfg.mediaMeshCoverage()
+	if c.Enabled != nil && !*c.Enabled {
+		return nil, errors.New("coverage points are switched off on this analyzer")
+	}
+	s.covPoints.once.Do(func() {
+		path := strings.TrimSpace(c.DBPath)
+		if path == "" {
+			if s.db == nil || s.db.path == "" {
+				s.covPoints.err = errors.New("no place to keep coverage points")
+				return
+			}
+			path = filepath.Join(filepath.Dir(s.db.path), "mediamesh-coverage.db")
+		}
+		st, err := openCovPointsStore(path)
+		if err != nil {
+			log.Printf("[mediamesh] coverage points: can't open %s: %v", path, err)
+			s.covPoints.err = errors.New("coverage points can't be stored on this analyzer")
+			return
+		}
+		log.Printf("[mediamesh] coverage points kept in %s", path)
+		s.covPoints.st = st
+		s.covPoints.limiter = newRateLimiter(30, time.Hour)
+		s.covPoints.stop = make(chan struct{})
+		days := c.RetentionDays
+		if days <= 0 {
+			days = covPointsDefaultDays
+		}
+		st.prune(days)
+		go func() {
+			t := time.NewTicker(6 * time.Hour)
+			defer t.Stop()
+			for {
+				select {
+				case <-t.C:
+					st.prune(days)
+				case <-s.covPoints.stop:
+					return
+				}
+			}
+		}()
+	})
+	return s.covPoints.st, s.covPoints.err
+}
+
+func (s *Server) closeCoveragePoints() {
+	if s.covPoints.st != nil {
+		close(s.covPoints.stop)
+		s.covPoints.st.close()
+	}
+}
+
+// radioKnown: the analyzer has heard this radio (its full key).
+func (s *Server) radioKnown(pk string) bool {
+	if s.store == nil {
+		return false
+	}
+	nodes, _ := s.store.getCachedNodesAndPM()
+	for i := range nodes {
+		if strings.EqualFold(nodes[i].PublicKey, pk) {
+			return true
+		}
+	}
+	return false
+}
+
+// handleCoveragePointsPost: POST /api/mediamesh/coverage-points.
+func (s *Server) handleCoveragePointsPost(w http.ResponseWriter, r *http.Request) {
+	st, err := s.coveragePoints()
+	if st == nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, covPointsMaxBody))
+	if err != nil {
+		writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+		return
+	}
+	var b covPointsBatch
+	if err := json.Unmarshal(body, &b); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	c := s.cfg.mediaMeshCoverage()
+	if err := checkCovBatch(&b, time.Now(), c.RetentionDays); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !verifyCovSignature(b.Radio, r.Header.Get("X-MeshCore-Signature"), covSignedMessage(covPointsSignPrefix, body)) {
+		writeError(w, http.StatusUnauthorized, "the signature doesn't match this radio's key")
+		return
+	}
+	if (c.RequireKnownRadio == nil || *c.RequireKnownRadio) && !s.radioKnown(b.Radio) {
+		writeError(w, http.StatusForbidden, "this analyzer hasn't heard this radio yet: send an advert, then try again")
+		return
+	}
+	if ok, wait := s.covPoints.limiter.take(b.Radio); !ok {
+		w.Header().Set("Retry-After", fmt.Sprint(int(wait.Seconds())+1))
+		writeError(w, http.StatusTooManyRequests, "too many uploads from this radio, try again later")
+		return
+	}
+	n, err := st.add(&b)
+	if err != nil {
+		log.Printf("[mediamesh] coverage points from %s: %v", b.Radio[:8], err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, map[string]int{"accepted": n, "duplicates": len(b.Points) - n})
+}
+
+// covDeleteRequest: a radio asking for all its points to go.
+type covDeleteRequest struct {
+	Radio string `json:"radio"`
+	Sent  int64  `json:"sent"`
+}
+
+// handleCoveragePointsDelete: DELETE /api/mediamesh/coverage-points, signed
+// like an upload (prefix covPointsDeletePref), sent within 10 minutes.
+func (s *Server) handleCoveragePointsDelete(w http.ResponseWriter, r *http.Request) {
+	st, err := s.coveragePoints()
+	if st == nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<10))
+	if err != nil {
+		writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+		return
+	}
+	var q covDeleteRequest
+	if json.Unmarshal(body, &q) != nil || len(q.Radio) != 64 || !isHex(q.Radio) {
+		writeError(w, http.StatusBadRequest, "radio must be the radio's 64-hex-digit public key")
+		return
+	}
+	if d := time.Since(time.Unix(q.Sent, 0)); d > 10*time.Minute || d < -10*time.Minute {
+		writeError(w, http.StatusBadRequest, "sent must be the time now (check the clock)")
+		return
+	}
+	radio := strings.ToLower(q.Radio)
+	if !verifyCovSignature(radio, r.Header.Get("X-MeshCore-Signature"), covSignedMessage(covPointsDeletePref, body)) {
+		writeError(w, http.StatusUnauthorized, "the signature doesn't match this radio's key")
+		return
+	}
+	n, err := st.removeRadio(radio)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, map[string]int64{"removed": n})
+}
+
+// handleCoveragePointsGet: GET /api/mediamesh/coverage-points.
+func (s *Server) handleCoveragePointsGet(w http.ResponseWriter, r *http.Request) {
+	st, _ := s.coveragePoints()
+	if st == nil {
+		writeJSON(w, &covCellsResponse{CellM: covPointsCellM, Cells: []covCell{}})
+		return
+	}
+	c, err := st.cells()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, c)
+}

@@ -656,6 +656,12 @@
           <button type="button" class="tab-btn mm-cov-3d-btn" data-mm-cov-3d disabled title="The estimate over the terrain in 3D, with the backbone">3D view</button>
         </div>
       </div>
+      <div class="mm-cov-places" id="mmCovPlaces" role="group" aria-label="Where you are">
+        <span class="mm-cov-places-label">Where you are</span>
+        <button type="button" class="tab-btn active" data-mm-cov-place="outdoors" aria-pressed="true">Outdoors</button>
+        <button type="button" class="tab-btn" data-mm-cov-place="car" aria-pressed="false">In a car</button>
+        <button type="button" class="tab-btn" data-mm-cov-place="indoors" aria-pressed="false">Indoors</button>
+      </div>
       <div class="mm-cov-reps" id="mmCovReps"><div id="mmCovRepSummary"></div><div class="mm-cov-rep-panel" id="mmCovRepPanel" hidden></div></div>
       <div id="mmCovMap" class="mm-cov-map"></div>
       <div class="mm-cov-legend">
@@ -668,6 +674,7 @@
         <span><span class="mm-cov-sw mm-cov-sw--relayed"></span>Relayed (weaker evidence)</span>
         <label class="mm-cov-links-key" id="mmCovBackboneKey" hidden title="The hops photos, video and voice actually took this week: thicker for busier"><input type="checkbox" id="mmCovBackboneToggle"> <span class="mm-cov-sw mm-cov-sw--backbone"></span>Backbone (this week)</label>
         <label class="mm-cov-links-key" id="mmCovLinksKey" hidden><input type="checkbox" id="mmCovLinksToggle" checked> <span class="mm-cov-sw mm-cov-sw--link"></span>Heard on radio2</label>
+        <label class="mm-cov-links-key" id="mmCovFieldKey" hidden title="Where people mapping MediaMesh coverage with MeshCore Open TAK or Wadamesh TAK found the repeaters: green 5 dB or more to spare, amber 0 to 5, red short, grey none answered; dashed from a vehicle"><input type="checkbox" id="mmCovFieldToggle" checked> <span class="mm-cov-sw mm-cov-sw--field"></span>Measured on the ground</label>
         <label class="mm-cov-opacity">Opacity <input type="range" id="mmCovOpacity" min="0" max="100" value="100" aria-label="Coverage opacity"></label>
       </div>
       <div class="mm-cov-time" id="mmCovTime" hidden>
@@ -680,7 +687,7 @@
       <p class="text-muted mm-cov-note" id="mmCovStatus" aria-live="polite"></p>
       <p class="mm-cov-note mm-cov-cal" id="mmCovCal"></p>
       <div class="mm-cov-profile" id="mmCovProfile" hidden></div>
-      <p class="text-muted mm-cov-note">Estimate, not a measurement: bare terrain only, so street level among buildings and trees will be worse.${missing} <span id="mmCovMode">People on the ground: a companion or standalone radio at 1.5 m.</span></p>
+      <p class="text-muted mm-cov-note">Estimate, not a measurement: buildings and trees are allowed for on average, so one street can be better or worse than drawn.${missing} <span id="mmCovMode">People on the ground: a companion or standalone radio held in the hand at 1.5 m, among buildings.</span></p>
       <details class="mm-cov-details" id="mmCovLinksWrap" hidden>
         <summary>Model against what was heard</summary>
         <p class="text-muted mm-cov-note">Packets an observer received on radio2 straight from the node named, with the signal the model expects over the same path (no safety margin taken off, the correction above included). Observers and repeaters are taken as 10 m up; a real antenna, height or power moves the difference either way. The correction is the middle of these differences, from links heard at least 5 times, limited to +6 or −12 dB: links that were heard at all are the ones strong enough to get through, so they flatter the model a little.</p>
