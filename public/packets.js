@@ -784,6 +784,16 @@
   let _regionChangeHandler = null;
   let _areaChangeHandler = null;
 
+  // A packet (or one observation of it) carried on MediaMesh (radio2):
+  // photos, video and voice. "main radio too" when the observer heard the
+  // same copy on both radios.
+  function mediaMeshBadge(p) {
+    if (!p || p.mediamesh !== true) return '';
+    const tip = 'Carried on MediaMesh (radio2), the photo, video and voice radio' + (p.main_mesh ? '; also heard on the main radio' : '');
+    return '<span class="badge-mediamesh pk-mm-badge" title="' + tip + '">MediaMesh</span>';
+  }
+  window._packetsMediaMeshBadge = mediaMeshBadge;
+
   function buildPacketsQuery(timeWindowMin, regionParam, skipHash) {
     var parts = [];
     if (timeWindowMin != null && timeWindowMin !== DEFAULT_TIME_WINDOW) parts.push('timeWindow=' + timeWindowMin);
@@ -793,6 +803,7 @@
     if (filters.observer) parts.push('observer=' + encodeURIComponent(filters.observer));
     if (filters.channel) parts.push('channel=' + encodeURIComponent(filters.channel));
     if (filters._filterExpr) parts.push('filter=' + encodeURIComponent(filters._filterExpr));
+    if (filters.mediamesh) parts.push('mm=1');
     if (showFullNames) parts.push('fullNames=1');
     // Sort state (#749) — encode as 'col[:asc]'; default 'time:desc' is omitted.
     if (_packetSortColumn) {
@@ -825,7 +836,7 @@
     // Update clear-filters button visibility
     var cb = document.getElementById('clearFiltersBtn');
     if (cb) {
-      var active = !!(filters.hash || filters.node || filters.observer || filters.channel || filters.type || filters._filterExpr || filters.myNodes) || !!RegionFilter.getRegionParam() || savedTimeWindowMin !== DEFAULT_TIME_WINDOW;
+      var active = !!(filters.hash || filters.node || filters.observer || filters.channel || filters.type || filters._filterExpr || filters.myNodes || filters.mediamesh) || !!RegionFilter.getRegionParam() || savedTimeWindowMin !== DEFAULT_TIME_WINDOW;
       cb.style.display = active ? '' : 'none';
     }
   }
@@ -1354,6 +1365,8 @@
     if (_urlObserver) filters.observer = _urlObserver;
     var _urlChannel = _initUrlParams.get('channel');
     if (_urlChannel) filters.channel = _urlChannel;
+    // MediaMesh only (?mm=1): photos, video and voice carried on radio2
+    if (_initUrlParams.get('mm') === '1') filters.mediamesh = true;
     var _urlFilterExpr = _initUrlParams.get('filter');
     if (_urlFilterExpr) filters._filterExpr = _urlFilterExpr;
     // #749 — restore sort state from URL (overrides localStorage).
@@ -1835,6 +1848,7 @@
         <div class="filter-group filter-group-toggles">
           <button class="btn ${groupByHash ? 'active' : ''}" id="fGroup" title="Collapse duplicate observations of the same packet into expandable groups">Group by Hash</button>
           <button class="btn" id="fMyNodes" title="Show only packets from your favorited/claimed nodes"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-star-fill"/></svg> My Nodes</button>
+          <button class="btn pk-mm-toggle ${filters.mediamesh ? 'active' : ''}" id="fMediaMesh" aria-pressed="${filters.mediamesh ? 'true' : 'false'}" title="Show only packets carried on MediaMesh (radio2): photos, video and voice"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-share-network"/></svg> MediaMesh <span class="pk-mm-count" id="fMediaMeshCount" hidden></span></button>
           <select id="fTimeWindow" class="filter-select" aria-label="Time window filter">
             <option value="15">Last 15 min</option>
             <option value="30">Last 30 min</option>
@@ -2186,6 +2200,8 @@
       filters._filterExpr = undefined;
       filters._packetFilter = null;
       filters.myNodes = false;
+      filters.mediamesh = false;
+      { const mmBtn = document.getElementById('fMediaMesh'); if (mmBtn && mmBtn.classList) mmBtn.classList.remove('active'); if (mmBtn && typeof mmBtn.setAttribute === 'function') mmBtn.setAttribute('aria-pressed', 'false'); }
       _observerFilterSet = null;
 
       // Clear localStorage filter entries
@@ -2247,6 +2263,13 @@
     });
 
     document.getElementById('fGroup').addEventListener('click', () => { groupByHash = !groupByHash; loadPackets(); });
+    document.getElementById('fMediaMesh').addEventListener('click', function () {
+      filters.mediamesh = !filters.mediamesh;
+      this.classList.toggle('active', filters.mediamesh);
+      this.setAttribute('aria-pressed', filters.mediamesh ? 'true' : 'false');
+      updatePacketsUrl();
+      renderTableRows();
+    });
     document.getElementById('fMyNodes').addEventListener('click', function () {
       filters.myNodes = !filters.myNodes;
       this.classList.toggle('active', filters.myNodes);
@@ -2605,14 +2628,14 @@
     const _grpChanStyle = window.ChannelColors ? window.ChannelColors.getRowStyle(_grpDecoded.type || groupTypeName, _grpDecoded.channel) : '';
     const _grpHashStripe = _hashStripeStyle(p.hash);
     const _grpStyle = _grpHashStripe + _grpChanStyle;
-    let html = `<tr class="${isSingle ? '' : 'group-header'} ${isExpanded ? 'expanded' : ''}" data-hash="${p.hash}" data-action="${isSingle ? 'select-hash' : 'toggle-select'}" data-value="${p.hash}" data-entry-idx="${entryIdx}" tabindex="0" role="row"${_grpStyle ? ' style="' + _grpStyle + '"' : ''}>
+    let html = `<tr class="${isSingle ? '' : 'group-header'} ${isExpanded ? 'expanded' : ''}${p.mediamesh ? ' pk-mm-row' : ''}" data-hash="${p.hash}" data-action="${isSingle ? 'select-hash' : 'toggle-select'}" data-value="${p.hash}" data-entry-idx="${entryIdx}" tabindex="0" role="row"${_grpStyle ? ' style="' + _grpStyle + '"' : ''}>
           <td class="col-expand" style="text-align:center;cursor:pointer">${isSingle ? '' : (isExpanded ? '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-caret-down"/></svg>' : '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-caret-right"/></svg>')}</td>
           <td class="col-region">${groupRegion ? `<span class="badge-region">${escapeHtml(groupRegion)}</span>` : '—'}</td>
           <td class="col-time">${renderTimestampCell(p.latest)}</td>
           <td class="mono col-hash" data-filter-field="hash" data-filter-value="${escapeHtml(p.hash || '')}">${truncate(p.hash || '—', 8)}</td>
           <td class="col-size" data-filter-field="size" data-filter-value="${groupSize || ''}">${groupSize ? groupSize + 'B' : '—'}</td>
           <td class="col-hashsize mono"${_grpHashSizeTitle}>${groupHashBytes}</td>
-          <td class="col-type" data-filter-field="type" data-filter-value="${escapeHtml(groupTypeName || '')}">${p.payload_type != null ? `<span class="badge badge-${groupTypeClass}">${groupTypeName}</span>${transportBadge(p.route_type)}` : '—'}</td>
+          <td class="col-type" data-filter-field="type" data-filter-value="${escapeHtml(groupTypeName || '')}">${p.payload_type != null ? `<span class="badge badge-${groupTypeClass}">${groupTypeName}</span>${transportBadge(p.route_type)}${mediaMeshBadge(p)}` : '—'}</td>
           <td class="col-scope" data-filter-field="scope" data-filter-value="${escapeHtml(p.scope_name || '')}">${scopeCellHtml(p.scope_name)}</td>
           <td class="col-observer" data-filter-field="observer" data-filter-value="${escapeHtml(obsNameOnly(headerObserverId) || '')}">${isSingle ? obsCellName(headerObserverId, 16) + obsIataBadge(p) : obsCellName(headerObserverId, 10) + groupedObserverIataBadgesHtml(p)}</td>
           <td class="col-path"><span class="path-hops">${groupPathStr}</span></td>
@@ -2640,13 +2663,13 @@
         const childRegion = c.observer_id ? (observerMap.get(c.observer_id)?.iata || '') : '';
         const childPathStr = renderPath(childPath, c.observer_id, { summary: true });
         const _childHashStripe = _hashStripeStyle(c.hash || p.hash);
-        html += `<tr class="group-child" data-id="${c.id}" data-hash="${c.hash || ''}" data-action="select-observation" data-value="${c.id}" data-parent-hash="${p.hash}" data-entry-idx="${entryIdx}" tabindex="0" role="row"${_childHashStripe ? ' style="' + _childHashStripe + '"' : ''}>
+        html += `<tr class="group-child${c.mediamesh ? ' pk-mm-row' : ''}" data-id="${c.id}" data-hash="${c.hash || ''}" data-action="select-observation" data-value="${c.id}" data-parent-hash="${p.hash}" data-entry-idx="${entryIdx}" tabindex="0" role="row"${_childHashStripe ? ' style="' + _childHashStripe + '"' : ''}>
               <td class="col-expand"></td><td class="col-region">${childRegion ? `<span class="badge-region">${escapeHtml(childRegion)}</span>` : '—'}</td>
               <td class="col-time">${renderTimestampCell(c.timestamp)}</td>
               <td class="mono col-hash" data-filter-field="hash" data-filter-value="${escapeHtml(c.hash || '')}">${truncate(c.hash || '', 8)}</td>
               <td class="col-size" data-filter-field="size" data-filter-value="${size || ''}">${size}B</td>
               <td class="col-hashsize mono"${_cHashSizeTitle}>${childHashBytes}</td>
-              <td class="col-type" data-filter-field="type" data-filter-value="${escapeHtml(typeName || '')}"><span class="badge badge-${typeClass}">${typeName}</span>${transportBadge(c.route_type)}</td>
+              <td class="col-type" data-filter-field="type" data-filter-value="${escapeHtml(typeName || '')}"><span class="badge badge-${typeClass}">${typeName}</span>${transportBadge(c.route_type)}${mediaMeshBadge(c)}</td>
               <td class="col-scope" data-filter-field="scope" data-filter-value="${escapeHtml(c.scope_name || '')}">${scopeCellHtml(c.scope_name)}</td>
               <td class="col-observer" data-filter-field="observer" data-filter-value="${escapeHtml(obsNameOnly(c.observer_id) || '')}">${obsCellName(c.observer_id, 16)}${obsIataBadge(c)}</td>
               <td class="col-path"><span class="path-hops">${childPathStr}</span></td>
@@ -2676,13 +2699,13 @@
     const detail = getDetailPreview(decoded);
     const _flatHashStripe = _hashStripeStyle(p.hash);
     const _flatStyle = _flatHashStripe + _chanStyle;
-    return `<tr data-id="${p.id}" data-hash="${p.hash || ''}" data-action="select-hash" data-value="${p.hash || p.id}" data-entry-idx="${entryIdx}" tabindex="0" role="row" class="${selectedId === p.id ? 'selected' : ''}"${_flatStyle ? ' style="' + _flatStyle + '"' : ''}>
+    return `<tr data-id="${p.id}" data-hash="${p.hash || ''}" data-action="select-hash" data-value="${p.hash || p.id}" data-entry-idx="${entryIdx}" tabindex="0" role="row" class="${selectedId === p.id ? 'selected' : ''}${p.mediamesh ? ' pk-mm-row' : ''}"${_flatStyle ? ' style="' + _flatStyle + '"' : ''}>
         <td class="col-expand"></td><td class="col-region">${region ? `<span class="badge-region">${escapeHtml(region)}</span>` : '—'}</td>
         <td class="col-time">${renderTimestampCell(p.timestamp)}</td>
         <td class="mono col-hash" data-filter-field="hash" data-filter-value="${escapeHtml(p.hash || '')}">${truncate(p.hash || String(p.id), 8)}</td>
         <td class="col-size" data-filter-field="size" data-filter-value="${size || ''}">${size}B</td>
         <td class="col-hashsize mono"${_flatHashSizeTitle}>${hashBytes}</td>
-        <td class="col-type" data-filter-field="type" data-filter-value="${escapeHtml(typeName || '')}"><span class="badge badge-${typeClass}">${typeName}</span>${transportBadge(p.route_type)}</td>
+        <td class="col-type" data-filter-field="type" data-filter-value="${escapeHtml(typeName || '')}"><span class="badge badge-${typeClass}">${typeName}</span>${transportBadge(p.route_type)}${mediaMeshBadge(p)}</td>
         <td class="col-scope" data-filter-field="scope" data-filter-value="${escapeHtml(p.scope_name || '')}">${scopeCellHtml(p.scope_name)}</td>
         <td class="col-observer" data-filter-field="observer" data-filter-value="${escapeHtml(obsNameOnly(p.observer_id) || '')}">${obsCellName(p.observer_id, 16)}${obsIataBadge(p)}</td>
         <td class="col-path"><span class="path-hops">${pathStr}</span></td>
@@ -3278,6 +3301,21 @@
       }
     }
 
+    // How many of the loaded packets were carried on MediaMesh, on its toggle
+    const mmCountEl = document.getElementById('fMediaMeshCount');
+    if (mmCountEl) {
+      let mmN = 0;
+      for (const p of packets) if (p.mediamesh === true) mmN++;
+      mmCountEl.textContent = mmN.toLocaleString();
+      mmCountEl.hidden = !mmN;
+      const mmBtn = document.getElementById('fMediaMesh');
+      if (mmBtn) mmBtn.title = `Show only packets carried on MediaMesh (radio2): photos, video and voice. ${mmN.toLocaleString()} of ${packets.length.toLocaleString()} loaded.`;
+    }
+    // MediaMesh only: a grouped row counts when any observation was on radio2
+    if (!hashOnly && filters.mediamesh) {
+      displayPackets = displayPackets.filter((p) => p.mediamesh === true);
+    }
+
     // Client-side type/observer filtering
     if (!hashOnly && filters.type) {
       const types = filters.type.split(',').map(Number);
@@ -3310,7 +3348,7 @@
       _lastVisibleEnd = -1;
       detachVScrollListener();
       const colCount = _getColCount();
-      tbody.innerHTML = '<tr><td colspan="' + colCount + '" class="text-center text-muted" style="padding:24px">' + (filters.myNodes ? 'No packets from your claimed/favorited nodes' : 'No packets found') + '</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="' + colCount + '" class="text-center text-muted" style="padding:24px">' + (filters.myNodes ? 'No packets from your claimed/favorited nodes' : filters.mediamesh ? 'No MediaMesh packets in this time range' : 'No packets found') + '</td></tr>';
       // Restore scroll position after DOM rebuild (#431)
       if (scrollContainer) scrollContainer.scrollTop = savedScrollTop;
       return;
@@ -3827,7 +3865,7 @@
     panel.innerHTML = `
       ${anomalyBanner}
       <div class="detail-title">
-        <span class="badge badge-${payloadTypeColor(pkt.payload_type)}">${typeName}</span>
+        <span class="badge badge-${payloadTypeColor(pkt.payload_type)}">${typeName}</span>${mediaMeshBadge(pkt)}
         ${semanticSummary ? `<span class="detail-summary">${semanticSummary}</span>` : ''}
         ${displayHopCount > 0 ? `<span class="badge badge-info">${displayHopCount} hop${displayHopCount !== 1 ? 's' : ''}</span>` : ''}
       </div>

@@ -383,6 +383,8 @@
    * (#a21caf is 6.3:1 on white), light on dark ones. Lines, rings and icons
    * keep --mediamesh-path-color. */
   --mediamesh-text-color: #a21caf;
+  --mediamesh-on-color: #ffffff; /* text on a filled MediaMesh badge, both themes */
+  --mediamesh-badge-bg: #a21caf; /* fuchsia 700: white text on it reads at 6:1 */
 
   /* #1128: documented z-index scale. Use these custom props for any new
    * stacking context decision. Existing legacy z-index values that work are
@@ -6433,3 +6435,13 @@ a.tab-btn { text-decoration: none; display: inline-flex; align-items: center; }
 .mm-wi-sw--both { background: color-mix(in srgb, var(--mediamesh-node-color) 40%, transparent); }
 .mm-wi-note { font-size: 0.82em; margin: 8px 0 2px; }
 @media (max-width: 600px) { .mm-wi-row { grid-template-columns: 1fr 4.5em; } .mm-wi-row input[type="range"] { grid-column: 1 / -1; grid-row: 2; } }
+
+/* Packets: rows carried on MediaMesh (radio2), and the "MediaMesh" toggle.
+   The tint is a background image, so hover and selection still show. */
+tr.pk-mm-row > td { background-image: linear-gradient(color-mix(in srgb, var(--mediamesh-path-color) 13%, transparent), color-mix(in srgb, var(--mediamesh-path-color) 13%, transparent)); }
+.badge-mediamesh.pk-mm-badge { white-space: nowrap; vertical-align: 1px; background: var(--mediamesh-badge-bg); color: var(--mediamesh-on-color); border-color: var(--mediamesh-path-color); letter-spacing: 0.02em; box-shadow: 0 0 8px color-mix(in srgb, var(--mediamesh-path-color) 45%, transparent); }
+tr.pk-mm-row > td:first-child { box-shadow: inset 3px 0 0 var(--mediamesh-path-color); }
+.pk-mm-count { display: inline-block; min-width: 1.6em; padding: 0 6px; margin-left: 2px; border-radius: 999px; font-size: 0.8em; font-weight: 600; text-align: center; background: var(--mediamesh-badge-bg); color: var(--mediamesh-on-color); }
+.pk-mm-toggle { color: var(--mediamesh-text-color, var(--text)); }
+.filter-bar .btn.pk-mm-toggle.active, [data-theme="dark"] .filter-bar .btn.pk-mm-toggle.active, .filter-group .btn.pk-mm-toggle.active { border-color: var(--mediamesh-badge-bg); background: var(--mediamesh-badge-bg); color: var(--mediamesh-on-color); box-shadow: 0 0 10px color-mix(in srgb, var(--mediamesh-path-color) 50%, transparent); }
+.filter-bar .btn.pk-mm-toggle.active .pk-mm-count, .filter-group .btn.pk-mm-toggle.active .pk-mm-count { background: var(--mediamesh-on-color); color: var(--mediamesh-badge-bg); }
