@@ -434,6 +434,7 @@ func (s *PacketStore) computeMediaMeshAnalytics(region string, window TimeWindow
 	mediaMeshMu.RLock()
 	anyMM := len(mediaMeshObs) > 0
 	seen := make(map[string]bool, len(s.packets))
+	bursts := s.mediaMeshBurstsLocked("")
 	for _, tx := range s.packets {
 		if tx == nil || !window.Includes(tx.FirstSeen) {
 			continue
@@ -524,7 +525,7 @@ func (s *PacketStore) computeMediaMeshAnalytics(region string, window TimeWindow
 			if len(firstMM) >= 13 {
 				hours[firstMM[:13]]++
 			}
-			if tx.PayloadType != nil && (*tx.PayloadType == mediaPayloadGrpData || *tx.PayloadType == mediaPayloadRawCustom) && mmHops >= 0 {
+			if mediaMeshIsMedia(tx, bursts) && mmHops >= 0 {
 				mediaHops = append(mediaHops, mmHops)
 			}
 		}

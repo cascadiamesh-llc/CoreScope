@@ -321,8 +321,24 @@ vm.runInContext('const MEDIAMESH_TRANSFER_IDLE_MS = 8000; const MEDIAMESH_TRANSF
   + "const MEDIAMESH_CLIP_PREFIXES = { VI1: 'photo', VV1: 'video', VE3: 'voice', VM1: 'voice' };\n"
   + "const MEDIAMESH_CLIP_TITLES = { photo: 'Photo', video: 'Video', voice: 'Voice clip' };\n"
   + "const MEDIAMESH_CLIP_ICONS = { photo: 'ph-camera', video: 'ph-video-camera', voice: 'ph-microphone' };\n"
-  + extract(live, ['mediaMeshFeedBadgeHtml', 'groupIsMediaMesh', 'mediaMeshHopBadgeHtml', 'mediaMeshSidHex', 'mediaMeshParitySid', 'mediaMeshParseAnnouncement', 'mediaMeshClipOf', 'mediaMeshHopId', 'mediaMeshTransferKey', 'mediaMeshTransferHtml'])
-  + '\nthis.api = { mediaMeshFeedBadgeHtml, groupIsMediaMesh, mediaMeshHopBadgeHtml, mediaMeshParitySid, mediaMeshParseAnnouncement, mediaMeshClipOf, mediaMeshTransferKey, mediaMeshTransferHtml };', lctx);
+  + 'const MEDIAMESH_BURST_MS = 60000, MEDIAMESH_BURST_MIN = 3; const mmUnreadable = new Map();\n'
+  + extract(live, ['mediaMeshFeedBadgeHtml', 'groupIsMediaMesh', 'mediaMeshHopBadgeHtml', 'mediaMeshSidHex', 'mediaMeshParitySid', 'mediaMeshParseAnnouncement', 'mediaMeshClipOf', 'mediaMeshUnreadableInBurst', 'mediaMeshLiveClip', 'mediaMeshHopId', 'mediaMeshTransferKey', 'mediaMeshTransferHtml'])
+  + '\nthis.api = { mediaMeshFeedBadgeHtml, groupIsMediaMesh, mediaMeshHopBadgeHtml, mediaMeshParitySid, mediaMeshParseAnnouncement, mediaMeshClipOf, mediaMeshLiveClip, mediaMeshTransferKey, mediaMeshTransferHtml };', lctx);
+
+test('MediaMesh clips: channel data it cannot read is a clip only in a burst', () => {
+  const A = lctx.api;
+  // a team position every ten minutes on channel 230: never a clip
+  for (let i = 0; i < 4; i++) assert.strictEqual(A.mediaMeshLiveClip('GRP_DATA', { channelHash: 230 }, 'team' + i, i * 600000), null, 'beacon ' + i);
+  // three on channel 100 within a minute: the third makes it a clip
+  assert.strictEqual(A.mediaMeshLiveClip('GRP_DATA', { channelHash: 100 }, 'b1', 1e6), null);
+  assert.strictEqual(A.mediaMeshLiveClip('GRP_DATA', { channelHash: 100 }, 'b1', 1e6 + 500), null, 'the same packet again is not a second');
+  assert.strictEqual(A.mediaMeshLiveClip('GRP_DATA', { channelHash: 100 }, 'b2', 1e6 + 2000), null);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(A.mediaMeshLiveClip('GRP_DATA', { channelHash: 100 }, 'b3', 1e6 + 4000))), { sid: '', talk: false });
+  // read: other channel data and repair requests are not pieces; pieces always are
+  assert.strictEqual(A.mediaMeshClipOf('GRP_DATA', { dataType: 1, decryptedBlob: '0102' }), null);
+  assert.strictEqual(A.mediaMeshClipOf('GRP_DATA', { dataType: 0x5643, decryptedBlob: '72e1b879841b' }), null);
+  assert.ok(A.mediaMeshLiveClip('GRP_DATA', { dataType: 0x5643, decryptedBlob: '56eeb59589d8' }, 'p1', 0).sid === 'eeb59589');
+});
 
 test('MediaMesh clips: announcements name them, packets carry the session id', () => {
   const A = lctx.api;

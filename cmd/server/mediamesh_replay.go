@@ -94,6 +94,7 @@ func intField(v interface{}) *int {
 func (s *PacketStore) mediaMeshReplay(since string, out *MediaMeshReplay) {
 	s.mu.RLock()
 	mediaMeshMu.RLock()
+	bursts := s.mediaMeshBurstsLocked(since)
 	for _, tx := range s.packets {
 		if tx == nil || tx.FirstSeen < since || tx.PayloadType == nil {
 			continue
@@ -106,8 +107,8 @@ func (s *PacketStore) mediaMeshReplay(since string, out *MediaMeshReplay) {
 			}
 			continue
 		}
-		if pt != mediaPayloadGrpData && pt != mediaPayloadRawCustom {
-			continue
+		if !mediaMeshIsMedia(tx, bursts) {
+			continue // not media: a lone packet on a channel the analyzer can't read, or other data
 		}
 		// the longest path any observer heard it by on radio2
 		var best *StoreObs

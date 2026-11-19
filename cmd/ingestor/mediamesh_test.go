@@ -1085,6 +1085,13 @@ func TestUpdateMediaMeshNodeStats(t *testing.T) {
 		VALUES (?, ?, 'rx', '["bb22"]', ?)`, f4, obsIdx, now.Add(-time.Hour).Unix()); err != nil {
 		t.Fatal(err)
 	}
+	// Channel data the analyzer can't read counts only in a burst (3 within
+	// a minute on its channel): p1 and p5 get company with no hops, and a
+	// lone packet through a (a team position every few minutes) doesn't count.
+	for i, at := range []time.Time{old, old, now.Add(-3 * time.Hour), now.Add(-3 * time.Hour)} {
+		add(fmt.Sprintf("burst%d", i), 6, `[]`, `[]`, at.Add(time.Duration(i%2+1)*time.Second))
+	}
+	add("lone", 6, `["aa11"]`, `["`+a+`"]`, now.Add(-5*time.Hour))
 	if err := s.RecordMediaMesh(MediaMeshReport{PubKey: status, Mode: mediaMeshModeRxTx, Source: "status"}, now); err != nil {
 		t.Fatal(err)
 	}
@@ -1149,6 +1156,30 @@ func TestUpdateMediaMeshNodeStats(t *testing.T) {
 	s.UpdateMediaMeshNodeStats(now)
 	if f, r := row(a); f != oldTS || r != 4 {
 		t.Errorf("a after retention: first %s relayed %d, want %s and 4", f, r, oldTS)
+	}
+}
+
+func TestMediaBursts(t *testing.T) {
+	it := func(id int64, ch int, ts int64) mediaBurstItem { return mediaBurstItem{id: id, channel: ch, ts: ts} }
+	got := mediaBursts([]mediaBurstItem{
+		// channel 1: three within a minute, then a lone one
+		it(1, 1, 0), it(2, 1, 20), it(3, 1, 55), it(4, 1, 600),
+		// channel 2: a pair, not enough
+		it(5, 2, 0), it(6, 2, 4),
+		// channel 3: one packet heard twice still counts once
+		it(7, 3, 0), it(7, 3, 2), it(8, 3, 30),
+		// channel 1 again, far from the rest: every ten minutes (team positions)
+		it(9, 1, 1200), it(10, 1, 1800), it(11, 1, 2400),
+	})
+	for _, id := range []int64{1, 2, 3} {
+		if !got[id] {
+			t.Errorf("%d: in a burst", id)
+		}
+	}
+	for _, id := range []int64{4, 5, 6, 7, 8, 9, 10, 11} {
+		if got[id] {
+			t.Errorf("%d: not in a burst", id)
+		}
 	}
 }
 

@@ -195,7 +195,35 @@
     if (blob && payload.dataType === 0x5643 && /^(5[3467])[0-9a-f]{8}/.test(blob)) {
       return { sid: blob.slice(2, 10), talk: blob[1] === '3' || blob[1] === '4', index: /^[0-9a-f]{2}$/.test(blob.slice(10, 12)) ? parseInt(blob.slice(10, 12), 16) : null };
     }
+    // read, but not a piece of a clip: other channel data, a repair request
+    if (payload.dataType != null) return null;
     return { sid: '', talk: false };
+  }
+
+  // Channel data the analyzer can't read is a clip only in a burst: at least
+  // MEDIAMESH_BURST_MIN packets on its channel within a minute. A lone packet
+  // every few minutes is something else (MeshCore Open TAK's team positions,
+  // for one), so the first packets of a burst wait for the rest. The server
+  // and ingestor make the same call.
+  const MEDIAMESH_BURST_MS = 60000, MEDIAMESH_BURST_MIN = 3;
+  const mmUnreadable = new Map(); // channel -> Map(packet hash -> first seen ms)
+
+  function mediaMeshUnreadableInBurst(payload, hash, at) {
+    const ch = payload && payload.channelHash != null ? String(payload.channelHash) : '';
+    let m = mmUnreadable.get(ch);
+    if (!m) { m = new Map(); mmUnreadable.set(ch, m); }
+    const key = hash || ('t' + at);
+    if (!m.has(key)) m.set(key, at);
+    for (const [h, t0] of m) if (Math.abs(at - t0) > MEDIAMESH_BURST_MS) m.delete(h);
+    return m.size >= MEDIAMESH_BURST_MIN;
+  }
+
+  // mediaMeshClipOf for a packet seen live: null for channel data the
+  // analyzer can't read that isn't (yet) part of a burst.
+  function mediaMeshLiveClip(typeName, payload, hash, at) {
+    const clip = mediaMeshClipOf(typeName, payload);
+    if (clip && !clip.sid && typeName === 'GRP_DATA' && !mediaMeshUnreadableInBurst(payload, hash, at)) return null;
+    return clip;
   }
 
   function mediaMeshHopId(h) {
@@ -3186,9 +3214,9 @@
       }
 
       // MediaMesh photos, video and voice: one card per transfer, as live
-      const mmClip = pkt.mediamesh === true ? mediaMeshClipOf(typeName, payload) : null;
+      const seen = group.latestTs || Date.now();
+      const mmClip = pkt.mediamesh === true ? mediaMeshLiveClip(typeName, payload, group.hash, seen) : null;
       if (mmClip) {
-        const seen = group.latestTs || Date.now();
         const t = mediaMeshTransferFor(mmClip, payload, longestHops, color, Object.assign({}, pkt, { _ts: seen }), null, seen);
         for (const op of group.packets) updateMediaMeshTransfer(t, Object.assign({}, op, { _ts: seen }), longestHops, op === group.packets[0], null, seen);
         if (t.el.parentNode !== feedContent) feedContent.appendChild(t.el);
@@ -4804,7 +4832,7 @@
       updateMediaMeshTransfer(entry.transfer, pkt, hops, false, feed);
       return;
     }
-    const mmClip = pkt.mediamesh === true && !(hash && feedDedup.has(hash)) ? mediaMeshClipOf(typeName, payload) : null;
+    const mmClip = pkt.mediamesh === true && !(hash && feedDedup.has(hash)) ? mediaMeshLiveClip(typeName, payload, hash, Date.now()) : null;
     if (mmClip) {
       const t = mediaMeshTransferFor(mmClip, payload, hops, color, pkt, feed);
       updateMediaMeshTransfer(t, pkt, hops, true, feed);
@@ -4938,7 +4966,7 @@
       const hops = nightSkyHops(p.hopPositions);
       if (!hops.length) continue;
       const path = (p.key || '').split(',').filter(Boolean);
-      const clip = p.mediamesh ? mediaMeshSkyClip(typeName, payload, path, mmAnnounced) : null;
+      const clip = p.mediamesh && mediaMeshLiveClip(typeName, payload, hash, Date.now()) ? mediaMeshSkyClip(typeName, payload, path, mmAnnounced) : null;
       if (clip && hops.length >= 2) window.LiveNightSky.packet(Object.assign({ hops, hash, relays: path.length || hops.length }, clip));
       else window.LiveNightSky.ember(hops[0].lat, hops[0].lon);
     }

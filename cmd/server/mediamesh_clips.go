@@ -333,6 +333,7 @@ func (s *PacketStore) mediaMeshClips(since string, out *MediaMeshClips) {
 	}
 	s.mu.RLock()
 	mediaMeshMu.RLock()
+	bursts := s.mediaMeshBurstsLocked(since)
 	for _, tx := range s.packets {
 		if tx == nil || tx.FirstSeen < since || tx.PayloadType == nil {
 			continue
@@ -348,7 +349,7 @@ func (s *PacketStore) mediaMeshClips(since string, out *MediaMeshClips) {
 			}
 			continue
 		}
-		if pt != mediaPayloadGrpData && pt != mediaPayloadRawCustom {
+		if !mediaMeshIsMedia(tx, bursts) {
 			continue
 		}
 		onMM := false

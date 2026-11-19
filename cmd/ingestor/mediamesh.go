@@ -648,20 +648,41 @@ func (s *Store) UpdateMediaMeshNodeStats(now time.Time) int {
 		}
 	}
 	clips := map[string]*mediaClipTally{}
+	type statRow struct {
+		d       PacketData
+		txID    int64
+		ts      int64
+		rj, dir string
+	}
+	var all []statRow
+	var unread []mediaBurstItem
 	for rows.Next() {
-		var d PacketData
-		var txID, ts int64
-		var rj, dir string
-		if rows.Scan(&txID, &d.Hash, &d.PayloadType, &d.RouteType, &d.DecodedJSON, &d.PathJSON, &rj, &d.ObserverID, &dir, &ts) != nil {
+		var r statRow
+		if rows.Scan(&r.txID, &r.d.Hash, &r.d.PayloadType, &r.d.RouteType, &r.d.DecodedJSON, &r.d.PathJSON, &r.rj, &r.d.ObserverID, &r.dir, &r.ts) != nil {
 			continue
 		}
-		if dir != "" {
-			d.Direction = &dir
+		if r.dir != "" {
+			r.d.Direction = &r.dir
+		}
+		if !mediaMeshCarriesMedia(&r.d) {
+			continue
+		}
+		if ch, ok := mediaUnreadableChannel(&r.d); ok {
+			unread = append(unread, mediaBurstItem{id: r.txID, channel: ch, ts: r.ts})
+		}
+		all = append(all, r)
+	}
+	rows.Close()
+	// Channel data the analyzer can't read is media only in a burst: a clip
+	// is many pieces at once, while a lone packet every few minutes is
+	// something else (MeshCore Open TAK's team positions, for one).
+	inBurst := mediaBursts(unread)
+	for _, r := range all {
+		d, txID, ts, rj, dir := r.d, r.txID, r.ts, r.rj, r.dir
+		if _, unreadable := mediaUnreadableChannel(&d); unreadable && !inBurst[txID] {
+			continue
 		}
 		hash, observer := d.Hash, d.ObserverID
-		if !mediaMeshCarriesMedia(&d) {
-			continue
-		}
 		see(observer, ts)
 		hops := parsePathArray(d.PathJSON)
 		var resolved []*string
@@ -706,7 +727,6 @@ func (s *Store) UpdateMediaMeshNodeStats(now time.Time) int {
 			}
 		}
 	}
-	rows.Close()
 	writerMu.Lock()
 	defer writerMu.Unlock()
 	tx, err := s.db.Begin()
@@ -870,6 +890,76 @@ const (
 	payloadRawCustom     = 0x0F
 	mediaChannelDataType = 0x5643 // Open TAK 'VC'
 )
+
+// mediaBurstGapS and mediaBurstMin: unreadable channel data counts as media
+// when at least mediaBurstMin packets on its channel fall within
+// mediaBurstGapS seconds of each other.
+const (
+	mediaBurstGapS = 60
+	mediaBurstMin  = 3
+)
+
+// mediaBurstItem is one transmission of unreadable channel data.
+type mediaBurstItem struct {
+	id      int64 // transmission id
+	channel int
+	ts      int64 // unix seconds
+}
+
+// mediaBursts says which transmissions sit in a burst on their channel: at
+// least mediaBurstMin of them within mediaBurstGapS seconds. Each
+// transmission is judged by its first time heard.
+func mediaBursts(items []mediaBurstItem) map[int64]bool {
+	first := map[int64]mediaBurstItem{}
+	for _, it := range items {
+		if f, ok := first[it.id]; !ok || it.ts < f.ts {
+			first[it.id] = it
+		}
+	}
+	byCh := map[int][]mediaBurstItem{}
+	for _, it := range first {
+		byCh[it.channel] = append(byCh[it.channel], it)
+	}
+	out := map[int64]bool{}
+	for _, xs := range byCh {
+		sort.Slice(xs, func(i, j int) bool { return xs[i].ts < xs[j].ts })
+		r := 0
+		for l := range xs {
+			if r < l {
+				r = l
+			}
+			for r+1 < len(xs) && xs[r+1].ts-xs[l].ts <= mediaBurstGapS {
+				r++
+			}
+			if r-l+1 >= mediaBurstMin {
+				for k := l; k <= r; k++ {
+					out[xs[k].id] = true
+				}
+			}
+		}
+	}
+	return out
+}
+
+// mediaUnreadableChannel is the channel of channel data the analyzer could
+// not read (no data type decoded), and whether it is such a packet.
+func mediaUnreadableChannel(d *PacketData) (int, bool) {
+	if d.PayloadType != payloadGrpData {
+		return 0, false
+	}
+	var p struct {
+		DataType    *int `json:"dataType"`
+		ChannelHash *int `json:"channelHash"`
+	}
+	if d.DecodedJSON != "" && json.Unmarshal([]byte(d.DecodedJSON), &p) == nil && p.DataType != nil {
+		return 0, false
+	}
+	ch := -1
+	if p.ChannelHash != nil {
+		ch = *p.ChannelHash
+	}
+	return ch, true
+}
 
 // mediaMeshCarriesMedia reports whether a packet is the kind that carries
 // photos, voice or video. Ordinary traffic on radio2 (requests, chat,
