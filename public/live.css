@@ -1564,27 +1564,28 @@ input.live-node-filter-input:focus {
    theme, so its colours are its own. */
 .live-nightsky-btn { font: inherit; display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--mediamesh-path-color); background: transparent; color: var(--mediamesh-text-color, var(--text)); cursor: pointer; }
 .live-nightsky-btn:hover { background: color-mix(in srgb, var(--mediamesh-path-color) 14%, transparent); }
-.nightsky { position: fixed; inset: 0; z-index: 10000; background: #03050b; color: #e6e9ef; font-family: Inter, system-ui, sans-serif; overflow: hidden; }
+.nightsky { position: fixed; inset: 0; z-index: 10000; background: #060a14; color: #eff0f2; font-family: "Exo 2", system-ui, sans-serif; overflow: hidden; }
 .nightsky-canvas { position: absolute; inset: 0; display: block; }
-.nightsky-brand { position: absolute; left: 32px; top: 26px; font-size: 14px; letter-spacing: 0.22em; color: #9aa4b6; }
-.nightsky-brand b { color: #f0abfc; font-weight: 600; }
-.nightsky-clock { position: absolute; right: 32px; top: 20px; text-align: right; font-size: 34px; font-weight: 300; font-variant-numeric: tabular-nums; letter-spacing: 0.04em; color: #e6e9ef; }
-.nightsky-clock small { display: block; font-size: 12px; letter-spacing: 0.18em; color: #8b93a7; margin-top: 2px; }
+.nightsky-brand { position: absolute; left: 32px; top: 24px; font-family: Orbitron, sans-serif; font-size: 15px; letter-spacing: 0.14em; color: #ffffff; }
+.nightsky-brand span { color: #7cd991; font-family: "Exo 2", sans-serif; letter-spacing: 0.22em; font-size: 13px; }
+.nightsky-brand b { color: #ffffff; font-weight: 600; }
+.nightsky-clock { position: absolute; right: 32px; top: 20px; text-align: right; font-size: 32px; font-weight: 400; font-family: Orbitron, sans-serif; font-variant-numeric: tabular-nums; letter-spacing: 0.06em; color: #ffffff; }
+.nightsky-clock small { display: block; font-size: 12px; letter-spacing: 0.18em; color: #9fb4d8; margin-top: 2px; font-family: "Exo 2", sans-serif; }
 .nightsky-counters { position: absolute; left: 32px; bottom: 28px; display: flex; gap: 32px; }
-.nightsky-counters div { font-size: 30px; font-weight: 300; font-variant-numeric: tabular-nums; color: #e6e9ef; }
-.nightsky-counters small { display: block; font-size: 11px; letter-spacing: 0.18em; color: #8b93a7; text-transform: uppercase; margin-top: 2px; }
-.nightsky-ticker { position: absolute; right: 32px; bottom: 28px; text-align: right; font-size: 14px; line-height: 1.7; color: #cbd5e1; max-width: 46vw; }
-.nightsky-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--c, #f0abfc); margin-right: 6px; vertical-align: 1px; }
-.nightsky-muted { color: #8b93a7; }
+.nightsky-counters div { font-size: 28px; font-weight: 400; font-family: Orbitron, sans-serif; font-variant-numeric: tabular-nums; color: #ffffff; }
+.nightsky-counters small { display: block; font-size: 11px; letter-spacing: 0.18em; color: #7cd991; text-transform: uppercase; margin-top: 4px; font-family: "Exo 2", sans-serif; }
+.nightsky-ticker { position: absolute; right: 32px; bottom: 28px; text-align: right; font-size: 14px; line-height: 1.7; color: #dfe6f3; max-width: 46vw; }
+.nightsky-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--c, #7cd991); margin-right: 6px; vertical-align: 1px; }
+.nightsky-muted { color: #9fb4d8; }
 .nightsky-controls { position: absolute; left: 50%; top: 22px; transform: translateX(-50%); display: flex; gap: 8px; opacity: 0.6; transition: opacity 0.2s; }
 .nightsky:hover .nightsky-controls, .nightsky-controls:focus-within { opacity: 1; }
-.nightsky-controls button { font: inherit; font-size: 13px; padding: 5px 14px; border-radius: 999px; border: 1px solid rgba(240, 171, 252, 0.6); background: rgba(15, 18, 32, 0.8); color: #f5d0fe; cursor: pointer; }
-.nightsky-controls button:hover { background: rgba(240, 171, 252, 0.18); }
-.nightsky-controls button:focus-visible { outline: 2px solid #f0abfc; outline-offset: 2px; }
-.nightsky-replay { position: absolute; left: 50%; top: 64px; transform: translateX(-50%); width: min(420px, 70vw); text-align: center; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: #cbd5e1; }
+.nightsky-controls button { font: inherit; font-size: 13px; padding: 5px 14px; border-radius: 999px; border: 1px solid #ffffff; background: rgba(16, 29, 56, 0.85); color: #ffffff; font-family: "Exo 2", sans-serif; cursor: pointer; }
+.nightsky-controls button:hover { background: #ffffff; color: #184690; }
+.nightsky-controls button:focus-visible { outline: 2px solid #7cd991; outline-offset: 2px; }
+.nightsky-replay { position: absolute; left: 50%; top: 64px; transform: translateX(-50%); width: min(420px, 70vw); text-align: center; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: #dfe6f3; }
 .nightsky-replay[hidden] { display: block; visibility: hidden; }
-.nightsky-replay i { display: block; height: 3px; margin-top: 6px; border-radius: 2px; background: rgba(255, 255, 255, 0.12); overflow: hidden; }
-.nightsky-replay b { display: block; height: 100%; width: 0; background: #f0abfc; }
+.nightsky-replay i { display: block; height: 3px; margin-top: 6px; border-radius: 2px; background: rgba(24, 70, 144, 0.7); overflow: hidden; }
+.nightsky-replay b { display: block; height: 100%; width: 0; background: #7cd991; }
 @media (max-width: 640px) {
   .nightsky-counters { gap: 10px 18px; left: 16px; right: 16px; bottom: 16px; flex-wrap: wrap; }
   .nightsky-controls { top: 78px; opacity: 1; }
@@ -1598,8 +1599,8 @@ input.live-node-filter-input:focus {
 .nightsky--kiosk .nightsky-controls { display: none; }
 /* A moment: the first video of the day, the longest route, a round number. */
 .nightsky-moment { position: absolute; left: 50%; top: 96px; transform: translate(-50%, 8px); text-align: center; pointer-events: none; opacity: 0; max-width: 80vw; }
-.nightsky-moment b { display: block; font-size: clamp(22px, 3.2vw, 44px); font-weight: 300; letter-spacing: 0.06em; color: #f5d0fe; text-shadow: 0 0 24px rgba(240, 171, 252, 0.55), 0 0 2px rgba(0, 0, 0, 0.8); }
-.nightsky-moment span { display: block; margin-top: 6px; font-size: clamp(12px, 1.2vw, 16px); letter-spacing: 0.16em; text-transform: uppercase; color: #cbd5e1; text-shadow: 0 0 2px rgba(0, 0, 0, 0.9); }
+.nightsky-moment b { display: block; font-size: clamp(22px, 3.2vw, 44px); font-weight: 300; letter-spacing: 0.06em; font-family: Orbitron, sans-serif; color: #ffffff; text-shadow: 0 0 24px rgba(96, 150, 240, 0.7), 0 0 2px rgba(0, 0, 0, 0.8); }
+.nightsky-moment span { display: block; margin-top: 6px; font-size: clamp(12px, 1.2vw, 16px); letter-spacing: 0.16em; text-transform: uppercase; color: #7cd991; text-shadow: 0 0 2px rgba(0, 0, 0, 0.9); }
 .nightsky-moment.is-on { animation: nightsky-moment 5.2s ease both; }
 @keyframes nightsky-moment { 0% { opacity: 0; transform: translate(-50%, 10px); } 10% { opacity: 1; transform: translate(-50%, 0); } 80% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -6px); } }
 @keyframes nightsky-moment-still { 0% { opacity: 0; } 8% { opacity: 1; } 85% { opacity: 1; } 100% { opacity: 0; } }

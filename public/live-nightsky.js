@@ -23,10 +23,10 @@
 
 (function (root) {
   const KINDS = {
-    photo: { label: 'Photo', rgb: [240, 171, 252] },
-    video: { label: 'Video', rgb: [125, 211, 252] },
-    voice: { label: 'Voice clip', rgb: [253, 224, 71] },
-    clip: { label: 'Media clip', rgb: [221, 214, 254] },
+    photo: { label: 'Photo', rgb: [124, 217, 145] },
+    video: { label: 'Video', rgb: [239, 240, 242] },
+    voice: { label: 'Voice clip', rgb: [96, 150, 240] },
+    clip: { label: 'Media clip', rgb: [180, 205, 235] },
   };
   const HOP_S = 0.55;          // seconds a comet takes per hop
   const TRAIL = 14;            // trail samples behind a comet's head
@@ -233,9 +233,9 @@
         const shade = Math.max(0, Math.min(1, 0.55 + (-dzdx - dzdy) * 0.9 / Math.sqrt(1 + dzdx * dzdx + dzdy * dzdy)));
         const coast = water[i - 1] === 1 || water[i + 1] === 1 || water[i - pw] === 1 || water[i + pw] === 1;
         const k = i * 4;
-        if (coast) { d[k] = 196; d[k + 1] = 181; d[k + 2] = 253; d[k + 3] = 120; continue; }
+        if (coast) { d[k] = 239; d[k + 1] = 240; d[k + 2] = 242; d[k + 3] = 120; continue; }
         const hi = Math.min(1, Math.max(0, el[i] / 400));
-        d[k] = 70 + 40 * hi; d[k + 1] = 58 + 30 * hi; d[k + 2] = 130 + 50 * hi;
+        d[k] = 24 + 20 * hi; d[k + 1] = 70 + 40 * hi; d[k + 2] = 144 + 50 * hi;
         d[k + 3] = Math.round(18 + 34 * shade + 18 * hi);
       }
     }
@@ -254,7 +254,7 @@
     el.setAttribute('role', 'dialog');
     el.setAttribute('aria-label', 'MediaMesh night sky');
     el.innerHTML = `<canvas class="nightsky-canvas" aria-hidden="true"></canvas>
-      <div class="nightsky-brand"><b>MEDIAMESH</b> LIVE${opts && opts.place ? ' · ' + esc(String(opts.place).toUpperCase()) : ''}</div>
+      <div class="nightsky-brand"><b>CASCADIA</b>MESH <span>· MEDIAMESH LIVE${opts && opts.place ? ' · ' + esc(String(opts.place).toUpperCase()) : ''}</span></div>
       <div class="nightsky-clock" aria-hidden="true"><span data-ns-time></span><small data-ns-date></small></div>
       <div class="nightsky-moment" data-ns-moment aria-live="polite"></div>
       <div class="nightsky-counters" aria-live="off">
@@ -547,11 +547,11 @@
     const P = pr.P;
 
     g.globalCompositeOperation = 'source-over';
-    g.fillStyle = '#03050b'; g.fillRect(0, 0, W, H);
+    g.fillStyle = '#060a14'; g.fillRect(0, 0, W, H);
     const vg = g.createRadialGradient(W * 0.5, H * 0.55, 40, W * 0.5, H * 0.55, Math.max(W, H) * 0.6);
-    vg.addColorStop(0, 'rgba(60,20,90,0.32)'); vg.addColorStop(1, 'rgba(0,0,0,0)');
+    vg.addColorStop(0, 'rgba(24,70,144,0.55)'); vg.addColorStop(1, 'rgba(0,0,0,0)');
     g.fillStyle = vg; g.fillRect(0, 0, W, H);
-    for (const s of st.stars) { g.globalAlpha = s.a * (0.6 + 0.4 * Math.sin(t * s.f + s.x)); g.fillStyle = '#cbd5ff'; g.fillRect(s.x, s.y, s.r, s.r); }
+    for (const s of st.stars) { g.globalAlpha = s.a * (0.6 + 0.4 * Math.sin(t * s.f + s.x)); g.fillStyle = '#eff0f2'; g.fillRect(s.x, s.y, s.r, s.r); }
     // the land, fading in once read
     if (st.land) {
       const L = st.land, [x0, y0] = P(L.b.n, L.b.w), [x1, y1] = P(L.b.s, L.b.e);
@@ -560,11 +560,11 @@
       g.drawImage(L.cv, x0, y0, x1 - x0, y1 - y0);
     }
     // every known node, faint: the city emerges from them
-    g.globalAlpha = 0.22; g.fillStyle = '#64748b';
+    g.globalAlpha = 0.22; g.fillStyle = '#7cd991';
     for (const n of st.nodes) if (!n.star) { const [x, y] = P(n.lat, n.lon); g.beginPath(); g.arc(x, y, 1.2, 0, 7); g.fill(); }
     // main-mesh embers
     st.embers = st.embers.filter((e) => t - e.t0 < 1.6);
-    for (const e of st.embers) { const a = 1 - (t - e.t0) / 1.6, [x, y] = P(e.lat, e.lon); g.globalAlpha = 0.35 * a; g.fillStyle = '#94a3b8'; g.beginPath(); g.arc(x, y, 1.5 + (1 - a) * 5, 0, 7); g.fill(); }
+    for (const e of st.embers) { const a = 1 - (t - e.t0) / 1.6, [x, y] = P(e.lat, e.lon); g.globalAlpha = 0.35 * a; g.fillStyle = '#9fb4d8'; g.beginPath(); g.arc(x, y, 1.5 + (1 - a) * 5, 0, 7); g.fill(); }
     g.globalAlpha = 1;
     g.globalCompositeOperation = 'lighter';
     // comets, with their lit route and pulses at each relay
@@ -615,7 +615,7 @@
       if (x < -20 || y < -20 || x > W + 20 || y > H + 20) continue;
       const tw = 0.75 + 0.25 * Math.sin(t * 2 + n.tw);
       const gl = g.createRadialGradient(x, y, 0, x, y, 9);
-      gl.addColorStop(0, `rgba(240,171,252,${0.55 * tw})`); gl.addColorStop(1, 'rgba(240,171,252,0)');
+      gl.addColorStop(0, `rgba(124,217,145,${0.55 * tw})`); gl.addColorStop(1, 'rgba(124,217,145,0)');
       g.fillStyle = gl; g.beginPath(); g.arc(x, y, 9, 0, 7); g.fill();
       g.fillStyle = '#fff'; g.beginPath(); g.arc(x, y, 1.8, 0, 7); g.fill();
     }
@@ -702,7 +702,7 @@
     }
     placeLabels(items, st.w, st.h, keepOut).forEach((l) => {
       g.textAlign = l.align;
-      g.fillStyle = `rgba(226,232,240,${l.alpha})`;
+      g.fillStyle = `rgba(239,240,242,${l.alpha})`;
       g.fillText(l.text, l.tx, l.ty);
     });
     g.textAlign = 'left';

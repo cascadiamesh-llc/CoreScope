@@ -57,14 +57,22 @@ test('night sky text stays light on its own dark background', () => {
     const c = hex.replace('#', ''), f = c.length === 3 ? c.split('').map((d) => d + d).join('') : c;
     return [0, 2, 4].map((i) => parseInt(f.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)).reduce((a, v, i) => a + v * [0.2126, 0.7152, 0.0722][i], 0);
   };
-  const bg = lum('#03050b');
+  const sky = lum('#060a14');
   for (const r of rules) {
+    // against the rule's own solid background where it has one (a hovered button)
+    const own = /background:\s*(#[0-9a-f]{6})/i.exec(r);
+    const bg = own ? lum(own[1]) : sky;
     for (const m of r.matchAll(/(?:^|[;{\s])color:\s*(#[0-9a-f]{3,6})/gi)) {
-      const ratio = (lum(m[1]) + 0.05) / (bg + 0.05);
+      const ratio = (Math.max(lum(m[1]), bg) + 0.05) / (Math.min(lum(m[1]), bg) + 0.05);
       assert.ok(ratio >= 4.5, `${m[1]} in ${r.slice(0, 40)} is ${ratio.toFixed(2)}:1`);
     }
   }
-  assert.ok(/\.nightsky \{[^}]*background: #03050b/.test(css), 'the sky has its own background');
+  assert.ok(/\.nightsky \{[^}]*background: #060a14/.test(css), 'the sky has its own background');
+  // the CascadiaMesh website's faces, self-hosted
+  for (const f of ['orbitron-latin-400', 'orbitron-latin-600', 'exo2-latin-300', 'exo2-latin-400', 'exo2-latin-600']) {
+    assert.ok(pub('style.css').includes(`url('/fonts/${f}.woff2')`), f);
+    assert.ok(fs.existsSync(path.join(__dirname, '../../public/fonts', f + '.woff2')), f + ' is there');
+  }
 });
 
 test('a feed rebuild keeps MediaMesh transfers as cards, starting them again', () => {
@@ -142,7 +150,7 @@ test('the land: sea and lakes left dark, the shore traced, a flat field still la
     assert.ok(a(47.5, -122.3) > 0, 'a flat field is land');
     assert.ok(a(47.62, -122.33) > 0, 'land glows');
     let coast = 0;
-    for (let i = 0; i < img.data.length; i += 4) if (img.data[i] === 196 && img.data[i + 3] === 120) coast++;
+    for (let i = 0; i < img.data.length; i += 4) if (img.data[i] === 239 && img.data[i + 2] === 242 && img.data[i + 3] === 120) coast++;
     assert.ok(coast > 200, 'the shore is traced: ' + coast);
   } finally { globalThis.document = doc; }
 });
