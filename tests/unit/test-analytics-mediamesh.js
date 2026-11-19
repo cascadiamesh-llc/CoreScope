@@ -337,11 +337,11 @@ test('MediaMesh clips: announcements name them, packets carry the session id', (
   assert.strictEqual(A.mediaMeshParseAnnouncement('hello VV1 world'), null);
   assert.strictEqual(A.mediaMeshParseAnnouncement('VV1:zzzzzzzzz:1:1:1'), null, 'a session id past 32 bits');
   // packets: raw, channel data (key held), push-to-talk, unreadable
-  assert.strictEqual(JSON.stringify(A.mediaMeshClipOf('RAW_CUSTOM', { raw: '561A2B3C4D00ffee' })), JSON.stringify({ sid: '1a2b3c4d', talk: false }));
-  assert.strictEqual(JSON.stringify(A.mediaMeshClipOf('RAW_CUSTOM', { raw: '571a2b3c4d01' })), JSON.stringify({ sid: '1a2b3c4d', talk: false }));
+  assert.strictEqual(JSON.stringify(A.mediaMeshClipOf('RAW_CUSTOM', { raw: '561A2B3C4D00ffee' })), JSON.stringify({ sid: '1a2b3c4d', talk: false, index: 0 }));
+  assert.strictEqual(JSON.stringify(A.mediaMeshClipOf('RAW_CUSTOM', { raw: '571a2b3c4d01' })), JSON.stringify({ sid: '1a2b3c4d', talk: false, index: 1 }));
   assert.strictEqual(A.mediaMeshClipOf('RAW_CUSTOM', { raw: '721a2b3c4d' }), null, 'a fetch request is not the clip');
-  assert.strictEqual(JSON.stringify(A.mediaMeshClipOf('GRP_DATA', { dataType: 0x5643, decryptedBlob: '561a2b3c4d03aa' })), JSON.stringify({ sid: '1a2b3c4d', talk: false }));
-  assert.strictEqual(JSON.stringify(A.mediaMeshClipOf('GRP_DATA', { dataType: 0x5643, decryptedBlob: '541a2b3c4d0081' })), JSON.stringify({ sid: '1a2b3c4d', talk: true }));
+  assert.strictEqual(JSON.stringify(A.mediaMeshClipOf('GRP_DATA', { dataType: 0x5643, decryptedBlob: '561a2b3c4d03aa' })), JSON.stringify({ sid: '1a2b3c4d', talk: false, index: 3 }));
+  assert.strictEqual(JSON.stringify(A.mediaMeshClipOf('GRP_DATA', { dataType: 0x5643, decryptedBlob: '541a2b3c4d0081' })), JSON.stringify({ sid: '1a2b3c4d', talk: true, index: 0 }));
   assert.strictEqual(JSON.stringify(A.mediaMeshClipOf('GRP_DATA', { channelHash: 17 })), JSON.stringify({ sid: '', talk: false }));
   assert.strictEqual(A.mediaMeshClipOf('GRP_TXT', {}), null);
   // parity packets: the session id XOR 0xFEC0FEC0, both ways

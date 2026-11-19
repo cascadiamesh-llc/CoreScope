@@ -1596,6 +1596,14 @@ input.live-node-filter-input:focus {
   .nightsky-brand { left: 16px; font-size: 11px; }
 }
 .nightsky--kiosk .nightsky-controls { display: none; }
+/* A moment: the first video of the day, the longest route, a round number. */
+.nightsky-moment { position: absolute; left: 50%; top: 96px; transform: translate(-50%, 8px); text-align: center; pointer-events: none; opacity: 0; max-width: 80vw; }
+.nightsky-moment b { display: block; font-size: clamp(22px, 3.2vw, 44px); font-weight: 300; letter-spacing: 0.06em; color: #f5d0fe; text-shadow: 0 0 24px rgba(240, 171, 252, 0.55), 0 0 2px rgba(0, 0, 0, 0.8); }
+.nightsky-moment span { display: block; margin-top: 6px; font-size: clamp(12px, 1.2vw, 16px); letter-spacing: 0.16em; text-transform: uppercase; color: #cbd5e1; text-shadow: 0 0 2px rgba(0, 0, 0, 0.9); }
+.nightsky-moment.is-on { animation: nightsky-moment 5.2s ease both; }
+@keyframes nightsky-moment { 0% { opacity: 0; transform: translate(-50%, 10px); } 10% { opacity: 1; transform: translate(-50%, 0); } 80% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -6px); } }
+@keyframes nightsky-moment-still { 0% { opacity: 0; } 8% { opacity: 1; } 85% { opacity: 1; } 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .nightsky-moment.is-on { animation-name: nightsky-moment-still; transform: translate(-50%, 0); } }
 .nightsky--kiosk { cursor: none; }
 .live-mm-transfer-rec { font: inherit; font-size: 0.78em; margin-left: 6px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--mediamesh-path-color); background: transparent; color: var(--mediamesh-text-color, var(--text)); cursor: pointer; white-space: nowrap; }
 .live-mm-transfer-rec:hover { background: color-mix(in srgb, var(--mediamesh-path-color) 14%, transparent); }

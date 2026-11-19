@@ -188,12 +188,12 @@
     payload = payload || {};
     if (typeName === 'RAW_CUSTOM') {
       const raw = String(payload.raw || '').toLowerCase();
-      return /^5[67][0-9a-f]{8}/.test(raw) ? { sid: raw.slice(2, 10), talk: false } : null;
+      return /^5[67][0-9a-f]{8}/.test(raw) ? { sid: raw.slice(2, 10), talk: false, index: /^[0-9a-f]{2}$/.test(raw.slice(10, 12)) ? parseInt(raw.slice(10, 12), 16) : null } : null;
     }
     if (typeName !== 'GRP_DATA') return null;
     const blob = String(payload.decryptedBlob || '').toLowerCase();
     if (blob && payload.dataType === 0x5643 && /^(5[3467])[0-9a-f]{8}/.test(blob)) {
-      return { sid: blob.slice(2, 10), talk: blob[1] === '3' || blob[1] === '4' };
+      return { sid: blob.slice(2, 10), talk: blob[1] === '3' || blob[1] === '4', index: /^[0-9a-f]{2}$/.test(blob.slice(10, 12)) ? parseInt(blob.slice(10, 12), 16) : null };
     }
     return { sid: '', talk: false };
   }
@@ -4917,13 +4917,15 @@
   function mediaMeshSkyClip(typeName, payload, hops, announced) {
     const clip = mediaMeshClipOf(typeName, payload);
     if (!clip) return null;
-    let sid = clip.sid;
-    if (sid && !announced.has(sid) && announced.has(mediaMeshParitySid(sid))) sid = mediaMeshParitySid(sid);
+    let sid = clip.sid, parity = false;
+    if (sid && !announced.has(sid) && announced.has(mediaMeshParitySid(sid))) { sid = mediaMeshParitySid(sid); parity = true; }
     const a = sid ? announced.get(sid) : null;
     return {
       key: mediaMeshTransferKey(sid, payload, hops),
       kind: clip.talk ? 'voice' : (a ? a.kind : 'clip'),
       seconds: a ? a.seconds : 0,
+      // for judging how it went: which piece, and how many there are
+      sid, parity, index: clip.talk ? null : clip.index, total: a ? a.total : 0,
     };
   }
 
@@ -4950,14 +4952,16 @@
       nodes,
       focus: () => { const s = nodes().filter((n) => n.star); return s.length >= 2 ? s : nodes(); },
       onReplay: replayNightSky,
+      // what today already holds, so "first video of the day" is true
+      seed: async () => { const r = await nightSkyDay(); return r ? r.events : null; },
     });
   }
 
-  // "A day in a minute": the last 24 hours' photos, video and voice.
-  async function replayNightSky() {
+  // The last 24 hours' photos, video and voice as night-sky events: { events, from, to }.
+  async function nightSkyDay() {
     let data;
-    try { data = await api('/analytics/mediamesh/replay?hours=24', { ttl: 60000 }); } catch (_) { return; }
-    if (!data || !window.LiveNightSky || !window.LiveNightSky.isOpen()) return;
+    try { data = await api('/analytics/mediamesh/replay?hours=24', { ttl: 60000 }); } catch (_) { return null; }
+    if (!data) return null;
     const announced = new Map();
     (data.announcements || []).forEach((a) => { const p = mediaMeshParseAnnouncement(a.text); if (p) announced.set(p.sid, p); });
     const events = [];
@@ -4968,7 +4972,14 @@
       if (!clip) continue;
       events.push(Object.assign({ t: Date.parse(ev.ts), hops, hash: ev.hash, relays: (ev.path || []).length || hops.length }, clip));
     }
-    const from = Date.parse(data.from), to = Date.parse(data.to);
+    return { events, from: Date.parse(data.from), to: Date.parse(data.to) };
+  }
+
+  // "A day in a minute": the last 24 hours' photos, video and voice.
+  async function replayNightSky() {
+    const day = await nightSkyDay();
+    if (!day || !window.LiveNightSky || !window.LiveNightSky.isOpen()) return;
+    const { events, from, to } = day;
     const hours = Math.max(1, Math.round((to - from) / 3600000));
     window.LiveNightSky.replay(events, { from, to, durationMs: 60000, label: `The last ${hours} hour${hours === 1 ? '' : 's'} in a minute` });
   }

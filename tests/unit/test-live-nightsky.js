@@ -79,6 +79,74 @@ test('the transfer card keeps its height in a full feed', () => {
   assert.ok(/\.live-feed-item\.live-mm-transfer \{ flex-shrink: 0;/.test(pub('live.css')));
 });
 
+test('camera: in on the routes crossing, out to every repeater when quiet, eased', () => {
+  const base = S.boundsOf([{ lat: 47.5, lon: -122.4 }, { lat: 47.75, lon: -122.1 }]);
+  assert.strictEqual(S.cameraTarget(base, null), base, 'quiet: the whole network');
+  const t = S.cameraTarget(base, [{ lat: 47.60, lon: -122.33 }, { lat: 47.62, lon: -122.31 }]);
+  assert.ok(t.n - t.s >= 0.055 - 1e-9 && t.n - t.s < 0.1, 'a few km round a short route');
+  assert.ok(t.s < 47.60 && t.n > 47.62 && t.w < -122.33 && t.e > -122.31, 'the route inside');
+  const half = S.easeBounds(base, t, 0.5);
+  assert.ok(Math.abs(half.s - (base.s + t.s) / 2) < 1e-12);
+  const f = S.fit(base, 1000, 800, 50), xy = f.P(47.6, -122.3), back = f.inv(xy[0], xy[1]);
+  assert.ok(Math.abs(back[0] - 47.6) < 1e-9 && Math.abs(back[1] + 122.3) < 1e-9, 'inv undoes P');
+  assert.ok(Math.abs(S.routeKm([{ lat: 47.6, lon: -122.3 }, { lat: 47.7, lon: -122.3 }]) - 11.132) < 0.01);
+});
+
+test('names: busiest first, none covering another or the HUD, each once', () => {
+  const items = [
+    { text: 'First Hill', x: 500, y: 400, pri: 5, width: 60 },
+    { text: 'First Hill Skyline', x: 503, y: 401, pri: 9, width: 110 },
+    { text: 'Yesler', x: 506, y: 402, pri: 1, width: 40 },
+    { text: 'Far', x: 900, y: 100, pri: 3, width: 30 },
+    { text: 'First Hill', x: 700, y: 400, pri: 2, width: 60 },
+  ];
+  const out = S.placeLabels(items, 1000, 800, [[850, 60, 1000, 140]]);
+  const names = out.map((l) => l.text);
+  assert.strictEqual(names[0], 'First Hill Skyline', 'the busiest is placed first');
+  assert.strictEqual(names.filter((n) => n === 'First Hill').length, 1, 'a name once');
+  assert.ok(!names.includes('Far'), 'kept clear of the HUD');
+  const box = (l) => (l.align === 'left' ? [l.tx, l.ty - 7, l.tx + l.width, l.ty + 7] : l.align === 'right' ? [l.tx - l.width, l.ty - 7, l.tx, l.ty + 7] : [l.tx - l.width / 2, l.ty - 7, l.tx + l.width / 2, l.ty + 7]);
+  for (let i = 0; i < out.length; i++) for (let j = i + 1; j < out.length; j++) {
+    const a = box(out[i]), b = box(out[j]);
+    assert.ok(!(a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1]), `${out[i].text} covers ${out[j].text}`);
+  }
+});
+
+test('outcomes: whole, made whole by parity, pieces lost, or no claim without a total', () => {
+  const tr = (total, got, parity) => ({ total, idx: new Set(got), parity: parity || {} });
+  const all = (n) => Array.from({ length: n }, (_, i) => i);
+  assert.deepStrictEqual(S.outcomeOf(tr(18, all(18))), { outcome: 'whole', missing: 0, rebuilt: 0 });
+  assert.deepStrictEqual(S.outcomeOf(tr(18, all(18).filter((i) => i !== 3), { 0: 1 })), { outcome: 'parity', missing: 0, rebuilt: 1 });
+  // block 0 loses 2 with 1 parity piece; block 1 (20..24) whole
+  assert.deepStrictEqual(S.outcomeOf(tr(25, all(25).filter((i) => i !== 3 && i !== 4), { 0: 1 })), { outcome: 'lost', missing: 2, rebuilt: 0 });
+  assert.strictEqual(S.outcomeOf(tr(0, [0, 1])).outcome, null, 'no announcement: no claim');
+  assert.strictEqual(S.outcomeText({ outcome: 'lost', missing: 1 }), '1 piece lost');
+});
+
+test('the land: sea and lakes left dark, the shore traced, a flat field still land', () => {
+  let img = null;
+  const doc = globalThis.document;
+  globalThis.document = { createElement: () => ({ getContext: () => ({ createImageData: (w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }), putImageData(i) { img = i; } }) }) };
+  try {
+    const elev = (lat, lon) => {
+      if (lon < -122.4) return -5;                                                    // the sound
+      if (((lon + 122.25) / 0.03) ** 2 + ((lat - 47.62) / 0.12) ** 2 < 1) return 6;   // a lake
+      if (Math.abs(lat - 47.5) < 0.0015 && Math.abs(lon + 122.3) < 0.0015) return 12; // a flat field, a few pixels
+      return 30 + 60 * Math.abs(Math.sin(lat * 140) * Math.cos(lon * 95));
+    };
+    const b = { s: 47.45, n: 47.8, w: -122.5, e: -122.15 };
+    S.landCanvas(b, elev, 300, 300);
+    const a = (lat, lon) => img.data[(Math.floor((b.n - lat) / (b.n - b.s) * 300) * 300 + Math.floor((lon - b.w) / (b.e - b.w) * 300)) * 4 + 3];
+    assert.strictEqual(a(47.62, -122.45), 0, 'the sound is dark');
+    assert.strictEqual(a(47.62, -122.25), 0, 'the lake is dark, all of it');
+    assert.ok(a(47.5, -122.3) > 0, 'a flat field is land');
+    assert.ok(a(47.62, -122.33) > 0, 'land glows');
+    let coast = 0;
+    for (let i = 0; i < img.data.length; i += 4) if (img.data[i] === 196 && img.data[i + 3] === 120) coast++;
+    assert.ok(coast > 200, 'the shore is traced: ' + coast);
+  } finally { globalThis.document = doc; }
+});
+
 test('counters: clips of unknown kind shown, relays counted once per packet', () => {
   const ns = pub('live-nightsky.js'), js = pub('live.js');
   assert.ok(ns.includes('data-ns-count="unknown"') && ns.includes('kind unknown'), 'unreadable clips get their own count');
