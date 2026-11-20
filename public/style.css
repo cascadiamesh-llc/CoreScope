@@ -6498,3 +6498,8 @@ html.mm-embed--sky .mm-embed-open:hover { background: var(--mm-sky-ink); color: 
 .mm-embed-snippets summary { cursor: pointer; font-weight: 600; }
 .mm-embed-snippet { margin-top: 10px; }
 .mm-embed-snippet textarea { display: block; width: 100%; margin-top: 4px; font-family: var(--mono, monospace); font-size: 12px; background: var(--input-bg, var(--card-bg)); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px; resize: vertical; }
+
+/* The MediaMesh nav link, in MediaMesh's fuchsia. The navbar is dark in both
+ * themes (--nav-bg), so the light pink reads on it (#f0abfc on #0f0f23: 11:1). */
+:root { --nav-mediamesh-text: #f0abfc; }
+.nav-link.nav-link-mediamesh, .nav-link.nav-link-mediamesh:hover, .nav-link.nav-link-mediamesh.active { color: var(--nav-mediamesh-text); }

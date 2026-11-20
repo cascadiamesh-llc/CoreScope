@@ -1230,6 +1230,23 @@ function closeMoreMenu() {
   if (btn) btn.setAttribute('aria-expanded', 'false');
 }
 
+// The nav link a page lights: 'mediamesh' for Analytics' MediaMesh tab.
+function navRouteFor(basePage, hash) {
+  if (basePage !== 'analytics') return basePage;
+  return new URLSearchParams(String(hash || '').split('?')[1] || '').get('tab') === 'mediamesh' ? 'mediamesh' : 'analytics';
+}
+
+// Analytics switches tabs without a navigation (replaceState): it calls this
+// so the Analytics and MediaMesh links follow.
+function syncAnalyticsNavLinks() {
+  if (!/^#\/analytics(\?|$)/.test(location.hash)) return;
+  const page = navRouteFor('analytics', location.hash);
+  document.querySelectorAll('.nav-link[data-route="analytics"], .nav-link[data-route="mediamesh"]').forEach(el => {
+    el.classList.toggle('active', el.dataset.route === page);
+  });
+}
+window.syncAnalyticsNavLinks = syncAnalyticsNavLinks;
+
 function navigate() {
   closeNav();
 
@@ -1302,8 +1319,11 @@ function navigate() {
   }
 
   // Update nav active state
+  // MediaMesh has its own link to the Analytics page's MediaMesh tab: on that
+  // tab it is the active one, not Analytics.
+  const navPage = navRouteFor(basePage, location.hash);
   document.querySelectorAll('.nav-link[data-route]').forEach(el => {
-    el.classList.toggle('active', el.dataset.route === basePage || (el.dataset.route === 'tools' && (basePage === 'traces' || basePage === 'path-inspector' || basePage === 'tools-landing')));
+    el.classList.toggle('active', el.dataset.route === navPage || (el.dataset.route === 'tools' && (navPage === 'traces' || navPage === 'path-inspector' || navPage === 'tools-landing')));
   });
   // Update "More" button to show active state if a low-priority page is selected
   var moreBtn = document.getElementById('navMoreBtn');

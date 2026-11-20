@@ -220,6 +220,7 @@
       }
       var newHash = URLState.updateHashParams(updates, location.hash);
       if (newHash !== location.hash) history.replaceState(null, '', newHash);
+      if (typeof window.syncAnalyticsNavLinks === 'function') window.syncAnalyticsNavLinks();
     }
 
     analyticsTabs.addEventListener('click', e => {

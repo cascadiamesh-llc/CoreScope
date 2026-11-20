@@ -68,5 +68,20 @@ test('wiring: loaded first, the sky opens from the URL, the badge stands alone',
   assert.ok(/html\.mm-embed \.top-nav/.test(pub('style.css')));
 });
 
+test('the menu: MediaMesh between Analytics and Scope Audit, in fuchsia, lit on its tab', () => {
+  const idx = pub('index.html');
+  const a = idx.indexOf('data-route="analytics">Analytics'), m = idx.indexOf('href="#/analytics?tab=mediamesh" class="nav-link nav-link-mediamesh" data-route="mediamesh">MediaMesh</a>'), s = idx.indexOf('data-route="scope-audit"');
+  assert.ok(a > 0 && m > a && s > m, 'order');
+  assert.ok(/\.nav-link\.nav-link-mediamesh[^{]*\{ color: var\(--nav-mediamesh-text\); \}/.test(pub('style.css')) && pub('style.css').includes('--nav-mediamesh-text: #f0abfc'));
+  const app = pub('app.js');
+  const src = app.slice(app.indexOf('function navRouteFor'), app.indexOf('// Analytics switches tabs'));
+  const navRouteFor = new Function(src + '; return navRouteFor;')();
+  assert.strictEqual(navRouteFor('analytics', '#/analytics?tab=mediamesh&window=7d'), 'mediamesh');
+  assert.strictEqual(navRouteFor('analytics', '#/analytics?tab=rf'), 'analytics');
+  assert.strictEqual(navRouteFor('analytics', '#/analytics'), 'analytics');
+  assert.strictEqual(navRouteFor('packets', '#/packets?tab=mediamesh'), 'packets');
+  assert.ok(pub('analytics.js').includes('window.syncAnalyticsNavLinks()'), 'tab switches relight the menu');
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
