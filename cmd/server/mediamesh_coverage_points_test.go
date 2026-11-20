@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -155,5 +156,70 @@ func TestCoveragePointsUploadAndRemove(t *testing.T) {
 	srv2.handleCoveragePointsPost(w, httptest.NewRequest("POST", "/api/mediamesh/coverage-points", bytes.NewReader(body)))
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("switched off: %d", w.Code)
+	}
+}
+
+func TestCovHexes(t *testing.T) {
+	// every point lands in the hexagon whose middle is nearest it, and
+	// neighbouring middles are covPointsHexM apart
+	for _, p := range [][2]float64{{47.6101, -122.3249}, {47.0001, -122.9999}, {45.5152, -122.6784}, {-33.87, 151.21}} {
+		_, cLat, cLon, r := hexOf(p[0], p[1])
+		if d := haversineKm(p[0], p[1], cLat, cLon) * 1000; d > covPointsHexM/math.Sqrt(3)*1.01 {
+			t.Fatalf("%v: %.0f m from its hexagon's middle", p, d)
+		}
+		if r <= 0 {
+			t.Fatal("no radius")
+		}
+	}
+	k1, a1, o1, _ := hexOf(47.6101, -122.3249)
+	k2, a2, o2, _ := hexOf(47.6101+0.0005, -122.3249+0.0001)
+	if k1 == k2 {
+		k2, a2, o2, _ = hexOf(47.6101+0.0019, -122.3249)
+	}
+	if d := haversineKm(a1, o1, a2, o2) * 1000; k1 == k2 || math.Abs(d-covPointsHexM) > 3 {
+		t.Fatalf("neighbours %s %s %.1f m apart", k1, k2, d)
+	}
+
+	// a walk with repeaters answering, then a stretch where none did, and a
+	// short margin: hexagons only where one answered; the area only where
+	// radio2 would reach
+	var pts []storedPoint
+	for i := 0; i < 30; i++ {
+		var reps []covPointRep
+		switch {
+		case i < 15:
+			reps = []covPointRep{{Key: "1ea5e195", SNR: 4, RemoteSNR: 3, Margin: 6}, {Key: "5d01cacf", SNR: -2, RemoteSNR: -3, Margin: 1}}
+		case i < 20:
+			reps = []covPointRep{{Key: "5d01cacf", SNR: -8, RemoteSNR: -9, Margin: -3}}
+		}
+		pts = append(pts, storedPoint{radio: "aa", covPoint: covPoint{T: 1795000000 + int64(i)*60, Lat: 47.60 + float64(i)*0.0009, Lon: -122.32, Reps: reps}})
+	}
+	c := covCells(pts)
+	if c.Trips != 1 || c.HexM != covPointsHexM || len(c.Hexes) == 0 {
+		t.Fatalf("trips %d hex_m %v hexes %d", c.Trips, c.HexM, len(c.Hexes))
+	}
+	short, n := 0, 0
+	for _, h := range c.Hexes {
+		n += h.N
+		if len(h.Reps) == 0 {
+			t.Fatal("a hexagon where nobody answered")
+		}
+		if h.Best < 0 {
+			short++
+		} else if h.Reps[0].Key != "1ea5e195" || h.Best != h.Reps[0].Margin {
+			t.Fatalf("best %v reps %+v", h.Best, h.Reps)
+		}
+		if h.Car {
+			t.Fatal("a walk counted as in a vehicle")
+		}
+	}
+	if short == 0 || c.HexesAnswered != len(c.Hexes)-short {
+		t.Fatalf("answered %d of %d, %d short", c.HexesAnswered, len(c.Hexes), short)
+	}
+	if want := math.Round(float64(c.HexesAnswered)*hexAreaM2()/1e6*100) / 100; c.MappedKm2 != want || want <= 0 {
+		t.Fatalf("mapped %v km², want %v", c.MappedKm2, want)
+	}
+	if n > c.Points {
+		t.Fatalf("%d pings in hexagons of %d kept", n, c.Points)
 	}
 }

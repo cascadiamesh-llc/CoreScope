@@ -37,6 +37,10 @@ The analyzer only takes radios it has heard (so send an advert first), at most 3
 
 `GET /api/mediamesh/coverage-points` gives 200 m cells, separately on foot and from a vehicle (faster than about 22 km/h): how many samples, how many with no MediaMesh repeater answering, and each repeater's median margin. The first and last 300 m of every trip (a radio's points with no gap over 30 minutes) are left out, so where someone starts and ends doesn't show. Nothing is given per radio.
 
+It also gives the **Mapped by people** hexagons (`hexes`): 200 m across, flat-topped, on a grid in Web Mercator metres so they tile on the map (each 1° band of latitude sized for its middle). There is one wherever at least one MediaMesh repeater answered, with its pings, whether all were from a vehicle, each repeater's median margin and the best of them (`best`); places where nobody answered get none. `hexes_answered` counts those where radio2 would reach (`best` 0 dB or more), and `mapped_km2` is their area (0.0346 km² each). `trips` is how many trips the points came from.
+
+The MediaMesh tab shows `mapped_km2` as **km² mapped by people**, and the coverage map has a **Mapped by people** layer (off until ticked, in every view) drawing the hexagons in green (5 dB or more to spare), amber (0 to 5) and red (answered, but radio2 would fall short).
+
 ## How the estimate uses them
 
 For each cell and each MediaMesh repeater within 6 km, the card compares the measured margin with the model's (before its 10 dB safety margin). A repeater that didn't answer anywhere in a cell counts as below −6 dB there (it would have answered on the main mesh, 6 dB more sensitive at 62.5 kHz). With at least 15 cells where a repeater answered, the correction that fits the walks best moves the whole ground estimate, up to +10 or −25 dB; a repeater with 5 cells of its own gets its own correction too, pulled towards the overall one. Drives, with 10 or more cells, set what **In a car** takes off. The correction replaces the one from links between repeaters for people on the ground, and shows in each terrain profile's budget.

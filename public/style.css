@@ -6503,3 +6503,6 @@ html.mm-embed--sky .mm-embed-open:hover { background: var(--mm-sky-ink); color: 
  * themes (--nav-bg), so the light pink reads on it (#f0abfc on #0f0f23: 11:1). */
 :root { --nav-mediamesh-text: #f0abfc; }
 .nav-link.nav-link-mediamesh, .nav-link.nav-link-mediamesh:hover, .nav-link.nav-link-mediamesh.active { color: var(--nav-mediamesh-text); }
+
+/* the Mapped by people key: a hexagon */
+.mm-cov-sw--hex { clip-path: polygon(25% 5%, 75% 5%, 100% 50%, 75% 95%, 25% 95%, 0 50%); border-radius: 0; }

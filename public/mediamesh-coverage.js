@@ -2011,6 +2011,39 @@
     } catch (_) { return null; }
   }
 
+  // The points, fetched once for the map and the tab's "km² mapped by people"
+  // card together, and again after FIELD_TTL_MS.
+  const FIELD_TTL_MS = 5 * 60 * 1000;
+  let fieldOnce = null, fieldOnceAt = 0;
+  function fieldPoints(opts) {
+    if (opts && opts.fieldPoints !== undefined) return Promise.resolve(opts.fieldPoints);
+    if (!fieldOnce || Date.now() - fieldOnceAt > FIELD_TTL_MS) {
+      fieldOnceAt = Date.now();
+      fieldOnce = loadFieldPoints();
+    }
+    return fieldOnce;
+  }
+
+  /** The Mapped by people hexagon h (GET /api/mediamesh/coverage-points'
+   * hexes: middle, corner radius in Web Mercator metres) as six [lat, lon]
+   * corners, flat-topped, as the analyzer grids them. */
+  function hexCorners(h) {
+    const R = 6378137, d = 180 / Math.PI;
+    const x = h.lon / d * R, y = R * Math.log(Math.tan(Math.PI / 4 + h.lat / d / 2));
+    const out = [];
+    for (let i = 0; i < 6; i++) {
+      const a = Math.PI / 3 * i;
+      const cx = x + h.r * Math.cos(a), cy = y + h.r * Math.sin(a);
+      out.push([(2 * Math.atan(Math.exp(cy / R)) - Math.PI / 2) * d, cx / R * d]);
+    }
+    return out;
+  }
+
+  /** The hexagon's colour: by its best repeater's margin, as the apps' dots. */
+  function hexBand(h) {
+    return h.best >= 5 ? 'good' : h.best >= 0 ? 'marginal' : 'out';
+  }
+
   /**
    * Draws the coverage card's map in el (which holds #mmCovMap, the mode
    * buttons [data-mm-cov] and #mmCovStatus). repeaters: the MediaMesh tab's
@@ -2396,31 +2429,36 @@
       if (current) show(current);
     }
 
-    // ---- Coverage measured on the ground (the apps' coverage recorders) ----
+    // ---- Mapped by people: hexagons where a MediaMesh repeater answered the
+    // apps' coverage recorders. A layer of its own, off until ticked, over
+    // every view. ----
     const fieldLayer = L.layerGroup();
     const fieldToggle = el.querySelector('#mmCovFieldToggle');
     const fieldKey = el.querySelector('#mmCovFieldKey');
     const repByKey = new Map(placed.map((r) => [key8(r), r]));
+    let fieldShown = null;
     function drawField() {
       fieldLayer.clearLayers();
-      const cells = (session.fieldInfo && session.fieldInfo.cells) || [];
-      const onGround = current && CONFIG.modes[current].clutter;
-      if (fieldKey) fieldKey.hidden = !cells.length || !onGround;
-      if (!cells.length || !onGround || (fieldToggle && !fieldToggle.checked)) { map.removeLayer(fieldLayer); return; }
-      const half = ((session.fieldInfo.cell_m || 200) / 2) / M_PER_DEG_LAT;
-      cells.forEach((c) => {
-        const hl = half / Math.cos(c.lat * Math.PI / 180);
-        const bandKey = fieldBand(c);
-        const names = (c.reps || []).slice(0, 4).map((r) => `${esc(repName(repByKey.get(r.key)) || r.key)} ${r.margin >= 0 ? '+' : '−'}${fmtDb(Math.abs(r.margin))} dB`);
-        const tip = `Measured ${c.car ? 'in a vehicle' : 'on foot'} · ${c.n} sample${c.n === 1 ? '' : 's'}`
-          + (names.length ? '<br>' + names.join('<br>') : '<br>No MediaMesh repeater answered');
-        L.rectangle([[c.lat - half, c.lon - hl], [c.lat + half, c.lon + hl]], {
-          pane: 'mmCoverage', color: cssColor('--mm-field-' + bandKey, FIELD_RGB[bandKey]), weight: 1.5, dashArray: c.car ? '3 3' : null,
-          fillColor: cssColor('--mm-field-' + bandKey, FIELD_RGB[bandKey]), fillOpacity: 0.55, bubblingMouseEvents: false,
+      const hexes = ((session.fieldInfo || fieldShown || {}).hexes) || [];
+      if (fieldKey) fieldKey.hidden = !hexes.length;
+      if (!hexes.length || !fieldToggle || !fieldToggle.checked) { map.removeLayer(fieldLayer); return; }
+      hexes.forEach((h) => {
+        if (!(Number.isFinite(h.lat) && Number.isFinite(h.lon) && h.r > 0)) return;
+        const bandKey = hexBand(h);
+        const colour = cssColor('--mm-field-' + bandKey, FIELD_RGB[bandKey]);
+        const names = (h.reps || []).slice(0, 4).map((r) => `${esc(repName(repByKey.get(r.key)) || r.key)} ${r.margin >= 0 ? '+' : '−'}${fmtDb(Math.abs(r.margin))} dB`);
+        const tip = `Mapped by people · ${h.n} ping${h.n === 1 ? '' : 's'}${h.car ? ', from a vehicle' : ''}` + (names.length ? '<br>' + names.join('<br>') : '');
+        L.polygon(hexCorners(h), {
+          pane: 'mmCoverage', color: colour, weight: 1.2, fillColor: colour, fillOpacity: 0.5, bubblingMouseEvents: false,
         }).bindTooltip(tip, { sticky: true }).addTo(fieldLayer);
       });
       fieldLayer.addTo(map);
     }
+    fieldPoints(opts).then((info) => {
+      if (destroyed) return;
+      fieldShown = info;
+      drawField();
+    });
     const onFieldToggle = () => drawField();
     if (fieldToggle) fieldToggle.addEventListener('change', onFieldToggle);
 
@@ -2468,7 +2506,7 @@
         // Measured coverage points: fetched and fitted once, with the
         // terrain the ground view loaded.
         if (CONFIG.modes[modeKey].clutter && !session.fieldInfo) {
-          const info = await loadFieldPoints(opts);
+          const info = await fieldPoints(opts);
           if (destroyed) return;
           session.fieldInfo = info || { cells: [] };
           session.fieldFit = fitField(session.fieldInfo.cells, placed, res.elevAt);
@@ -2631,7 +2669,7 @@
     computeCoverage, workerPool, pathProfile, profileVerdict, budgetRows, profileSvg, profileHtml,
     terrainPlan, loadTerrainLevels, loadTerrain, rampColor, edgeFade, cellAt, cellCenter, readout,
     fitCalibration, calibrationText, setCalibration, getCalibration, CAL,
-    clutterLossDb, setField, getField, fieldDbFor, placeLossDb, fitField, fieldSolve, fieldText, fieldBand, adjustCov, FIELD_RGB, loadFieldPoints, session,
+    clutterLossDb, setField, getField, fieldDbFor, placeLossDb, fitField, fieldSolve, fieldText, fieldBand, adjustCov, FIELD_RGB, loadFieldPoints, fieldPoints, hexCorners, hexBand, session,
     backboneWeight, backboneTip, areaHistory, footprint, coverageImage, legendGradient,
     growthSteps, presentAt, antennaHeight, coverageCanvas, canvasOverlay, whatIfBase, whatIfDefaults, whatIfJob, whatIfCoverage, whatIfCanvas, cellAreaKm2, coveredKm2, unionKm2, repAreasKm2, planGain, planLinks, planHtml, PLAN_RGB,
     repNotes, repArea, repGroups, repSummaryHtml, repPanelHtml, repAction, assumptionsHtml, linkRows, linksTableHtml, init,

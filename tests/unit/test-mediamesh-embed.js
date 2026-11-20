@@ -83,5 +83,18 @@ test('the menu: MediaMesh between Analytics and Scope Audit, in fuchsia, lit on 
   assert.ok(pub('analytics.js').includes('window.syncAnalyticsNavLinks()'), 'tab switches relight the menu');
 });
 
+test('Mapped by people: a layer off until ticked, and its km² card', () => {
+  const an = pub('analytics.js');
+  assert.ok(/<input type="checkbox" id="mmCovFieldToggle">/.test(an), 'off by default');
+  assert.ok(an.includes('id="mmStatMappedCard" hidden') && an.includes('showMediaMeshMapped(el)'));
+  const src = an.slice(an.indexOf('function mediaMeshMappedText'), an.indexOf('function showMediaMeshMapped'));
+  const mmKm = (v) => (v < 100 ? v.toFixed(1).replace(/\.0$/, '') : Math.round(v).toLocaleString());
+  const f = new Function('mmKm', src + '; return mediaMeshMappedText;')(mmKm);
+  assert.strictEqual(f(null), null);
+  assert.strictEqual(f({ points: 0 }), null, 'nobody has shared: no card');
+  assert.deepStrictEqual(f({ points: 640, mapped_km2: 4.19, hexes_answered: 121, radios: 3, trips: 9 }), { value: '4.2', detail: '121 hexagons where radio2 reaches · 3 radios, 9 trips' });
+  assert.deepStrictEqual(f({ points: 5, mapped_km2: 0.03, hexes_answered: 1, radios: 1, trips: 1 }), { value: '0.03', detail: '1 hexagon where radio2 reaches · 1 radio, 1 trip' });
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

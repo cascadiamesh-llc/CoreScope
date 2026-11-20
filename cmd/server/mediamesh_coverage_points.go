@@ -38,6 +38,7 @@ const (
 	covPointsMaxBody     = 512 << 10
 	covPointsMaxPerBatch = 500
 	covPointsCellM       = 200.0
+	covPointsHexM        = 200.0 // the "Mapped by people" hexagons, flat side to flat side
 	covPointsTripGap     = 30 * time.Minute
 	covPointsTrimM       = 300.0
 	covPointsCarMS       = 6.0 // faster than this (m/s, about 22 km/h): in a vehicle
@@ -348,20 +349,41 @@ type covCell struct {
 	Reps []covCellRep `json:"reps"`
 }
 
+// covHex: one "Mapped by people" hexagon, where at least one MediaMesh
+// repeater answered. Lat/Lon is its middle; R its corner radius in Web
+// Mercator metres (EPSG:3857, as Leaflet draws), so the map can draw it
+// exactly: a flat-topped hexagon, corners at R from the middle every 60°.
+type covHex struct {
+	Lat  float64      `json:"lat"`
+	Lon  float64      `json:"lon"`
+	R    float64      `json:"r"`
+	N    int          `json:"n"`    // pings in it
+	Car  bool         `json:"car"`  // all of them from a vehicle
+	Best float64      `json:"best"` // the best repeater's median margin, dB
+	Reps []covCellRep `json:"reps"`
+}
+
 type covCellsResponse struct {
 	CellM   float64   `json:"cell_m"`
 	Points  int       `json:"points"`
 	Radios  int       `json:"radios"`
+	Trips   int       `json:"trips"`
 	Trimmed int       `json:"trimmed"` // left out at the ends of trips
 	Updated string    `json:"updated,omitempty"`
 	Cells   []covCell `json:"cells"`
+	// Mapped by people: the hexagons where a repeater answered, and the area
+	// of those where radio2 would reach (best margin 0 dB or more).
+	HexM          float64  `json:"hex_m"`
+	Hexes         []covHex `json:"hexes"`
+	HexesAnswered int      `json:"hexes_answered"`
+	MappedKm2     float64  `json:"mapped_km2"`
 }
 
 // covCells groups points into covPointsCellM cells, after leaving out the
 // first and last covPointsTrimM of each trip (a radio's points with no gap
 // over covPointsTripGap). pts must be sorted by radio, then time.
 func covCells(pts []storedPoint) *covCellsResponse {
-	out := &covCellsResponse{CellM: covPointsCellM, Cells: []covCell{}}
+	out := &covCellsResponse{CellM: covPointsCellM, Cells: []covCell{}, HexM: covPointsHexM, Hexes: []covHex{}}
 	type acc struct {
 		lat, lon float64
 		car      bool
@@ -369,9 +391,17 @@ func covCells(pts []storedPoint) *covCellsResponse {
 		margins  map[string][]float64
 	}
 	cells := map[string]*acc{}
+	type hacc struct {
+		lat, lon, r float64
+		n           int
+		car         bool
+		margins     map[string][]float64
+	}
+	hexes := map[string]*hacc{}
 	radios := map[string]bool{}
 	var newest int64
-	keep := trimTrips(pts)
+	keep, trips := trimTrips(pts)
+	out.Trips = trips
 	for i, p := range pts {
 		if !keep[i] {
 			out.Trimmed++
@@ -402,7 +432,52 @@ func covCells(pts []storedPoint) *covCellsResponse {
 			seen[r.Key] = true
 			c.margins[r.Key] = append(c.margins[r.Key], r.Margin)
 		}
+		if len(p.Reps) > 0 {
+			hk, hLat, hLon, hR := hexOf(p.Lat, p.Lon)
+			h := hexes[hk]
+			if h == nil {
+				h = &hacc{lat: hLat, lon: hLon, r: hR, car: true, margins: map[string][]float64{}}
+				hexes[hk] = h
+			}
+			h.n++
+			h.car = h.car && car
+			hs := map[string]bool{}
+			for _, r := range p.Reps {
+				if !hs[r.Key] {
+					hs[r.Key] = true
+					h.margins[r.Key] = append(h.margins[r.Key], r.Margin)
+				}
+			}
+		}
 	}
+	for _, h := range hexes {
+		hx := covHex{Lat: h.lat, Lon: h.lon, R: math.Round(h.r*10) / 10, N: h.n, Car: h.car, Best: math.Inf(-1), Reps: []covCellRep{}}
+		for k, ms := range h.margins {
+			m := math.Round(medianF(ms)*10) / 10
+			hx.Reps = append(hx.Reps, covCellRep{Key: k, N: len(ms), Margin: m})
+			if m > hx.Best {
+				hx.Best = m
+			}
+		}
+		sort.Slice(hx.Reps, func(i, j int) bool {
+			if hx.Reps[i].Margin != hx.Reps[j].Margin {
+				return hx.Reps[i].Margin > hx.Reps[j].Margin
+			}
+			return hx.Reps[i].Key < hx.Reps[j].Key
+		})
+		if hx.Best >= 0 {
+			out.HexesAnswered++
+		}
+		out.Hexes = append(out.Hexes, hx)
+	}
+	out.MappedKm2 = math.Round(float64(out.HexesAnswered)*hexAreaM2()/1e6*100) / 100
+	sort.Slice(out.Hexes, func(i, j int) bool {
+		a, b := out.Hexes[i], out.Hexes[j]
+		if a.Lat != b.Lat {
+			return a.Lat > b.Lat
+		}
+		return a.Lon < b.Lon
+	})
 	out.Radios = len(radios)
 	if newest > 0 {
 		out.Updated = time.Unix(newest, 0).UTC().Format(time.RFC3339)
@@ -429,10 +504,12 @@ func covCells(pts []storedPoint) *covCellsResponse {
 }
 
 // trimTrips marks the points kept: all but those within covPointsTrimM of
-// where each trip started or ended.
-func trimTrips(pts []storedPoint) []bool {
+// where each trip started or ended. Also says how many trips there were.
+func trimTrips(pts []storedPoint) ([]bool, int) {
 	keep := make([]bool, len(pts))
+	trips := 0
 	for s := 0; s < len(pts); {
+		trips++
 		e := s + 1
 		for e < len(pts) && pts[e].radio == pts[s].radio && time.Duration(pts[e].T-pts[e-1].T)*time.Second <= covPointsTripGap {
 			e++
@@ -445,7 +522,41 @@ func trimTrips(pts []storedPoint) []bool {
 		}
 		s = e
 	}
-	return keep
+	return keep, trips
+}
+
+// The hexagons: flat-topped, covPointsHexM across, on a grid in Web Mercator
+// metres (as Leaflet draws, so they tile on the map). Mercator stretches by
+// 1/cos(latitude), so each 1° band of latitude has its own size, set for the
+// band's middle: within a band they tile exactly, and are within half a
+// percent of covPointsHexM across.
+const webMercR = 6378137.0
+
+func hexAreaM2() float64 { return math.Sqrt(3) / 2 * covPointsHexM * covPointsHexM }
+
+// hexOf is the hexagon a point falls in: its key, middle and corner radius
+// (Mercator metres).
+func hexOf(lat, lon float64) (string, float64, float64, float64) {
+	band := math.Floor(lat)
+	r := covPointsHexM / math.Sqrt(3) / math.Cos((band+0.5)*math.Pi/180)
+	x := webMercR * lon * math.Pi / 180
+	y := webMercR * math.Log(math.Tan(math.Pi/4+lat*math.Pi/360))
+	// axial coordinates of a flat-topped grid, rounded through cube ones
+	q := (2.0 / 3 * x) / r
+	rr := (-1.0/3*x + math.Sqrt(3)/3*y) / r
+	cx, cz := math.Round(q), math.Round(rr)
+	cy := math.Round(-q - rr)
+	dx, dz, dy := math.Abs(cx-q), math.Abs(cz-rr), math.Abs(cy+q+rr)
+	if dx > dy && dx > dz {
+		cx = -cy - cz
+	} else if dy <= dz {
+		cz = -cx - cy
+	}
+	mx := r * 1.5 * cx
+	my := r * math.Sqrt(3) * (cz + cx/2)
+	cLon := mx / webMercR * 180 / math.Pi
+	cLat := (2*math.Atan(math.Exp(my/webMercR)) - math.Pi/2) * 180 / math.Pi
+	return fmt.Sprintf("%d:%d:%d", int(band), int(cx), int(cz)), math.Round(cLat*1e6) / 1e6, math.Round(cLon*1e6) / 1e6, r
 }
 
 // snapCell is the middle of the covPointsCellM cell a point falls in.

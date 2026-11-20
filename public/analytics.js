@@ -626,9 +626,33 @@
     showMediaMeshMilestone(el, mediaMeshMilestone(mm, null, Date.now()));
     if (window.MediaMeshInsights) window.MediaMeshInsights.init(el, mm);
     if (window.MediaMeshRecap) window.MediaMeshRecap.init(el, mm);
+    showMediaMeshMapped(el);
     // An iframe of the coverage map alone (mediamesh-embed.js, embed=coverage)
     if (window.MediaMeshEmbed && window.MediaMeshEmbed.kind() === 'coverage') window.MediaMeshEmbed.coverageOnly(el);
     else if (window.MediaMeshEmbed) el.insertAdjacentHTML('beforeend', window.MediaMeshEmbed.snippetsHtml(location.origin + location.pathname));
+  }
+
+  // "km² mapped by people": where a repeater answered people's coverage
+  // recorders and radio2 would reach (GET /api/mediamesh/coverage-points).
+  // Shown once anyone has shared points.
+  function mediaMeshMappedText(info) {
+    if (!info || !(Number(info.points) > 0)) return null;
+    const hexes = Number(info.hexes_answered || 0), radios = Number(info.radios || 0), trips = Number(info.trips || 0);
+    return {
+      value: Number(info.mapped_km2 || 0) < 1 ? Number(info.mapped_km2 || 0).toFixed(2) : mmKm(Number(info.mapped_km2 || 0)),
+      detail: `${hexes.toLocaleString()} hexagon${hexes === 1 ? '' : 's'} where radio2 reaches · ${radios} radio${radios === 1 ? '' : 's'}, ${trips} trip${trips === 1 ? '' : 's'}`,
+    };
+  }
+  function showMediaMeshMapped(el) {
+    if (!window.MediaMeshCoverage || !window.MediaMeshCoverage.fieldPoints) return;
+    window.MediaMeshCoverage.fieldPoints().then((info) => {
+      const t = mediaMeshMappedText(info);
+      const card = el.querySelector('#mmStatMappedCard');
+      if (!t || !card) return;
+      el.querySelector('#mmStatMapped').textContent = t.value;
+      el.querySelector('#mmStatMappedDetail').textContent = t.detail;
+      card.hidden = false;
+    });
   }
 
   let _mmCoverageDestroy = null;
@@ -678,7 +702,7 @@
         <span><span class="mm-cov-sw mm-cov-sw--relayed"></span>Relayed (weaker evidence)</span>
         <label class="mm-cov-links-key" id="mmCovBackboneKey" hidden title="The hops photos, video and voice actually took this week: thicker for busier"><input type="checkbox" id="mmCovBackboneToggle"> <span class="mm-cov-sw mm-cov-sw--backbone"></span>Backbone (this week)</label>
         <label class="mm-cov-links-key" id="mmCovLinksKey" hidden><input type="checkbox" id="mmCovLinksToggle" checked> <span class="mm-cov-sw mm-cov-sw--link"></span>Heard on radio2</label>
-        <label class="mm-cov-links-key" id="mmCovFieldKey" hidden title="Where people mapping MediaMesh coverage with MeshCore Open TAK or Wadamesh TAK found the repeaters: green 5 dB or more to spare, amber 0 to 5, red short, grey none answered; dashed from a vehicle"><input type="checkbox" id="mmCovFieldToggle" checked> <span class="mm-cov-sw mm-cov-sw--field"></span>Measured on the ground</label>
+        <label class="mm-cov-links-key" id="mmCovFieldKey" hidden title="200 m hexagons where a MediaMesh repeater answered people mapping coverage with MeshCore Open TAK or Wadamesh TAK: green 5 dB or more to spare, amber 0 to 5, red answered but radio2 would fall short"><input type="checkbox" id="mmCovFieldToggle"> <span class="mm-cov-sw mm-cov-sw--field mm-cov-sw--hex"></span>Mapped by people</label>
         <label class="mm-cov-opacity">Opacity <input type="range" id="mmCovOpacity" min="0" max="100" value="100" aria-label="Coverage opacity"></label>
       </div>
       <div class="mm-cov-time" id="mmCovTime" hidden>
@@ -963,6 +987,7 @@
         <div class="stat-card stat-card-mediamesh"><div class="stat-value">${reps.length + unknown.length}</div><div class="stat-label">MediaMesh repeaters</div><div class="stat-detail">${reps.filter((r) => r.mode === 'rxtx').length} send, ${reps.filter((r) => r.mode !== 'rxtx').length} listen only${unknown.length ? `, ${unknown.length} not yet identified` : ''}</div></div>
         <div class="stat-card stat-card-mediamesh"><div class="stat-value">${obs.length}</div><div class="stat-label">MediaMesh observers</div><div class="stat-detail">${obs.filter((o) => Number(o.mediamesh_observations || 0) > 0).length} heard radio2</div></div>
         ${mediaMeshHeadlineHtml(mm)}
+        <div class="stat-card stat-card-mediamesh" id="mmStatMappedCard" hidden><div class="stat-value" id="mmStatMapped">…</div><div class="stat-label">km² mapped by people</div><div class="stat-detail" id="mmStatMappedDetail"></div></div>
       </div>
       <div class="analytics-row"><div class="analytics-card flex-1 mm-chart">${chart.html.replace('Packets /', 'radio2 packets /')}</div></div>
       ${mediaMeshCoverageCardHtml(reps)}

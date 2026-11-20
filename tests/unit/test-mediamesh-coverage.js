@@ -838,6 +838,24 @@ function cellAt(cov, lat, lon) {
     assert.ok(higher > fp.km2 && louder > fp.km2 && quieter < fp.km2, `${higher} ${louder} ${quieter} vs ${fp.km2}`);
   });
 
+  await test('Mapped by people: hexagon corners as the analyzer grids them, colour by best margin', async () => {
+    // a hexagon 200 m across at 47.61: corner radius in Mercator metres
+    const r = 200 / Math.sqrt(3) / Math.cos(47.5 * Math.PI / 180);
+    const c = M.hexCorners({ lat: 47.61, lon: -122.32, r });
+    assert.strictEqual(c.length, 6);
+    const km = (a, b) => Math.hypot((a[0] - b[0]) * 111.32, (a[1] - b[1]) * 111.32 * Math.cos(47.61 * Math.PI / 180));
+    // flat-topped: corners 0 and 3 east and west, on the middle's latitude
+    assert.ok(Math.abs(c[0][0] - 47.61) < 1e-9 && c[0][1] > -122.32 && c[3][1] < -122.32);
+    const across = km(c[0], c[3]) * 1000, side = km(c[0], c[1]) * 1000;
+    assert.ok(Math.abs(across - 400 / Math.sqrt(3)) < 2 && Math.abs(side - 200 / Math.sqrt(3)) < 2, `${across} ${side}`);
+    assert.strictEqual(M.hexBand({ best: 5 }), 'good');
+    assert.strictEqual(M.hexBand({ best: 0 }), 'marginal');
+    assert.strictEqual(M.hexBand({ best: -0.1 }), 'out');
+    // fetched once for the map and the card; opts.fieldPoints stands in
+    const info = { points: 3, hexes: [] };
+    assert.strictEqual(await M.fieldPoints({ fieldPoints: info }), info);
+  });
+
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);
 })();
