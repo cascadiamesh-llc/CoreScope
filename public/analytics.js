@@ -929,7 +929,7 @@
     const obs = Array.isArray(mm.observers) ? mm.observers : [];
     const hours = Array.isArray(mm.per_hour) ? mm.per_hour : [];
     const n = Number(mm.mediamesh_transmissions || 0);
-    const intro = '<div id="mmMilestone"></div><p class="text-muted" style="margin:0 0 12px">MediaMesh is the second LoRa profile (radio2) that Keymind Cascade repeaters, Wadamesh TAK standalones and MeshCore Open TAK use for photos, video and voice. A transmission counts here when an observer heard it on radio2.</p>';
+    const intro = '<div id="mmMilestone"></div><p class="text-muted" style="margin:0 0 12px">MediaMesh is the second LoRa profile (radio2) that Keymind Cascade repeaters, Wadamesh TAK standalones and MeshCore Open TAK use for photos, video and voice. A transmission counts here when an observer heard it on radio2. Come test with us on the #mediamesh channel.</p>';
     if (n === 0 && reps.length === 0 && unknown.length === 0) {
       return intro + '<div class="text-center text-muted" style="padding:40px">No MediaMesh traffic or repeaters in this period. Observers need firmware that tags radio2.</div>';
     }
