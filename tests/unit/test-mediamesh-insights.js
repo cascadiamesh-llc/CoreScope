@@ -52,6 +52,20 @@ test('speed: kbit/s from bytes over time, by hops, the fastest route needs two c
   assert.ok(I.speedHtml(clips, nameOf, 7).includes('fastest route this period, 1.5 kbit/s over 2 clips'));
 });
 
+test('clips sent privately: timed in the speed card, counted in the delivery card, never judged', () => {
+  const priv = [clip({ outcome: 'unannounced', kind: 'unknown', total: 0, heard: 6, hops: 2, durationS: 20, bytes: 1000, at: '2026-11-20T01:00:00Z' }),
+    clip({ outcome: 'unannounced', kind: 'unknown', total: 0, heard: 1, durationS: 5, bytes: 150 })];
+  const s = I.speedSummary([], nameOf, priv);
+  assert.deepStrictEqual([s.n, s.priv], [1, 1], 'two pieces at least');
+  assert.ok(Math.abs(s.kbps - 0.4) < 1e-9);
+  const h = I.speedHtml([], nameOf, 7, priv);
+  assert.ok(h.includes('median speed, 1 clip, 1 sent privately') && h.includes('Sent privately, 1.0 kB'), h);
+  const d = I.deliveryHtml([], nameOf, 7, priv);
+  assert.ok(d.includes('No announced clips') && d.includes('2 clips sent privately were heard') && d.includes('direct message'));
+  assert.strictEqual(I.deliverySummary([]).n, 0, 'not judged');
+  assert.ok(I.speedHtml([], nameOf, 7).includes('No clips with more than one piece heard yet'));
+});
+
 test('busy: bins by local weekday and hour, per week; the toggle and peak', () => {
   const mon9 = new Date(2026, 10, 16, 21, 0, 0); // Monday 9 pm local
   const hours = [{ t: mon9.toISOString(), packets: 40, clips: 2, partial: 1 }, { t: new Date(2026, 10, 9, 21).toISOString(), packets: 20, clips: 0, partial: 0 }];

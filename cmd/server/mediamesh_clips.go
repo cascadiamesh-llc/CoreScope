@@ -98,7 +98,7 @@ type MediaMeshClip struct {
 	At        string   `json:"at"` // announced
 	Heard     int      `json:"heard"`
 	Parity    int      `json:"parity"`
-	Outcome   string   `json:"outcome"` // whole | parity | partial | none
+	Outcome   string   `json:"outcome"` // whole | parity | partial | none | unannounced
 	Missing   []int    `json:"missing,omitempty"`
 	Rebuilt   []int    `json:"rebuilt,omitempty"`
 	Observer  string   `json:"observer,omitempty"`
@@ -126,6 +126,11 @@ type MediaMeshClips struct {
 	To    string              `json:"to"`
 	Clips []MediaMeshClip     `json:"clips"`
 	Hours []MediaMeshClipHour `json:"hours"`
+	// Clips whose announcement the analyzer can't read (sent in a direct
+	// message or on a private channel): their pieces are still on the air
+	// with their session id, so how fast they crossed shows, but not whether
+	// they arrived whole (Total 0, Outcome "unannounced").
+	Unannounced []MediaMeshClip `json:"unannounced"`
 }
 
 // analyseMediaClips matches pieces to announcements and judges each clip at
@@ -248,6 +253,134 @@ func analyseMediaClips(anns []mediaClipAnn, pieces []mediaClipPiece) []MediaMesh
 	return out
 }
 
+// mediaClipUnannouncedGap: pieces of one session id further apart than this
+// are two clips (a session id can come round again).
+const mediaClipUnannouncedGap = 30 * time.Minute
+
+// unannouncedMediaClips groups the pieces of clips with no readable
+// announcement by session id (parity pieces with their clip), splitting at
+// gaps of mediaClipUnannouncedGap, and gives each as its far end heard it:
+// how many different pieces, over how long. Only clips the far end heard at
+// least two pieces of over some time, since one piece says nothing about
+// speed. Newest first.
+func unannouncedMediaClips(anns []mediaClipAnn, pieces []mediaClipPiece) []MediaMeshClip {
+	announced := map[uint32]bool{}
+	for _, a := range anns {
+		announced[a.sid] = true
+	}
+	// A clip's parity pieces carry its session id ^ mediaClipFecXor and
+	// follow its data pieces: of two ids that pair up, the one first heard
+	// later is the parity one.
+	firstAt := map[uint32]time.Time{}
+	for _, p := range pieces {
+		if announced[p.sid] || announced[p.sid^mediaClipFecXor] {
+			continue
+		}
+		if t, ok := firstAt[p.sid]; !ok || p.at.Before(t) {
+			firstAt[p.sid] = p.at
+		}
+	}
+	bySid := map[uint32][]mediaClipPieceP{}
+	for _, p := range pieces {
+		t, ok := firstAt[p.sid]
+		if !ok {
+			continue
+		}
+		sid, parity := p.sid, false
+		if other, ok := firstAt[p.sid^mediaClipFecXor]; ok && (other.Before(t) || (other.Equal(t) && p.sid^mediaClipFecXor < p.sid)) {
+			sid, parity = p.sid^mediaClipFecXor, true
+		}
+		bySid[sid] = append(bySid[sid], mediaClipPieceP{p, parity})
+	}
+	out := []MediaMeshClip{}
+	for sid, ps := range bySid {
+		sort.Slice(ps, func(i, j int) bool { return ps[i].at.Before(ps[j].at) })
+		for s := 0; s < len(ps); {
+			e := s + 1
+			for e < len(ps) && ps[e].at.Sub(ps[e-1].at) <= mediaClipUnannouncedGap {
+				e++
+			}
+			if c, ok := unannouncedClip(sid, ps[s:e]); ok {
+				out = append(out, c)
+			}
+			s = e
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].At > out[j].At || (out[i].At == out[j].At && out[i].SID < out[j].SID)
+	})
+	return out
+}
+
+// mediaClipPieceP is a piece, and whether it is a parity one.
+type mediaClipPieceP struct {
+	mediaClipPiece
+	parity bool
+}
+
+func unannouncedClip(sid uint32, ps []mediaClipPieceP) (MediaMeshClip, bool) {
+	type seen struct {
+		name        string
+		data        map[int]bool
+		parity      int
+		maxHops     int
+		path        []string
+		first, last time.Time
+		bytes       int
+	}
+	obs := map[string]*seen{}
+	for _, p := range ps {
+		key := p.observer
+		if key == "" {
+			key = p.obsName
+		}
+		o := obs[key]
+		if o == nil {
+			o = &seen{name: p.obsName, data: map[int]bool{}}
+			obs[key] = o
+		}
+		if p.parity {
+			o.parity++
+		} else {
+			if !o.data[p.info] {
+				o.bytes += p.bytes
+			}
+			o.data[p.info] = true
+		}
+		if o.path == nil || len(p.path) > o.maxHops {
+			o.maxHops, o.path = len(p.path), p.path
+		}
+		if o.first.IsZero() || p.at.Before(o.first) {
+			o.first = p.at
+		}
+		if p.at.After(o.last) {
+			o.last = p.at
+		}
+	}
+	var far *seen
+	farKey := ""
+	for k, o := range obs {
+		if len(o.data) == 0 {
+			continue
+		}
+		if far == nil || o.maxHops > far.maxHops || (o.maxHops == far.maxHops && (len(o.data) > len(far.data) || (len(o.data) == len(far.data) && k < farKey))) {
+			far, farKey = o, k
+		}
+	}
+	if far == nil || len(far.data) < 2 || !far.last.After(far.first) {
+		return MediaMeshClip{}, false
+	}
+	c := MediaMeshClip{SID: strings.ToLower(hex.EncodeToString([]byte{byte(sid >> 24), byte(sid >> 16), byte(sid >> 8), byte(sid)})),
+		Kind: "unknown", At: far.first.UTC().Format(time.RFC3339), Outcome: "unannounced", Path: []string{},
+		Observer: farKey, ObsName: far.name, Hops: far.maxHops, Heard: len(far.data), Parity: far.parity,
+		FirstAt: far.first.UTC().Format(time.RFC3339), LastAt: far.last.UTC().Format(time.RFC3339),
+		DurationS: far.last.Sub(far.first).Seconds(), Bytes: far.bytes, Observers: len(obs)}
+	if far.path != nil {
+		c.Path = far.path
+	}
+	return c, true
+}
+
 func (s *Server) handleMediaMeshClips(w http.ResponseWriter, r *http.Request) {
 	days := 7
 	if v, err := strconv.Atoi(r.URL.Query().Get("days")); err == nil && v >= 1 && v <= 28 {
@@ -256,7 +389,7 @@ func (s *Server) handleMediaMeshClips(w http.ResponseWriter, r *http.Request) {
 	build := func() interface{} {
 		now := time.Now().UTC()
 		out := &MediaMeshClips{To: now.Format(time.RFC3339), From: now.Add(-time.Duration(days) * 24 * time.Hour).Format(time.RFC3339),
-			Clips: []MediaMeshClip{}, Hours: []MediaMeshClipHour{}}
+			Clips: []MediaMeshClip{}, Hours: []MediaMeshClipHour{}, Unannounced: []MediaMeshClip{}}
 		if s.store != nil {
 			s.store.mediaMeshClips(out.From, out)
 		}
@@ -386,6 +519,10 @@ func (s *PacketStore) mediaMeshClips(since string, out *MediaMeshClips) {
 	mediaMeshMu.RUnlock()
 	s.mu.RUnlock()
 	clips := analyseMediaClips(anns, pieces)
+	out.Unannounced = unannouncedMediaClips(anns, pieces)
+	if len(out.Unannounced) > mediaClipsMax {
+		out.Unannounced = out.Unannounced[:mediaClipsMax]
+	}
 	for _, c := range clips {
 		h := hour(parseTimestamp(c.At))
 		h.Clips++

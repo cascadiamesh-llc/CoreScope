@@ -7,7 +7,7 @@
 (function (root) {
   const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
-  const KIND_LABEL = { photo: 'Photo', video: 'Video', voice: 'Voice' };
+  const KIND_LABEL = { photo: 'Photo', video: 'Video', voice: 'Voice', unknown: 'Sent privately' };
 
   function median(xs) {
     const v = xs.filter(Number.isFinite).sort((a, b) => a - b);
@@ -81,10 +81,12 @@
     return 'not heard';
   }
 
-  function deliveryHtml(clips, nameOf, days) {
+  function deliveryHtml(clips, nameOf, days, unannounced) {
     const s = deliverySummary(clips);
-    const head = `<h3>Did it get through?</h3><p class="text-muted mm-ins-sub">Each clip's announcement says how many pieces it has, so the pieces heard at the far end (the observer that heard it over the most hops) say whether it arrived. Clips announced on channels the analyzer can read, last ${days} days.</p>`;
-    if (!s.n) return head + '<p class="text-muted">No announced clips heard yet in this period.</p>';
+    const priv = (unannounced || []).length;
+    const head = `<h3>Did it get through?</h3><p class="text-muted mm-ins-sub">Each clip's announcement says how many pieces it has, so the pieces heard at the far end (the observer that heard it over the most hops) say whether it arrived. Clips announced on channels the analyzer can read, last ${days} days. A clip sent in a direct message or on a private channel has its announcement encrypted, so it can't be judged here; how fast it crossed still shows below.</p>`;
+    const privNote = priv ? `<p class="text-muted">${priv.toLocaleString()} clip${priv === 1 ? '' : 's'} sent privately ${priv === 1 ? 'was' : 'were'} heard in this period.</p>` : '';
+    if (!s.n) return head + '<p class="text-muted">No announced clips heard yet in this period.</p>' + privNote;
     const tiles = `<div class="mm-ins-tiles">
       <div class="mm-ins-tile"><div class="mm-ins-big mm-ins-accent">${pct(s.whole + s.parity, s.n)}%</div><div class="mm-ins-label">of ${s.n.toLocaleString()} clips arrived whole</div></div>
       <div class="mm-ins-tile"><div class="mm-ins-big">${pct(s.parity, s.n)}%</div><div class="mm-ins-label">whole thanks to parity pieces</div></div>
@@ -98,19 +100,24 @@
     return head + tiles + `<div class="mm-ins-split">
       <div class="mm-ins-col"><h4>Whole, by hops</h4>${bars}</div>
       <div class="mm-ins-col mm-ins-wide"><h4>Recent clips</h4><div class="mm-ins-scroll"><table class="analytics-table mm-ins-table"><thead><tr><th scope="col">Clip</th><th scope="col">Route</th><th scope="col" class="mm-ins-num">Hops</th><th scope="col">Pieces</th><th scope="col">Arrived</th></tr></thead><tbody>${recent}</tbody></table></div>
-      <p class="text-muted mm-ins-key">Pick a clip for its flight recorder. <span class="mm-pieces"><span></span></span> heard · <span class="mm-pieces"><span class="is-rebuilt"></span></span> rebuilt from parity · <span class="mm-pieces"><span class="is-missing"></span></span> missing</p></div></div>`;
+      ${privNote}<p class="text-muted mm-ins-key">Pick a clip for its flight recorder. <span class="mm-pieces"><span></span></span> heard · <span class="mm-pieces"><span class="is-rebuilt"></span></span> rebuilt from parity · <span class="mm-pieces"><span class="is-missing"></span></span> missing</p></div></div>`;
   }
 
   // ---- Speed ----------------------------------------------------------------
 
-  /** Clips with a time and size to go on: kbit/s and seconds. */
-  function speedRows(clips) {
+  /** Clips with a time and size to go on: kbit/s and seconds. Announced
+   * clips that arrived whole, and clips sent privately (no announcement the
+   * analyzer can read: whether whole isn't known, but the far end's pieces
+   * still time the crossing). Newest first. */
+  function speedRows(clips, unannounced) {
     return (clips || []).filter((c) => (c.outcome === 'whole' || c.outcome === 'parity') && c.durationS > 0 && c.bytes > 0)
+      .concat((unannounced || []).filter((c) => c.durationS > 0 && c.bytes > 0 && c.heard >= 2))
+      .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))
       .map((c) => Object.assign({}, c, { kbps: (c.bytes * 8) / c.durationS / 1000 }));
   }
 
-  function speedSummary(clips, nameOf) {
-    const rows = speedRows(clips);
+  function speedSummary(clips, nameOf, unannounced) {
+    const rows = speedRows(clips, unannounced);
     const byHops = [1, 2, 3, 4, 5].map((h) => {
       const r = rows.filter((c) => Math.min(5, Math.max(1, c.hops || 1)) === h);
       return { hops: h, n: r.length, kbps: median(r.map((c) => c.kbps)) };
@@ -124,18 +131,19 @@
       if (!fastest || m > fastest.kbps) fastest = { route: k, kbps: m, n: routes[k].length };
     });
     const photo1 = median(rows.filter((c) => c.kind === 'photo' && c.hops <= 1).map((c) => c.durationS));
-    return { n: rows.length, kbps: median(rows.map((c) => c.kbps)), byHops, fastest, photo1, rows };
+    const priv = rows.filter((c) => c.outcome === 'unannounced').length;
+    return { n: rows.length, priv, kbps: median(rows.map((c) => c.kbps)), byHops, fastest, photo1, rows };
   }
 
   const fmtK = (v) => (v == null ? '—' : v < 10 ? v.toFixed(1) : String(Math.round(v)));
 
-  function speedHtml(clips, nameOf, days) {
-    const s = speedSummary(clips, nameOf);
-    const head = `<h3>How fast clips cross the mesh</h3><p class="text-muted mm-ins-sub">From the first piece the far end heard to the last, for clips that arrived whole. Last ${days} days.</p>`;
-    if (!s.n) return head + '<p class="text-muted">No whole clips with more than one piece yet.</p>';
+  function speedHtml(clips, nameOf, days, unannounced) {
+    const s = speedSummary(clips, nameOf, unannounced);
+    const head = `<h3>How fast clips cross the mesh</h3><p class="text-muted mm-ins-sub">From the first piece the far end heard to the last: announced clips that arrived whole, and clips sent privately (in a direct message or on a private channel), timed from the pieces heard. Last ${days} days.</p>`;
+    if (!s.n) return head + '<p class="text-muted">No clips with more than one piece heard yet.</p>';
     const maxK = Math.max(...s.byHops.map((b) => b.kbps || 0), 0.1);
     const tiles = `<div class="mm-ins-tiles">
-      <div class="mm-ins-tile"><div class="mm-ins-big">${fmtK(s.kbps)} kbit/s</div><div class="mm-ins-label">median speed, ${s.n} clips</div></div>
+      <div class="mm-ins-tile"><div class="mm-ins-big">${fmtK(s.kbps)} kbit/s</div><div class="mm-ins-label">median speed, ${s.n} clip${s.n === 1 ? '' : 's'}${s.priv ? `, ${s.priv} sent privately` : ''}</div></div>
       <div class="mm-ins-tile"><div class="mm-ins-big">${s.photo1 == null ? '—' : Math.round(s.photo1) + ' s'}</div><div class="mm-ins-label">a photo over one hop, typical</div></div>
       <div class="mm-ins-tile mm-ins-tile--wide"><div class="mm-ins-big mm-ins-accent mm-ins-route">${s.fastest ? esc(s.fastest.route) : '—'}</div><div class="mm-ins-label">${s.fastest ? `fastest route this period, ${fmtK(s.fastest.kbps)} kbit/s over ${s.fastest.n} clips` : 'fastest route: needs two clips on one route'}</div></div>
     </div>`;
@@ -531,8 +539,9 @@
     const clips = (data && data.clips) || [];
     const days = Math.max(1, Math.round((Date.parse(data.to) - Date.parse(data.from)) / 86400000)) || DAYS_BACK;
     const put = (sel, html) => { const c = el.querySelector(sel); if (c) c.innerHTML = html; };
-    put('#mmDeliveryCard', deliveryHtml(clips, nameOf, days));
-    put('#mmSpeedCard', speedHtml(clips, nameOf, days));
+    const unannounced = (data && data.unannounced) || [];
+    put('#mmDeliveryCard', deliveryHtml(clips, nameOf, days, unannounced));
+    put('#mmSpeedCard', speedHtml(clips, nameOf, days, unannounced));
     const grid = busyGrid(data.hours, data.from, data.to);
     put('#mmBusyCard', busyHtml(grid, 'packets', days));
     const delivery = el.querySelector('#mmDeliveryCard');

@@ -169,3 +169,48 @@ func TestMediaMeshClipLog(t *testing.T) {
 		t.Errorf("endpoint: %+v", got)
 	}
 }
+
+func TestUnannouncedMediaClips(t *testing.T) {
+	t0 := time.Date(2026, 11, 19, 18, 0, 0, 0, time.UTC)
+	anns := []mediaClipAnn{{sid: 1, kind: "photo", total: 2, at: t0}}
+	near, far := []string{"aa"}, []string{"aa", "bb"}
+	var p []mediaClipPiece
+	add := func(sid uint32, info int, obs string, path []string, sec int) {
+		p = append(p, mediaClipPiece{sid: sid, info: info, bytes: 150, observer: obs, obsName: obs, path: path, at: t0.Add(time.Duration(sec) * time.Second)})
+	}
+	add(1, 0, "far", far, 5) // announced: not here
+	add(1, 1, "far", far, 9)
+	// a clip sent in a direct message: 5 pieces, piece 2 twice, then 1 parity
+	for i, sec := range []int{10, 14, 18, 22, 26, 27} {
+		idx := i
+		if i == 5 {
+			idx = 2
+		}
+		add(0xA1B2C3D4, idx, "far", far, sec)
+		add(0xA1B2C3D4, idx, "near", near, sec-1)
+	}
+	add(0xA1B2C3D4^mediaClipFecXor, 0, "far", far, 30)
+	// the same id two hours later: another clip
+	add(0xA1B2C3D4, 0, "far", near, 7200)
+	add(0xA1B2C3D4, 1, "far", near, 7230)
+	// one piece alone says nothing about speed
+	add(0x0BADF00D, 0, "far", far, 40)
+
+	got := unannouncedMediaClips(anns, p)
+	if len(got) != 2 {
+		t.Fatalf("%d clips: %+v", len(got), got)
+	}
+	later, c := got[0], got[1]
+	if c.SID != "a1b2c3d4" || c.Outcome != "unannounced" || c.Total != 0 || c.Kind != "unknown" {
+		t.Fatalf("%+v", c)
+	}
+	if c.Observer != "far" || c.Hops != 2 || c.Heard != 5 || c.Parity != 1 || c.Observers != 2 {
+		t.Fatalf("far end %s hops %d heard %d parity %d observers %d", c.Observer, c.Hops, c.Heard, c.Parity, c.Observers)
+	}
+	if c.DurationS != 20 || c.Bytes != 750 {
+		t.Fatalf("%.0f s %d bytes (the parity piece is no clip data, a repeat counts once)", c.DurationS, c.Bytes)
+	}
+	if later.SID != "a1b2c3d4" || later.Heard != 2 || later.DurationS != 30 || later.At <= c.At {
+		t.Fatalf("the later clip: %+v", later)
+	}
+}
