@@ -148,6 +148,21 @@ window.preserveCompareSelection = function preserveCompareSelection(prevIds, tbo
   let _obsSortCtl = null; // #1641 r1 finding #6: tracked TableSort controller for destroy-before-reinit
   let _mqttPanelTeardown = null; // #1043: teardown fn for the MQTT status panel timer
 
+  // "Add your observer" (observer-setup.js): open until the viewer closes it,
+  // remembered in this browser.
+  const OBS_SETUP_CLOSED_KEY = 'obsSetupClosed';
+  function mountObserverSetup(host) {
+    if (!host || !window.ObserverSetup) return;
+    let closed = false;
+    try { closed = localStorage.getItem(OBS_SETUP_CLOSED_KEY) === '1'; } catch (_) { /* no storage */ }
+    host.innerHTML = window.ObserverSetup.cardHtml({ open: !closed });
+    window.ObserverSetup.bind(host);
+    const d = host.querySelector('[data-obs-setup]');
+    if (d) d.addEventListener('toggle', () => {
+      try { localStorage.setItem(OBS_SETUP_CLOSED_KEY, d.open ? '0' : '1'); } catch (_) { /* no storage */ }
+    });
+  }
+
   function init(app) {
     app.innerHTML = `
       <div class="observers-page">
@@ -167,10 +182,12 @@ window.preserveCompareSelection = function preserveCompareSelection(prevIds, tbo
           <span class="obs-refresh-spacer"></span>
           <button class="btn-icon" data-action="obs-refresh" title="Refresh" aria-label="Refresh observers"><svg class="ph-icon" aria-hidden="true" focusable="false"><use href="/icons/phosphor-sprite.svg#ph-arrow-clockwise"></use></svg></button>
         </div>
+        <div id="obsSetup"></div>
         <div id="obsRegionFilter" class="region-filter-container"></div>
         <div id="mqttStatusPanel" class="mqtt-status-panel-container"></div>
         <div id="obsContent"><div class="text-center text-muted" style="padding:40px">Loading…</div></div>
       </div>`;
+    mountObserverSetup(document.getElementById('obsSetup'));
     RegionFilter.init(document.getElementById('obsRegionFilter'));
     // #1043: mount the MQTT source status panel above the observers
     // table. Self-refreshes every 10s; tear down in destroy() so the

@@ -622,6 +622,7 @@
     el._mmData = mm;
     initMediaMeshTableSort(el);
     initMediaMeshJoin(el);
+    if (window.ObserverSetup) window.ObserverSetup.bind(el);
     initMediaMeshCoverage(el, Array.isArray(mm.repeaters) ? mm.repeaters : [], Array.isArray(mm.links) ? mm.links : [],
       Array.isArray(mm.backbone) ? mm.backbone : []);
     showMediaMeshMilestone(el, mediaMeshMilestone(mm, null, Date.now()));
@@ -1034,7 +1035,8 @@
           <h3>MediaMesh observers</h3>
           ${obs.length ? `<table class="analytics-table" id="mmObserverTable"><thead><tr><th scope="col" data-sort-key="name">Observer</th><th scope="col" data-sort-key="near">Near</th><th scope="col" data-sort-key="region">Region</th><th scope="col" data-sort-key="mm" data-type="numeric">radio2 observations</th><th scope="col" data-sort-key="share" data-type="numeric">Share of its observations</th><th scope="col" data-sort-key="last_heard" data-type="date">Last heard</th></tr></thead><tbody>${obsRows}</tbody></table>` : '<p class="text-muted">None in this period.</p>'}
         </div>
-      </div>`;
+      </div>
+      ${window.ObserverSetup ? `<div class="analytics-row"><div class="analytics-card flex-1">${window.ObserverSetup.cardHtml({ mediamesh: true })}</div></div>` : ''}`;
   }
 
   // === Relay Airtime Share — dumbbell chart (#1359) ===

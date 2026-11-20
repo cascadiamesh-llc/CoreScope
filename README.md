@@ -196,9 +196,11 @@ Observer → USB →           │  Mosquitto ──→ Go Ingestor ──→ SQ
 ## MQTT Setup
 
 1. **Flash an observer node** with `MESH_PACKET_LOGGING=1` build flag
-2. **Connect via USB** to a host running [meshcoretomqtt](https://github.com/Cisien/meshcoretomqtt)
+2. **Connect via USB** to a host running [meshcoretomqtt](https://github.com/Cisien/meshcoretomqtt), or for MediaMesh (radio2) the CascadiaMesh version, [jade-on-mesh/meshcoretomqtt](https://github.com/jade-on-mesh/meshcoretomqtt/tree/radio2-profile)
 3. **Configure meshcoretomqtt** with your IATA region code and MQTT broker address
 4. **Packets appear** on topic `meshcore/{IATA}/{PUBKEY}/packets`
+
+Connecting an observer to the CascadiaMesh analyzer, and switching an existing MCtoMQTT to the MediaMesh version in one command: [docs/observers.md](docs/observers.md). The analyzer's Observers page shows the same steps.
 
 To decode a single raw hex packet without storing it, use `POST /api/decode`.
 

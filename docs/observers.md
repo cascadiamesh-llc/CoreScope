@@ -1,8 +1,14 @@
 # Connecting Your Observer to the CascadiaMesh Analyzer
 
 The CascadiaMesh analyzer ([analyzer.cascadiamesh.org](https://analyzer.cascadiamesh.org)) shows
-the main mesh and **MediaMesh**, the second, faster channel that carries photos and voice. A test
-copy runs at [mediamesh-test.cascadiamesh.org](https://mediamesh-test.cascadiamesh.org).
+the main mesh and **MediaMesh**, the second, faster channel that carries photos and voice.
+
+**Already running MCtoMQTT?** One command switches it to the CascadiaMesh version, keeping your
+config and brokers ([details](#switching-an-existing-install)):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jade-on-mesh/meshcoretomqtt/radio2-profile/scripts/switch-to-cascadiamesh.sh | sudo bash
+```
 
 Any observer can send the main mesh. To also show MediaMesh traffic, and to mark your repeater as a
 MediaMesh repeater on the map, the observer has to be a **Keymind Cascade repeater with MediaMesh
@@ -94,9 +100,12 @@ commands above.
 
 ## Option B: MCtoMQTT
 
-MediaMesh needs the **CascadiaMesh version of MCtoMQTT**. It's the regular
-[meshcoretomqtt](https://github.com/Cisien/meshcoretomqtt) plus MediaMesh support. On a repeater
-without MediaMesh it behaves exactly like the regular one.
+MediaMesh needs the **CascadiaMesh version of MCtoMQTT**:
+[jade-on-mesh/meshcoretomqtt](https://github.com/jade-on-mesh/meshcoretomqtt/tree/radio2-profile),
+the regular [meshcoretomqtt](https://github.com/Cisien/meshcoretomqtt) plus MediaMesh support, kept
+up to date with it. On a repeater without MediaMesh it behaves exactly like the regular one. (The
+MediaMesh support was offered to the regular MCtoMQTT, which will take it once it's in the official
+MeshCore firmware; until then it lives in this version.)
 
 ### Repeater settings
 
@@ -117,37 +126,33 @@ set usb.logging.always on
 
 Both settings are saved and survive reboots.
 
+### Switching an existing install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jade-on-mesh/meshcoretomqtt/radio2-profile/scripts/switch-to-cascadiamesh.sh | sudo bash
+```
+
+It points your install's updates at the CascadiaMesh version (the `[update]` section of
+`/etc/mctomqtt/config.d/99-user.toml`), so every later update stays on it, adds the CascadiaMesh
+broker unless you already send to it, and updates. Your other brokers, region and serial settings
+stay as they are. To leave the broker out, run it with `| sudo bash -s -- --no-broker`.
+
+Going back: set `repo` and `branch` under `[update]` to `Cisien/meshcoretomqtt` and `main`, then
+update as usual.
+
 ### New install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/cascadiamesh-llc/meshcoretomqtt/mediamesh/install.sh | \
-  sudo bash -s -- --repo cascadiamesh-llc/meshcoretomqtt --branch mediamesh
+curl -fsSL https://raw.githubusercontent.com/jade-on-mesh/meshcoretomqtt/radio2-profile/install.sh | sudo bash
 ```
 
-The installer walks you through brokers. Add the CascadiaMesh broker there, or afterwards as shown
-[below](#add-the-cascadiamesh-broker). Future updates come from the CascadiaMesh version
-automatically.
+The installer walks you through brokers: pick **cascadiamesh** among the presets. Future updates
+come from the CascadiaMesh version automatically.
 
-### Switching an existing install
+### Add the CascadiaMesh broker by hand
 
-1. Open your user config file, `/etc/mctomqtt/config.d/99-user.toml` (older installs:
-   `00-user.toml`), and point updates at the CascadiaMesh version. If the file already has an
-   `[update]` section, **change those two lines**. Don't add a second `[update]`, or the config won't load.
-   ```toml
-   [update]
-   repo = "cascadiamesh-llc/meshcoretomqtt"
-   branch = "mediamesh"
-   ```
-2. Update:
-   ```bash
-   curl -fsSL https://raw.githubusercontent.com/cascadiamesh-llc/meshcoretomqtt/mediamesh/scripts/update.sh | sudo bash
-   ```
-
-From now on, the normal update command keeps you on the CascadiaMesh version.
-
-### Add the CascadiaMesh broker
-
-In the same user config file, add a `[[broker]]` block. Don't edit `/etc/mctomqtt/config.toml`
+The switch and the installer's preset do this for you. By hand: in the user config file, add a
+`[[broker]]` block. Don't edit `/etc/mctomqtt/config.toml`
 directly, because updates overwrite it.
 
 ```toml
