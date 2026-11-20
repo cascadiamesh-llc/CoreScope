@@ -101,7 +101,7 @@ test('#mediamesh: the intro links it to a QR code that adds the channel', () => 
   const secret = /MM_JOIN_SECRET = '([0-9a-f]{32})'/.exec(an)[1];
   const want = require('crypto').createHash('sha256').update('#mediamesh').digest('hex').slice(0, 32);
   assert.strictEqual(secret, want, 'a hashtag channel: the key is SHA-256 of its name');
-  assert.ok(an.includes('Come test with us on the <a href="${esc(MM_JOIN_URL)}" class="mm-join-link" data-mm-join'));
+  assert.ok(an.includes(`Come test with us on the <a href="meshcore://channel/add?name=%23mediamesh&amp;secret=${want}" class="mm-join-link" data-mm-join`), 'the link is the QR code\'s URL');
   assert.ok(an.includes('<strong>#mediamesh</strong></a> channel.'));
   assert.ok(an.includes("window.ChannelQR.generate(MM_JOIN_NAME, MM_JOIN_SECRET") && an.includes('initMediaMeshJoin(el);'));
   require(path.join(__dirname, '../../public/channel-qr.js'));
