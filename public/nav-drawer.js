@@ -62,6 +62,7 @@
     { route: 'tools',     hash: '#/tools',     label: 'Tools',     ph: 'wrench' },
     { route: 'observers', hash: '#/observers', label: 'Observers', ph: 'eye' },
     { route: 'analytics', hash: '#/analytics', label: 'Analytics', ph: 'chart-bar' },
+    { route: 'mediamesh', hash: '#/analytics?tab=mediamesh', label: 'MediaMesh', ph: 'broadcast' },
     { route: 'scope-audit', hash: '#/scope-audit', label: 'Scope Audit', ph: 'clipboard-text' },
     { route: 'perf',      hash: '#/perf',      label: 'Perf',      ph: 'lightning' },
     { route: 'audio-lab', hash: '#/audio-lab', label: 'Audio Lab', ph: 'music-note' },
