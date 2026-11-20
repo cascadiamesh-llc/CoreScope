@@ -6506,3 +6506,11 @@ html.mm-embed--sky .mm-embed-open:hover { background: var(--mm-sky-ink); color: 
 
 /* the Mapped by people key: a hexagon */
 .mm-cov-sw--hex { clip-path: polygon(25% 5%, 75% 5%, 100% 50%, 75% 95%, 25% 95%, 0 50%); border-radius: 0; }
+
+/* #mediamesh in the MediaMesh tab's intro: a QR code that adds the channel */
+.mm-join-link { color: var(--mediamesh-text-color, var(--accent)); text-decoration: underline; text-underline-offset: 2px; }
+.mm-join-qr { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; margin: 0 0 14px; padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--card-bg); color: var(--text); }
+.mm-join-qr[hidden] { display: none; }
+.mm-join-qr-img { background: #ffffff; padding: 6px; border-radius: 6px; line-height: 0; }
+.mm-join-qr-text { flex: 1 1 240px; min-width: 0; }
+.mm-join-qr-text p { margin: 6px 0; }

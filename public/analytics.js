@@ -621,6 +621,7 @@
     el.innerHTML = renderMediaMeshTabHtml(mm, twVal);
     el._mmData = mm;
     initMediaMeshTableSort(el);
+    initMediaMeshJoin(el);
     initMediaMeshCoverage(el, Array.isArray(mm.repeaters) ? mm.repeaters : [], Array.isArray(mm.links) ? mm.links : [],
       Array.isArray(mm.backbone) ? mm.backbone : []);
     showMediaMeshMilestone(el, mediaMeshMilestone(mm, null, Date.now()));
@@ -652,6 +653,32 @@
       el.querySelector('#mmStatMapped').textContent = t.value;
       el.querySelector('#mmStatMappedDetail').textContent = t.detail;
       card.hidden = false;
+    });
+  }
+
+  // #mediamesh: a public hashtag channel, its key SHA-256("#mediamesh")[:16]
+  // as every hashtag channel's. The link opens a QR code that adds it on a
+  // MeshCore device (channel-qr.js's meshcore://channel/add URL).
+  const MM_JOIN_NAME = '#mediamesh';
+  const MM_JOIN_SECRET = 'b9ec7b4d14ca1f9b4b4bc4a5266e1512';
+  const MM_JOIN_URL = 'meshcore://channel/add?name=' + encodeURIComponent(MM_JOIN_NAME) + '&secret=' + MM_JOIN_SECRET;
+  function initMediaMeshJoin(el) {
+    const link = el.querySelector('[data-mm-join]');
+    const box = el.querySelector('#mmJoinQr');
+    if (!link || !box) return;
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      const open = box.hidden;
+      box.hidden = !open;
+      link.setAttribute('aria-expanded', String(open));
+      if (!open || box.dataset.drawn) return;
+      box.dataset.drawn = '1';
+      box.innerHTML = `<div class="mm-join-qr-img"></div><div class="mm-join-qr-text"><strong>Add #mediamesh</strong>
+        <p>Scan with your MeshCore app's channel scanner (MeshCore Open TAK: Add channel › Join a Private Channel › Scan QR code). On a phone, <a href="${esc(MM_JOIN_URL)}">open it in the app</a> instead.</p>
+        <p class="text-muted">Or add a hashtag channel named <code>#mediamesh</code>: its key comes from the name.</p>
+        <button type="button" class="tab-btn mm-join-close">Close</button></div>`;
+      if (window.ChannelQR) window.ChannelQR.generate(MM_JOIN_NAME, MM_JOIN_SECRET, box.querySelector('.mm-join-qr-img'), { qrOnly: true });
+      box.querySelector('.mm-join-close').addEventListener('click', () => { box.hidden = true; link.setAttribute('aria-expanded', 'false'); link.focus(); });
     });
   }
 
@@ -929,7 +956,8 @@
     const obs = Array.isArray(mm.observers) ? mm.observers : [];
     const hours = Array.isArray(mm.per_hour) ? mm.per_hour : [];
     const n = Number(mm.mediamesh_transmissions || 0);
-    const intro = '<div id="mmMilestone"></div><p class="text-muted" style="margin:0 0 12px">MediaMesh is the second LoRa profile (radio2) that Keymind Cascade repeaters, Wadamesh TAK standalones and MeshCore Open TAK use for photos, video and voice. A transmission counts here when an observer heard it on radio2. Come test with us on the <strong>#mediamesh</strong> channel.</p>';
+    const intro = `<div id="mmMilestone"></div><p class="text-muted" style="margin:0 0 12px">MediaMesh is the second LoRa profile (radio2) that Keymind Cascade repeaters, Wadamesh TAK standalones and MeshCore Open TAK use for photos, video and voice. A transmission counts here when an observer heard it on radio2. Come test with us on the <a href="${esc(MM_JOIN_URL)}" class="mm-join-link" data-mm-join aria-expanded="false" aria-controls="mmJoinQr" title="A QR code that adds #mediamesh on a MeshCore device"><strong>#mediamesh</strong></a> channel.</p>
+      <div class="mm-join-qr" id="mmJoinQr" hidden></div>`;
     if (n === 0 && reps.length === 0 && unknown.length === 0) {
       return intro + '<div class="text-center text-muted" style="padding:40px">No MediaMesh traffic or repeaters in this period. Observers need firmware that tags radio2.</div>';
     }
