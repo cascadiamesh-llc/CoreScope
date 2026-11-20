@@ -148,13 +148,14 @@ window.preserveCompareSelection = function preserveCompareSelection(prevIds, tbo
   let _obsSortCtl = null; // #1641 r1 finding #6: tracked TableSort controller for destroy-before-reinit
   let _mqttPanelTeardown = null; // #1043: teardown fn for the MQTT status panel timer
 
-  // "Add your observer" (observer-setup.js): open until the viewer closes it,
-  // remembered in this browser.
+  // "Add your observer" (observer-setup.js): on a wide screen open until the
+  // viewer closes it (remembered in this browser); on a phone closed, so the
+  // list stays on screen.
   const OBS_SETUP_CLOSED_KEY = 'obsSetupClosed';
   function mountObserverSetup(host) {
     if (!host || !window.ObserverSetup) return;
-    let closed = false;
-    try { closed = localStorage.getItem(OBS_SETUP_CLOSED_KEY) === '1'; } catch (_) { /* no storage */ }
+    let closed = !(window.matchMedia && window.matchMedia('(min-width: 768px)').matches);
+    try { if (localStorage.getItem(OBS_SETUP_CLOSED_KEY) === '1') closed = true; } catch (_) { /* no storage */ }
     host.innerHTML = window.ObserverSetup.cardHtml({ open: !closed });
     window.ObserverSetup.bind(host);
     const d = host.querySelector('[data-obs-setup]');

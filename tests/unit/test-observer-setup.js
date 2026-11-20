@@ -47,6 +47,7 @@ test('wiring: loaded before the pages, on the Observers page, the MediaMesh tab 
   const obs = pub('observers.js');
   assert.ok(obs.includes('<div id="obsSetup"></div>') && obs.includes("mountObserverSetup(document.getElementById('obsSetup'))"));
   assert.ok(obs.includes("localStorage.getItem(OBS_SETUP_CLOSED_KEY) === '1'"), 'remembers being closed');
+  assert.ok(obs.includes("matchMedia('(min-width: 768px)')"), 'closed on a phone, so the list stays on screen');
   assert.ok(pub('analytics.js').includes('window.ObserverSetup.cardHtml({ mediamesh: true })'));
   assert.ok(pub('observer-detail.js').includes('window.ObserverSetup.hintHtml(obs)'));
   assert.ok(/\.obs-setup-title \{[^}]*color: var\(--text\)/.test(pub('style.css')), 'text follows the theme');
