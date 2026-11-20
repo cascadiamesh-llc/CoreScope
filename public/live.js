@@ -1898,6 +1898,11 @@
     AreaFilter.init(document.getElementById('liveAreaFilter'));
     AreaFilter.onChange(function () { loadNodes(); });
     await loadNodes();
+    // #/live?nightsky=1 opens the night sky straight away; with &embed=sky
+    // (an iframe on another site, mediamesh-embed.js) without its controls.
+    if (getHashParams().get('nightsky') === '1' && !(window.LiveNightSky && window.LiveNightSky.isOpen())) {
+      openNightSky({ kiosk: !!(window.MediaMeshEmbed && window.MediaMeshEmbed.kind()) });
+    }
     // Build the heat layer only when the user wants it. It used to be built
     // unconditionally and torn down ~270 lines later, which was invisible
     // (no await in between, so no frame composited) but meant that any throw
@@ -2236,7 +2241,7 @@
       }
     });
     const nightSkyBtn = document.getElementById('liveNightSkyBtn');
-    if (nightSkyBtn) nightSkyBtn.addEventListener('click', openNightSky);
+    if (nightSkyBtn) nightSkyBtn.addEventListener('click', () => openNightSky());
     const feedHideBtn = document.getElementById('feedHideBtn');
     const feedShowBtn = document.getElementById('feedShowBtn');
     if (localStorage.getItem('live-feed-hidden') === 'true') {
@@ -4972,14 +4977,17 @@
     }
   }
 
-  function openNightSky() {
+  function openNightSky(how) {
     if (!window.LiveNightSky) return;
+    const kiosk = !!(how && how.kiosk === true);
     const nodes = () => Object.values(nodeData).filter((n) => Number.isFinite(n.lat) && Number.isFinite(n.lon) && !(n.lat === 0 && n.lon === 0))
       .map((n) => ({ lat: n.lat, lon: n.lon, name: n.name, star: !!(window.MediaMesh && window.MediaMesh.info(n)) }));
     window.LiveNightSky.open({
       nodes,
       focus: () => { const s = nodes().filter((n) => n.star); return s.length >= 2 ? s : nodes(); },
       onReplay: replayNightSky,
+      kiosk,
+      fullscreen: !kiosk,
       // what today already holds, so "first video of the day" is true
       seed: async () => { const r = await nightSkyDay(); return r ? r.events : null; },
     });

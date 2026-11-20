@@ -6484,3 +6484,17 @@ tr.pk-mm-row > td:first-child { box-shadow: inset 3px 0 0 var(--mediamesh-path-c
 .mm-obs-map { height: 300px; border-radius: 8px; }
 .mm-obs-note { font-size: 0.8em; margin: 6px 0 0; color: var(--text-muted); }
 .mm-obs-repeater { margin-top: 14px; }
+
+/* The analyzer in an iframe on another site (mediamesh-embed.js) */
+html.mm-embed .top-nav, html.mm-embed .skip-link, html.mm-embed--coverage .analytics-header { display: none !important; }
+html.mm-embed--coverage .analytics-page { padding-top: 8px; }
+html.mm-embed--coverage #mmCoverageCard { margin: 0; }
+.mm-embed-open { position: fixed; right: 12px; bottom: 12px; z-index: 10001; font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--card-bg); color: var(--text); text-decoration: none; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25); }
+.mm-embed-open:hover { color: var(--accent); }
+/* the night sky is always navy, whatever the theme: its own white and blue */
+html.mm-embed--sky { --mm-sky-ink: #ffffff; --mm-sky-blue: #184690; }
+html.mm-embed--sky .mm-embed-open { top: 14px; bottom: auto; right: 50%; transform: translateX(50%); border-color: var(--mm-sky-ink); background: rgba(16, 29, 56, 0.85); color: var(--mm-sky-ink); box-shadow: none; }
+html.mm-embed--sky .mm-embed-open:hover { background: var(--mm-sky-ink); color: var(--mm-sky-blue); }
+.mm-embed-snippets summary { cursor: pointer; font-weight: 600; }
+.mm-embed-snippet { margin-top: 10px; }
+.mm-embed-snippet textarea { display: block; width: 100%; margin-top: 4px; font-family: var(--mono, monospace); font-size: 12px; background: var(--input-bg, var(--card-bg)); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px; resize: vertical; }

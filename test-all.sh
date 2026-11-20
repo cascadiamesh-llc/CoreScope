@@ -23,6 +23,7 @@ node tests/unit/test-analytics-mediamesh.js
 node tests/unit/test-mediamesh-coverage.js
 node tests/unit/test-mediamesh-node.js
 node tests/unit/test-mediamesh-observer.js
+node tests/unit/test-mediamesh-embed.js
 node tests/unit/test-mediamesh-cliplog.js
 node tests/unit/test-live-nightsky.js
 node tests/unit/test-mediamesh-3d.js

@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MediaMesh live</title>
+<!-- A small live MediaMesh badge for other websites (docs/embeds.md):
+     <iframe src="https://ANALYZER/embed/badge.html" width="360" height="132" style="border:0"></iframe>
+     ?theme=light for a light page. Refreshes every minute. -->
+<link rel="stylesheet" href="badge.css">
+<script>
+  (function () {
+    var t = new URLSearchParams(location.search).get('theme');
+    if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+  })();
+</script>
+</head>
+<body>
+<a class="badge" id="badge" href="/#/analytics?tab=mediamesh" target="_blank" rel="noopener" aria-label="MediaMesh live: open the analyzer">
+  <div class="top"><span class="brand">MEDIAMESH</span><span class="live" id="live"><span class="dot"></span><span id="liveText">…</span></span></div>
+  <div class="stats">
+    <div><div class="n" id="reps">–</div><div class="k">Repeaters</div></div>
+    <div><div class="n" id="pkts">–</div><div class="k">Packets, 7 days</div></div>
+    <div><div class="n" id="obs">–</div><div class="k">Listening</div></div>
+  </div>
+  <div class="foot"><svg id="spark" viewBox="0 0 200 22" preserveAspectRatio="none" role="img" aria-label="MediaMesh packets per hour, last 24 hours"></svg><span class="when" id="when"></span></div>
+</a>
+<script>
+'use strict';
+(function () {
+  var QUIET_MS = 15 * 60 * 1000;
+  function ago(ms) {
+    if (!isFinite(ms)) return 'nothing heard yet';
+    var s = Math.max(0, Math.round(ms / 1000));
+    if (s < 90) return 'heard just now';
+    if (s < 5400) return 'heard ' + Math.round(s / 60) + ' min ago';
+    if (s < 172800) return 'heard ' + Math.round(s / 3600) + ' h ago';
+    return 'heard ' + Math.round(s / 86400) + ' days ago';
+  }
+  function spark(hours, now) {
+    // the last 24 hours, one bar an hour (an hour with none is a gap)
+    var by = {};
+    (hours || []).forEach(function (h) { by[String(h.hour).slice(0, 13)] = h.count || 0; });
+    var vals = [];
+    for (var i = 23; i >= 0; i--) vals.push(by[new Date(now - i * 3600000).toISOString().slice(0, 13)] || 0);
+    var max = Math.max.apply(null, vals.concat([1]));
+    return vals.map(function (v, i) {
+      var h = v ? Math.max(2, Math.round(v / max * 20)) : 1;
+      return '<rect x="' + (i * 200 / 24 + 1).toFixed(1) + '" y="' + (22 - h) + '" width="' + (200 / 24 - 2).toFixed(1) + '" height="' + h + '" rx="1" fill="var(--badge-line)" opacity="' + (v ? 0.9 : 0.25) + '"></rect>';
+    }).join('');
+  }
+  function show(d) {
+    var now = Date.now();
+    var reps = (d.repeaters || []).length;
+    var obs = (d.observers || []).filter(function (o) { return o.runs_mediamesh; }).length;
+    var last = (d.observers || []).reduce(function (m, o) { var t = Date.parse(o.last_heard); return isFinite(t) && t > m ? t : m; }, -Infinity);
+    document.getElementById('reps').textContent = reps.toLocaleString();
+    document.getElementById('pkts').textContent = Number(d.mediamesh_transmissions || 0).toLocaleString();
+    document.getElementById('obs').textContent = obs.toLocaleString();
+    var on = now - last < QUIET_MS;
+    document.getElementById('live').classList.toggle('on', on);
+    document.getElementById('liveText').textContent = on ? 'Live' : 'Quiet';
+    document.getElementById('when').textContent = ago(now - last);
+    document.getElementById('spark').innerHTML = spark(d.per_hour, now);
+  }
+  function load() {
+    fetch('/api/analytics/mediamesh?window=7d', { headers: { Accept: 'application/json' } })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) { if (d) show(d); })
+      .catch(function () { document.getElementById('liveText').textContent = 'Offline'; });
+  }
+  load();
+  setInterval(load, 60000);
+})();
+</script>
+</body>
+</html>

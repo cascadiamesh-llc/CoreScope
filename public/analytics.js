@@ -625,6 +625,9 @@
     showMediaMeshMilestone(el, mediaMeshMilestone(mm, null, Date.now()));
     if (window.MediaMeshInsights) window.MediaMeshInsights.init(el, mm);
     if (window.MediaMeshRecap) window.MediaMeshRecap.init(el, mm);
+    // An iframe of the coverage map alone (mediamesh-embed.js, embed=coverage)
+    if (window.MediaMeshEmbed && window.MediaMeshEmbed.kind() === 'coverage') window.MediaMeshEmbed.coverageOnly(el);
+    else if (window.MediaMeshEmbed) el.insertAdjacentHTML('beforeend', window.MediaMeshEmbed.snippetsHtml(location.origin + location.pathname));
   }
 
   let _mmCoverageDestroy = null;

@@ -1,0 +1,27 @@
+/* The MediaMesh live badge (badge.html; docs/embeds.md). */
+@font-face { font-family: 'Orbitron'; src: url('/fonts/orbitron-latin-400.woff2') format('woff2'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Orbitron'; src: url('/fonts/orbitron-latin-600.woff2') format('woff2'); font-weight: 600; font-display: swap; }
+@font-face { font-family: 'Exo 2'; src: url('/fonts/exo2-latin-400.woff2') format('woff2'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Exo 2'; src: url('/fonts/exo2-latin-600.woff2') format('woff2'); font-weight: 600; font-display: swap; }
+/* The CascadiaMesh website's day colours: navy, header blue, white, light green. */
+:root { --badge-bg: #101d38; --badge-edge: #184690; --badge-text: #ffffff; --badge-muted: #9fb4d8; --badge-green: #7cd991; --badge-line: #6096f0; --badge-quiet: #5b6b8c; }
+:root[data-theme="light"] { --badge-bg: #ffffff; --badge-edge: #c9d6ee; --badge-text: #101d38; --badge-muted: #4a5d80; --badge-green: #2f8a4a; --badge-line: #184690; --badge-quiet: #9aa6bd; }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: transparent; }
+a.badge { display: flex; flex-direction: column; gap: 8px; height: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--badge-edge);
+  background: var(--badge-bg); color: var(--badge-text); text-decoration: none; font-family: 'Exo 2', system-ui, sans-serif; overflow: hidden; }
+a.badge:focus-visible { outline: 2px solid var(--badge-green); outline-offset: -2px; }
+.top { display: flex; align-items: center; gap: 8px; }
+.brand { font-family: Orbitron, sans-serif; font-weight: 600; letter-spacing: 0.12em; font-size: 13px; }
+.live { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 11px; letter-spacing: 0.16em; color: var(--badge-muted); text-transform: uppercase; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--badge-quiet); }
+.live.on { color: var(--badge-green); }
+.live.on .dot { background: var(--badge-green); box-shadow: 0 0 0 0 var(--badge-green); animation: pulse 2s infinite; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(124, 217, 145, 0.7); } 70% { box-shadow: 0 0 0 7px rgba(124, 217, 145, 0); } 100% { box-shadow: 0 0 0 0 rgba(124, 217, 145, 0); } }
+@media (prefers-reduced-motion: reduce) { .live.on .dot { animation: none; } }
+.stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.n { font-family: Orbitron, sans-serif; font-size: 20px; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.k { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--badge-muted); margin-top: 2px; }
+.foot { display: flex; align-items: flex-end; gap: 10px; margin-top: auto; }
+svg { flex: 1; min-width: 0; height: 22px; }
+.when { font-size: 11px; color: var(--badge-muted); white-space: nowrap; }
