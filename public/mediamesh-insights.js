@@ -31,6 +31,17 @@
     return (KIND_LABEL[c.kind] || 'Clip') + (c.kind !== 'photo' && c.seconds ? `, ${c.seconds} s` : '');
   }
 
+  /** When a clip was sent, in the viewer's time: "21 Nov, 12:05". The year
+   * only when it isn't this one. */
+  function whenHtml(at, now) {
+    const t = Date.parse(at);
+    if (!Number.isFinite(t)) return '<span class="text-muted">—</span>';
+    const d = new Date(t), n = new Date(now == null ? Date.now() : now);
+    const opts = { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' };
+    if (d.getFullYear() !== n.getFullYear()) opts.year = 'numeric';
+    return `<time datetime="${esc(d.toISOString())}" title="${esc(d.toLocaleString())}">${esc(d.toLocaleString(undefined, opts))}</time>`;
+  }
+
   /** "First Hill → … → Rainier View": the first repeater, then who heard it. */
   function routeLabel(c, nameOf) {
     const path = c.path || [];
@@ -144,11 +155,11 @@
     const maxN = Math.max(1, ...s.byHops.map((b) => b.n));
     const bars = s.byHops.filter((b) => b.n).map((b) => `<div class="mm-ins-bar-row"><span>${b.hops}${b.hops === 5 ? '+' : ''} hop${b.hops === 1 ? '' : 's'}</span>
       <span class="mm-ins-bar" role="img" aria-label="${b.n} clip${b.n === 1 ? '' : 's'}"><i style="width:${Math.round(b.n / maxN * 100)}%"></i></span><span class="mm-ins-num">${b.n}</span></div>`).join('');
-    const recent = clips.filter((c) => c.outcome !== 'none').slice(0, 8).map((c) => `<tr><td><button type="button" class="mm-fr-open" data-mm-clip="${esc(c.sid)}" title="Open its flight recorder: every piece, when and by which path">${esc(clipLabel(c))}</button></td><td>${esc(routeLabel(c, nameOf))}</td><td class="mm-ins-num">${c.hops}</td>
+    const recent = clips.filter((c) => c.outcome !== 'none').slice(0, 8).map((c) => `<tr><td class="mm-ins-when">${whenHtml(c.at)}</td><td><button type="button" class="mm-fr-open" data-mm-clip="${esc(c.sid)}" title="Open its flight recorder: every piece, when and by which path">${esc(clipLabel(c))}</button></td><td>${esc(routeLabel(c, nameOf))}</td><td class="mm-ins-num">${c.hops}</td>
       <td>${piecesHtml(c)}</td><td class="mm-ins-outcome mm-ins-outcome--${esc(c.outcome)}">${esc(outcomeText(c))}</td><td class="${arrivalClass(c)}">${arrivalText(c) ? esc(arrivalText(c)) : '<span class="text-muted">—</span>'}</td></tr>`).join('');
     return head + tiles + `<div class="mm-ins-split">
       <div class="mm-ins-col"><h4>Clips heard, by hops</h4>${bars}</div>
-      <div class="mm-ins-col mm-ins-wide"><h4>Recent clips</h4><div class="mm-ins-scroll"><table class="analytics-table mm-ins-table"><thead><tr><th scope="col">Clip</th><th scope="col">Route</th><th scope="col" class="mm-ins-num">Hops</th><th scope="col">Pieces heard</th><th scope="col">Far end heard</th><th scope="col">Recipient</th></tr></thead><tbody>${recent}</tbody></table></div>
+      <div class="mm-ins-col mm-ins-wide"><h4>Recent clips</h4><div class="mm-ins-scroll"><table class="analytics-table mm-ins-table"><thead><tr><th scope="col">Sent</th><th scope="col">Clip</th><th scope="col">Route</th><th scope="col" class="mm-ins-num">Hops</th><th scope="col">Pieces heard</th><th scope="col">Far end heard</th><th scope="col">Recipient</th></tr></thead><tbody>${recent}</tbody></table></div>
       <p class="text-muted mm-ins-key">Pick a clip for its flight recorder. <span class="mm-pieces"><span></span></span> heard · <span class="mm-pieces"><span class="is-rebuilt"></span></span> rebuilt from parity · <span class="mm-pieces"><span class="is-missing"></span></span> not heard by an observer</p></div></div>`;
   }
 
@@ -198,11 +209,11 @@
     </div>`;
     const bars = s.byHops.filter((b) => b.n).map((b) => `<div class="mm-ins-bar-row"><span>${b.hops}${b.hops === 5 ? '+' : ''} hop${b.hops === 1 ? '' : 's'}</span>
       <span class="mm-ins-bar"><i style="width:${Math.round(((b.kbps || 0) / maxK) * 100)}%"></i></span><span class="mm-ins-num">${fmtK(b.kbps)}</span><span class="text-muted mm-ins-n">${b.n}</span></div>`).join('');
-    const rows = s.rows.slice(0, 8).map((c) => `<tr><td>${esc(routeLabel(c, nameOf))}</td><td class="mm-ins-num">${c.hops}</td><td>${esc(clipLabel(c))}, ${(c.bytes / 1000).toFixed(1)} kB</td>
+    const rows = s.rows.slice(0, 8).map((c) => `<tr><td class="mm-ins-when">${whenHtml(c.at)}</td><td>${esc(routeLabel(c, nameOf))}</td><td class="mm-ins-num">${c.hops}</td><td>${esc(clipLabel(c))}, ${(c.bytes / 1000).toFixed(1)} kB</td>
       <td class="mm-ins-num">${Math.round(c.durationS)} s</td><td class="mm-ins-num"><strong>${fmtK(c.kbps)}</strong></td></tr>`).join('');
     return head + tiles + `<div class="mm-ins-split">
       <div class="mm-ins-col"><h4>kbit/s by hops (median)</h4>${bars}</div>
-      <div class="mm-ins-col mm-ins-wide"><h4>Recent clips</h4><div class="mm-ins-scroll"><table class="analytics-table mm-ins-table"><thead><tr><th scope="col">Route</th><th scope="col" class="mm-ins-num">Hops</th><th scope="col">Clip</th><th scope="col" class="mm-ins-num">Time</th><th scope="col" class="mm-ins-num">kbit/s</th></tr></thead><tbody>${rows}</tbody></table></div></div></div>`;
+      <div class="mm-ins-col mm-ins-wide"><h4>Recent clips</h4><div class="mm-ins-scroll"><table class="analytics-table mm-ins-table"><thead><tr><th scope="col">Sent</th><th scope="col">Route</th><th scope="col" class="mm-ins-num">Hops</th><th scope="col">Clip</th><th scope="col" class="mm-ins-num">Took</th><th scope="col" class="mm-ins-num">kbit/s</th></tr></thead><tbody>${rows}</tbody></table></div></div></div>`;
   }
 
   // ---- When it's busy -------------------------------------------------------
@@ -632,7 +643,7 @@
   }
 
   root.MediaMeshInsights = {
-    init, destroy, cardsHtml, namer, routeLabel, clipLabel, deliverySummary, deliveryHtml, arrivalSummary, arrivalText, speedRows, speedSummary, speedHtml,
+    init, destroy, cardsHtml, namer, routeLabel, clipLabel, whenHtml, deliverySummary, deliveryHtml, arrivalSummary, arrivalText, speedRows, speedSummary, speedHtml,
     busyGrid, busyHtml, backboneGraph, components, resilienceScore, weakSpots, weakHtml, median, mapPng,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

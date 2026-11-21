@@ -449,6 +449,9 @@ function cellAt(cov, lat, lon) {
     assert.ok(Math.abs(M.unionKm2(cov) - 30 * a) < 1e-9);
     const per = M.repAreasKm2(cov);
     assert.ok(Math.abs(per[0] - 20 * a) < 1e-9 && Math.abs(per[1] - 20 * a) < 1e-9 && per[2] === 0, JSON.stringify(per));
+    // only it reaches: the shared row counts for neither
+    const only = M.repOnlyKm2(cov);
+    assert.ok(Math.abs(only[0] - 10 * a) < 1e-9 && Math.abs(only[1] - 10 * a) < 1e-9 && only[2] === 0, JSON.stringify(only));
   });
 
   await test('planned repeater: new against already-covered area, and the repeaters it links to', async () => {

@@ -1374,6 +1374,31 @@
     return memo.each.slice();
   }
 
+  /** km² on land that only this repeater reaches (no other repeater does),
+   * by index into cov.reps. What a repeater adds that the rest don't: three
+   * repeaters on neighbouring rooftops each reach a lot, but share almost all
+   * of it. */
+  function repOnlyKm2(cov) {
+    if (!cov || !cov.rasters) return [];
+    unionKm2(cov);
+    const memo = areaMemo.get(cov);
+    if (memo.only) return memo.only.slice();
+    const a = cellAreaKm2(cov), water = cov.water;
+    const hits = new Uint8Array(cov.width * cov.height);
+    const each = (fn) => cov.rasters.forEach((r, ri) => {
+      if (!r || !r.data) return;
+      for (let y = 0; y < r.h; y++) {
+        let i = (r.row0 + y) * cov.width + r.col0, k = y * r.w;
+        for (let x = 0; x < r.w; x++, i++, k++) if (r.data[k] >= 0 && !(water && water[i])) fn(i, ri);
+      }
+    });
+    each((i) => { if (hits[i] < 2) hits[i]++; });
+    const n = cov.rasters.map(() => 0);
+    each((i, ri) => { if (hits[i] === 1) n[ri]++; });
+    memo.only = n.map((c) => c * a);
+    return memo.only.slice();
+  }
+
 
   /**
    * What a planned repeater adds: { newKm2 (covered by it and by nothing
@@ -2398,12 +2423,12 @@
     // and by each repeater on its own (for the leaderboard).
     function reportStats() {
       if (!shown || !(opts && typeof opts.onStats === 'function')) return;
-      const areas = repAreasKm2(shown);
+      const areas = repAreasKm2(shown), only = repOnlyKm2(shown);
       try {
         opts.onStats({
           modeKey: shown.modeKey, areaKm2: unionKm2(shown),
           areaHistory: steps.length ? areaHistory(shown, firstSeen, steps) : [],
-          repAreas: shown.reps.map((r, i) => ({ rep: r, km2: areas[i] || 0 })),
+          repAreas: shown.reps.map((r, i) => ({ rep: r, km2: areas[i] || 0, onlyKm2: only[i] || 0 })),
           calibration: session.cal,
         });
       } catch (_) { /* the tab's business */ }
@@ -2671,7 +2696,7 @@
     fitCalibration, calibrationText, setCalibration, getCalibration, CAL,
     clutterLossDb, setField, getField, fieldDbFor, placeLossDb, fitField, fieldSolve, fieldText, fieldBand, adjustCov, FIELD_RGB, loadFieldPoints, fieldPoints, hexCorners, hexBand, session,
     backboneWeight, backboneTip, areaHistory, footprint, coverageImage, legendGradient,
-    growthSteps, presentAt, antennaHeight, coverageCanvas, canvasOverlay, whatIfBase, whatIfDefaults, whatIfJob, whatIfCoverage, whatIfCanvas, cellAreaKm2, coveredKm2, unionKm2, repAreasKm2, planGain, planLinks, planHtml, PLAN_RGB,
+    growthSteps, presentAt, antennaHeight, coverageCanvas, canvasOverlay, whatIfBase, whatIfDefaults, whatIfJob, whatIfCoverage, whatIfCanvas, cellAreaKm2, coveredKm2, unionKm2, repAreasKm2, repOnlyKm2, planGain, planLinks, planHtml, PLAN_RGB,
     repNotes, repArea, repGroups, repSummaryHtml, repPanelHtml, repAction, assumptionsHtml, linkRows, linksTableHtml, init,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

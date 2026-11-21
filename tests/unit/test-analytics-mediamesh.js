@@ -242,11 +242,15 @@ test('leaderboard: most relayed, longest links, newest, best placed from the map
   A.mediaMeshOnCoverageStats(fake, { modeKey: 'repeater', areaKm2: 999, repAreas: [] });
   assert.strictEqual(els['#mmStatArea'], undefined, 'the repeater view is ignored');
   A.mediaMeshOnCoverageStats(fake, { modeKey: 'ground', areaKm2: 412.4, calibration: { used: true, n: 12 },
-    repAreas: [{ rep: { public_key: 'aa', name: 'Small' }, km2: 3.24 }, { rep: { public_key: 'bb', name: 'Big' }, km2: 41 }, { rep: { name: 'None' }, km2: 0 }] });
+    repAreas: [{ rep: { public_key: 'aa', name: 'Small' }, km2: 3.24 }, { rep: { public_key: 'bb', name: 'Big' }, km2: 41 }, { rep: { name: 'None' }, km2: 0 },
+      { rep: { public_key: 'cc', name: 'Shared' }, km2: 60, onlyKm2: 0.4 }, { rep: { public_key: 'dd', name: 'Hilltop' }, km2: 50, onlyKm2: 44 }] });
   assert.strictEqual(els['#mmStatArea'].textContent, '412');
   assert.ok(els['#mmStatAreaDetail'].textContent.includes('checked against 12 real links'));
   const placed = els['#mmLeaderPlaced'].innerHTML;
   assert.ok(placed.indexOf('Big') < placed.indexOf('Small') && placed.includes('41 km²') && placed.includes('3.2 km²') && !placed.includes('None'), placed);
+  // ranked by the land only it reaches, not everything in reach
+  assert.ok(placed.indexOf('Hilltop') < placed.indexOf('Big') && placed.indexOf('Small') < placed.indexOf('Shared'), placed);
+  assert.ok(placed.includes('44 km²') && placed.includes('50 km² of land in reach'), placed);
 });
 
 test('milestone constants in the test match analytics.js', () => {

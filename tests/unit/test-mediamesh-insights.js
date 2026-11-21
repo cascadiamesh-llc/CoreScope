@@ -128,5 +128,16 @@ test('wiring and readable colours', () => {
   for (const r of css) assert.ok(!/(^|[;{\s])color:\s*#/i.test(r), 'a fixed text colour: ' + r.slice(0, 60));
 });
 
+test('recent clips: when each was sent, in the viewer\'s time', () => {
+  const now = Date.parse('2026-11-21T20:00:00Z');
+  const h = I.whenHtml('2026-11-21T19:05:00Z', now);
+  assert.ok(h.startsWith('<time datetime="2026-11-21T19:05:00.000Z"') && !h.includes('2026</time>'), h);
+  assert.ok(I.whenHtml('2025-03-01T10:00:00Z', now).includes('2025'), 'another year shows the year');
+  assert.ok(I.whenHtml('nope', now).includes('—'));
+  const html = I.deliveryHtml([clip({})], (k) => k, 7, []) + I.speedHtml([clip({})], (k) => k, 7, []);
+  assert.strictEqual((html.match(/<th scope="col">Sent<\/th>/g) || []).length, 2, 'both tables');
+  assert.ok(html.includes('>Took</th>'));
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

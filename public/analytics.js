@@ -852,7 +852,7 @@
       <h3>MediaMesh leaderboard</h3>
       <div class="mm-lb">
         <section><h4>Most media packets relayed <span class="text-muted">(7 days)</span></h4>${list(relayed)}</section>
-        <section><h4>Best placed <span class="text-muted">(km² it covers alone)</span></h4><div id="mmLeaderPlaced"><p class="text-muted mm-lb-empty">Waiting for the coverage map…</p></div></section>
+        <section><h4>Best placed <span class="text-muted">(km² of land only it reaches)</span></h4><div id="mmLeaderPlaced"><p class="text-muted mm-lb-empty">Waiting for the coverage map…</p></div></section>
         <section><h4>Longest links heard</h4>${list(longest)}</section>
         <section><h4>Newest on MediaMesh</h4>${list(newest)}</section>
       </div>
@@ -874,9 +874,12 @@
     if (detail && st.calibration && st.calibration.used) detail.textContent = `for people on the ground, checked against ${st.calibration.n} real links`;
     const placed = el.querySelector('#mmLeaderPlaced');
     if (placed) {
-      const top = (st.repAreas || []).filter((x) => x.km2 > 0).sort((a, b) => b.km2 - a.km2).slice(0, 5);
+      // Ranked by what each adds that no other repeater reaches: repeaters on
+      // neighbouring rooftops each reach a lot, but mostly the same streets.
+      const only = (x) => (x.onlyKm2 == null ? x.km2 : x.onlyKm2);
+      const top = (st.repAreas || []).filter((x) => only(x) > 0).sort((a, b) => only(b) - only(a)).slice(0, 5);
       placed.innerHTML = top.length
-        ? `<ol class="mm-lb-list">${top.map((x) => `<li><a href="#/nodes/${encodeURIComponent(x.rep.public_key || '')}">${esc(x.rep.name || String(x.rep.public_key || '').slice(0, 8))}</a> <span class="mm-lb-num">${mmKm(x.km2)} km²</span></li>`).join('')}</ol>`
+        ? `<ol class="mm-lb-list">${top.map((x) => `<li><a href="#/nodes/${encodeURIComponent(x.rep.public_key || '')}">${esc(x.rep.name || String(x.rep.public_key || '').slice(0, 8))}</a> <span class="mm-lb-num" title="${mmKm(x.km2)} km² of land in reach, ${mmKm(only(x))} km² of it reached by no other repeater">${mmKm(only(x))} km²</span></li>`).join('')}</ol>`
         : '<p class="text-muted mm-lb-empty">Nothing yet.</p>';
     }
   }
