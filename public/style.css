@@ -6568,8 +6568,10 @@ html.mm-embed--sky .mm-embed-open:hover { background: var(--mm-sky-ink); color: 
 .mm-mesh-label { font-size: 0.85em; color: var(--text-muted); margin-top: 2px; }
 .mm-mesh-best { margin: 12px 0; }
 .mm-mesh-best h4 { margin: 0 0 2px; }
-.mm-mesh-table td, .mm-mesh-table th { white-space: nowrap; }
-.mm-mesh-sort { background: none; border: 0; padding: 4px 0; font: inherit; font-weight: 600; color: var(--text-muted); cursor: pointer; min-height: 32px; }
+.mm-mesh-table { width: auto; min-width: min(100%, 640px); }
+.mm-mesh-table td, .mm-mesh-table th { white-space: nowrap; padding-left: 12px; padding-right: 12px; }
+.analytics-table.mm-mesh-table th.mm-ins-num { text-align: right; }
+.mm-mesh-sort { background: none; border: 0; padding: 4px 0; font: inherit; text-transform: inherit; color: inherit; cursor: pointer; min-height: 32px; }
 .mm-mesh-sort.is-on { color: var(--mediamesh-text-color, var(--text)); }
 .mm-mesh-row--weak td, .mm-mesh-row--weak a { color: var(--mm-mesh-weak-text, var(--text)); }
 .mm-mesh-row--none td { color: var(--text-muted); }
