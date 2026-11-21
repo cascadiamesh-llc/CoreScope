@@ -81,10 +81,54 @@
     return 'none of it';
   }
 
+  // ---- Did it arrive? (delivery receipts) -----------------------------------
+  // Receiving apps that share delivery receipts say, for each clip they got,
+  // whether it was whole: the clip's delivery is { recipients, whole, asked
+  // (whole after asking again for missing pieces), rebuilt (whole thanks to
+  // parity) }. Only the clip's session id and piece counts: never its content
+  // or who sent it.
+
+  /** Totals over every clip with a receipt, announced or sent privately. */
+  function arrivalSummary(clips, unannounced) {
+    const all = (clips || []).concat(unannounced || []).filter((c) => c.delivery && c.delivery.recipients > 0);
+    const sum = (k) => all.reduce((n, c) => n + (Number(c.delivery[k]) || 0), 0);
+    return { clips: all.length, recipients: sum('recipients'), whole: sum('whole'), asked: sum('asked'), rebuilt: sum('rebuilt') };
+  }
+
+  /** A clip's receipts, in a word or two. */
+  function arrivalText(c) {
+    const d = c && c.delivery;
+    if (!d || !(d.recipients > 0)) return '';
+    if (d.recipients === 1) {
+      if (!d.whole) return 'arrived in part';
+      return d.asked ? 'whole, after asking again' : d.rebuilt ? 'whole, with parity' : 'whole';
+    }
+    return d.whole === d.recipients ? `whole for all ${d.recipients}` : `whole for ${d.whole} of ${d.recipients}`;
+  }
+
+  function arrivalClass(c) {
+    const d = c && c.delivery;
+    if (!d || !(d.recipients > 0)) return '';
+    return d.whole === d.recipients ? 'mm-ins-arrived' : 'mm-ins-arrived-part';
+  }
+
+  function arrivalHtml(a) {
+    if (!a.recipients) {
+      return `<h3>Did it arrive?</h3><p class="text-muted mm-ins-sub">The receiving app knows: with <strong>Share delivery receipts</strong> on in MeshCore Open TAK, it tells the analyzer each clip it got and whether it was whole (never what was in it, or who sent it). None shared yet.</p>`;
+    }
+    return `<h3>Did it arrive?</h3><p class="text-muted mm-ins-sub">From the receiving apps: MeshCore Open TAK users with Share delivery receipts on report each clip they got and whether it was whole, signed by their radio. Never what was in it, or who sent it.</p>
+    <div class="mm-ins-tiles">
+      <div class="mm-ins-tile"><div class="mm-ins-big mm-ins-accent">${pct(a.whole, a.recipients)}%</div><div class="mm-ins-label">arrived whole: ${a.whole.toLocaleString()} of ${a.recipients.toLocaleString()} deliver${a.recipients === 1 ? 'y' : 'ies'} of ${a.clips.toLocaleString()} clip${a.clips === 1 ? '' : 's'}</div></div>
+      <div class="mm-ins-tile"><div class="mm-ins-big">${a.asked.toLocaleString()}</div><div class="mm-ins-label">whole after the app asked again for a missing piece</div></div>
+      <div class="mm-ins-tile"><div class="mm-ins-big">${a.rebuilt.toLocaleString()}</div><div class="mm-ins-label">whole thanks to parity pieces</div></div>
+    </div>`;
+  }
+
   function deliveryHtml(clips, nameOf, days, unannounced) {
     const s = deliverySummary(clips);
     const priv = (unannounced || []).length;
-    const head = `<h3>How much of each clip the observers heard</h3><p class="text-muted mm-ins-sub">Each clip's announcement says how many pieces it has; this is how many of them reached the observer that heard it furthest along (the far end). It isn't whether the clip arrived: observers only hear pieces that pass near them, a MediaMesh repeater misses some while it listens to the main mesh, and the receiving app rebuilds or asks again for anything it missed. Clips announced on channels the analyzer can read, last ${days} days. A clip sent in a direct message or on a private channel has its announcement encrypted, so it isn't counted here; how fast it crossed still shows below.</p>`;
+    const arrived = arrivalSummary(clips, unannounced);
+    const head = arrivalHtml(arrived) + `<h3 class="mm-ins-h3-next">What the observers heard</h3><p class="text-muted mm-ins-sub">Each clip's announcement says how many pieces it has; this is how many of them reached the observer that heard it furthest along (the far end). It isn't whether the clip arrived: observers only hear pieces that pass near them, a MediaMesh repeater misses some while it listens to the main mesh, and the receiving app rebuilds or asks again for anything it missed. Clips announced on channels the analyzer can read, last ${days} days. A clip sent in a direct message or on a private channel has its announcement encrypted, so it isn't counted here; how fast it crossed still shows below.</p>`;
     const privNote = priv ? `<p class="text-muted">${priv.toLocaleString()} clip${priv === 1 ? '' : 's'} sent privately ${priv === 1 ? 'was' : 'were'} heard in this period.</p>` : '';
     if (!s.n) return head + '<p class="text-muted">No announced clips heard yet in this period.</p>' + privNote;
     // Counts, not percentages: observers hearing part of a clip is normal, and
@@ -101,10 +145,10 @@
     const bars = s.byHops.filter((b) => b.n).map((b) => `<div class="mm-ins-bar-row"><span>${b.hops}${b.hops === 5 ? '+' : ''} hop${b.hops === 1 ? '' : 's'}</span>
       <span class="mm-ins-bar" role="img" aria-label="${b.n} clip${b.n === 1 ? '' : 's'}"><i style="width:${Math.round(b.n / maxN * 100)}%"></i></span><span class="mm-ins-num">${b.n}</span></div>`).join('');
     const recent = clips.filter((c) => c.outcome !== 'none').slice(0, 8).map((c) => `<tr><td><button type="button" class="mm-fr-open" data-mm-clip="${esc(c.sid)}" title="Open its flight recorder: every piece, when and by which path">${esc(clipLabel(c))}</button></td><td>${esc(routeLabel(c, nameOf))}</td><td class="mm-ins-num">${c.hops}</td>
-      <td>${piecesHtml(c)}</td><td class="mm-ins-outcome mm-ins-outcome--${esc(c.outcome)}">${esc(outcomeText(c))}</td></tr>`).join('');
+      <td>${piecesHtml(c)}</td><td class="mm-ins-outcome mm-ins-outcome--${esc(c.outcome)}">${esc(outcomeText(c))}</td><td class="${arrivalClass(c)}">${arrivalText(c) ? esc(arrivalText(c)) : '<span class="text-muted">—</span>'}</td></tr>`).join('');
     return head + tiles + `<div class="mm-ins-split">
       <div class="mm-ins-col"><h4>Clips heard, by hops</h4>${bars}</div>
-      <div class="mm-ins-col mm-ins-wide"><h4>Recent clips</h4><div class="mm-ins-scroll"><table class="analytics-table mm-ins-table"><thead><tr><th scope="col">Clip</th><th scope="col">Route</th><th scope="col" class="mm-ins-num">Hops</th><th scope="col">Pieces heard</th><th scope="col">Far end heard</th></tr></thead><tbody>${recent}</tbody></table></div>
+      <div class="mm-ins-col mm-ins-wide"><h4>Recent clips</h4><div class="mm-ins-scroll"><table class="analytics-table mm-ins-table"><thead><tr><th scope="col">Clip</th><th scope="col">Route</th><th scope="col" class="mm-ins-num">Hops</th><th scope="col">Pieces heard</th><th scope="col">Far end heard</th><th scope="col">Recipient</th></tr></thead><tbody>${recent}</tbody></table></div>
       <p class="text-muted mm-ins-key">Pick a clip for its flight recorder. <span class="mm-pieces"><span></span></span> heard · <span class="mm-pieces"><span class="is-rebuilt"></span></span> rebuilt from parity · <span class="mm-pieces"><span class="is-missing"></span></span> not heard by an observer</p></div></div>`;
   }
 
@@ -588,7 +632,7 @@
   }
 
   root.MediaMeshInsights = {
-    init, destroy, cardsHtml, namer, routeLabel, clipLabel, deliverySummary, deliveryHtml, speedRows, speedSummary, speedHtml,
+    init, destroy, cardsHtml, namer, routeLabel, clipLabel, deliverySummary, deliveryHtml, arrivalSummary, arrivalText, speedRows, speedSummary, speedHtml,
     busyGrid, busyHtml, backboneGraph, components, resilienceScore, weakSpots, weakHtml, median, mapPng,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

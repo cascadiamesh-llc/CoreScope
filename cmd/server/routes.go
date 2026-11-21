@@ -388,6 +388,8 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/mediamesh/coverage-points", s.handleCoveragePointsGet).Methods("GET")
 	r.HandleFunc("/api/mediamesh/coverage-points", s.handleCoveragePointsPost).Methods("POST")
 	r.HandleFunc("/api/mediamesh/coverage-points", s.handleCoveragePointsDelete).Methods("DELETE")
+	r.HandleFunc("/api/mediamesh/receipts", s.handleReceiptsPost).Methods("POST")
+	r.HandleFunc("/api/mediamesh/receipts", s.handleReceiptsDelete).Methods("DELETE")
 	r.HandleFunc("/api/analytics/retransmissions", s.handleAnalyticsRetransmissions).Methods("GET")
 
 	// Other endpoints

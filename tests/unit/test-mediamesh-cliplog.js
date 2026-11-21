@@ -58,6 +58,8 @@ test('story: outcome, wait, stall, where pieces were lost, speed', () => {
   assert.ok(s.includes('Near &lt;1&gt;, 1 hop out, heard 6; pieces 3 and 5 were heard there but not at Far (3 rebuilt from parity there).'), s);
   assert.ok(s.includes('about 0.03 kbit/s'), s);
   assert.ok(!s.includes('<1>'), 'names are escaped');
+  const rec = R.story(Object.assign({}, log, { clip: Object.assign({}, log.clip, { delivery: { recipients: 1, whole: 1, asked: 1, rebuilt: 0 } }) }));
+  assert.ok(rec.includes('The receiving app reported it whole (1 after asking again for a missing piece).'), rec);
   const whole = R.story(Object.assign({}, log, { clip: Object.assign({}, log.clip, { outcome: 'whole', missing: [], rebuilt: [] }) }));
   assert.ok(whole.includes('<strong>Far</strong>, 2 hops away, heard all of it, 5 min 34 s after it was announced.'), whole);
   assert.ok(R.story({ sid: 'x', clip: { total: 4, outcome: 'none' }, pieces: [] }).includes('no observer heard any of its 4 pieces'));

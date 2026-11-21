@@ -72,6 +72,22 @@ test('clips sent privately: timed in the speed card, counted in the delivery car
   assert.ok(I.speedHtml([], nameOf, 7).includes('No clips with more than one piece heard yet'));
 });
 
+test('did it arrive: receipts from the receiving apps, per clip and overall', () => {
+  const clips = [clip({ outcome: 'partial', missing: [1, 2], delivery: { recipients: 1, whole: 1, asked: 1, rebuilt: 0 } }),
+    clip({ delivery: { recipients: 3, whole: 2, asked: 0, rebuilt: 1 } }), clip({})];
+  const priv = [clip({ outcome: 'unannounced', kind: 'unknown', total: 0, delivery: { recipients: 1, whole: 1, asked: 0, rebuilt: 0 } })];
+  assert.deepStrictEqual(I.arrivalSummary(clips, priv), { clips: 3, recipients: 5, whole: 4, asked: 1, rebuilt: 1 });
+  assert.strictEqual(I.arrivalText(clips[0]), 'whole, after asking again');
+  assert.strictEqual(I.arrivalText(clips[1]), 'whole for 2 of 3');
+  assert.strictEqual(I.arrivalText(clip({ delivery: { recipients: 2, whole: 2 } })), 'whole for all 2');
+  assert.strictEqual(I.arrivalText(clip({ delivery: { recipients: 1, whole: 0 } })), 'arrived in part');
+  assert.strictEqual(I.arrivalText(clips[2]), '');
+  const h = I.deliveryHtml(clips, nameOf, 7, priv);
+  assert.ok(h.indexOf('<h3>Did it arrive?</h3>') === 0 && h.includes('80%</div><div class="mm-ins-label">arrived whole: 4 of 5 deliveries of 3 clips'), h);
+  assert.ok(h.includes('<th scope="col">Recipient</th>') && h.includes('class="mm-ins-arrived">whole, after asking again') && h.includes('Never what was in it'));
+  assert.ok(I.deliveryHtml([clip({})], nameOf, 7).includes('None shared yet.'), 'says how to get them');
+});
+
 test('busy: bins by local weekday and hour, per week; the toggle and peak', () => {
   const mon9 = new Date(2026, 10, 16, 21, 0, 0); // Monday 9 pm local
   const hours = [{ t: mon9.toISOString(), packets: 40, clips: 2, partial: 1 }, { t: new Date(2026, 10, 9, 21).toISOString(), packets: 20, clips: 0, partial: 0 }];

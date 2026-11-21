@@ -110,6 +110,8 @@ type MediaMeshClip struct {
 	DurationS float64  `json:"durationS"`
 	Bytes     int      `json:"bytes"`
 	Observers int      `json:"observers"`
+	// what the receiving apps reported (delivery receipts), if any did
+	Delivery *MediaMeshDelivery `json:"delivery,omitempty"`
 }
 
 // MediaMeshClipHour is the photo, video and voice traffic of one hour.
@@ -393,6 +395,7 @@ func (s *Server) handleMediaMeshClips(w http.ResponseWriter, r *http.Request) {
 		if s.store != nil {
 			s.store.mediaMeshClips(out.From, out)
 		}
+		s.addDeliveries(out)
 		return out
 	}
 	if s.store == nil {

@@ -114,6 +114,14 @@
     if (c && c.outcome === 'whole') out.push(`${farName}, ${hops} away, heard all of it, ${took} after it was announced.`);
     else if (c && c.outcome === 'parity') out.push(`${farName}, ${hops} away, heard all of it in ${took}: piece${(c.rebuilt || []).length === 1 ? '' : 's'} ${list(c.rebuilt || [])} didn't reach it, and ${(c.rebuilt || []).length === 1 ? 'was' : 'were'} rebuilt from the parity pieces.`);
     else if (c && c.outcome === 'partial') out.push(`${farName}, ${hops} away, heard ${total - (c.missing || []).length} of ${total} pieces; piece${(c.missing || []).length === 1 ? '' : 's'} ${list(c.missing || [])} didn't reach it. That's what this observer heard, not what the recipient got: observers miss pieces that pass out of their hearing or while they listen to the main mesh, and the receiving app rebuilds or asks again for what it missed.`);
+    // delivery receipts from the receiving apps: what actually arrived
+    const d = c && c.delivery;
+    if (d && d.recipients > 0) {
+      const how = [d.asked ? `${d.asked} after asking again for a missing piece` : '', d.rebuilt ? `${d.rebuilt} with parity` : ''].filter(Boolean).join(', ');
+      out.push(d.recipients === 1
+        ? (d.whole ? `The receiving app reported it whole${how ? ` (${how})` : ''}.` : 'The receiving app reported it arrived in part.')
+        : `${d.whole} of ${d.recipients} receiving apps reported it whole${how ? ` (${how})` : ''}.`);
+    }
     else out.push(`${farName} heard ${far.data.size} piece${far.data.size === 1 ? '' : 's'} over ${hops}${c ? '' : ' (no announcement heard, so the total is unknown)'}.`);
     if (Number.isFinite(t0) && log.announcement) {
       const wait = (far.first - t0) / 1000;

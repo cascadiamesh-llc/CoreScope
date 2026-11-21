@@ -123,6 +123,14 @@ func openCovPointsStore(path string) (*covPointsStore, error) {
 		db.Close()
 		return nil, err
 	}
+	// delivery receipts (mediamesh_receipts.go)
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS receipts (
+		radio TEXT NOT NULL, sid TEXT NOT NULL, at INTEGER NOT NULL, kind TEXT NOT NULL,
+		total INTEGER NOT NULL, got INTEGER NOT NULL, asked INTEGER NOT NULL, rebuilt INTEGER NOT NULL,
+		whole INTEGER NOT NULL, app TEXT, received INTEGER NOT NULL, PRIMARY KEY (radio, sid, at))`); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return &covPointsStore{db: db, now: time.Now}, nil
 }
 
@@ -183,6 +191,7 @@ func (st *covPointsStore) prune(days int) {
 			st.invalidate()
 		}
 	}
+	st.db.Exec(`DELETE FROM receipts WHERE at < ?`, cut)
 }
 
 func (st *covPointsStore) invalidate() {

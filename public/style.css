@@ -6533,3 +6533,7 @@ html.mm-embed--sky .mm-embed-open:hover { background: var(--mm-sky-ink); color: 
 .obs-setup-hint { margin: 0 0 20px; padding: 12px 14px; border: 1px solid var(--mediamesh-path-color, var(--accent)); border-radius: 10px; background: var(--card-bg); color: var(--text); }
 .obs-setup-hint .obs-setup-cmd { margin: 8px 0 0; }
 .mm-ins-wholeline { margin: -6px 0 16px; font-size: 0.9em; }
+/* delivery receipts: whole is the theme's green text; part, the plain muted text */
+.mm-ins-arrived { color: var(--status-green-text); font-weight: var(--fw-medium, 500); }
+.mm-ins-arrived-part { color: var(--text-muted); }
+.mm-ins-h3-next { margin-top: 22px; }
