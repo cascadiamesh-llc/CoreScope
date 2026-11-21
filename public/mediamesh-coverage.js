@@ -1419,6 +1419,214 @@
     return memo.only.slice();
   }
 
+  // ---- The mesh: repeaters linked by what's been heard ------------------------
+
+  /** Links heard this often or more are taken as solid; fewer are weaker
+   * evidence, like a link only the model predicts. */
+  const MESH_OFTEN = 5;
+
+  /**
+   * Repeaters that reach each other by the model (repeater to repeater over
+   * the terrain, each antenna at its height): [{ a, b, marginDb }] by index
+   * into reps, a < b. elevAt as for pathProfile.
+   */
+  function predictedLinks(reps, elevAt, maxKm) {
+    const out = [];
+    const lim = (maxKm || CONFIG.modes.repeater.radiusKm) * 1000;
+    for (let a = 0; a < reps.length; a++) {
+      for (let b = a + 1; b < reps.length; b++) {
+        const A = reps[a], B = reps[b];
+        if (distanceM(A.lat, A.lon, B.lat, B.lon) > lim) continue;
+        const p = pathProfile(A, B.lat, B.lon, elevAt, 'repeater', null, { rxHeightM: antennaHeight(B) });
+        if (p && p.marginDb >= 0) out.push({ a, b, marginDb: p.marginDb });
+      }
+    }
+    return out;
+  }
+
+  /**
+   * The mesh from the evidence. reps: the placed repeaters; backbone: the
+   * hops media took ({ a, b, packets }, public keys); links: observers
+   * hearing nodes straight off the air ({ from, observer_id, count });
+   * predicted: predictedLinks. use: { rare, model } (count links heard 1-4
+   * times, and those only the model predicts).
+   *
+   * Returns { tier, edges, links }: tier per repeater 'often' (in the mesh by
+   * links heard MESH_OFTEN+ times), 'weak' (only by weaker evidence) or
+   * 'none'; edges [{ a, b, packets, kind: 'often' | 'rare' | 'model',
+   * marginDb }]; links: how many repeaters each was heard linking with.
+   */
+  function meshEvidence(reps, backbone, links, predicted, use) {
+    const u = Object.assign({ rare: true, model: true }, use || {});
+    const at = new Map();
+    reps.forEach((r, i) => { const k = key8(r); if (k && !at.has(k)) at.set(k, i); });
+    const ix = (k) => at.get(String(k || '').slice(0, 8).toLowerCase());
+    const heard = new Map();
+    const add = (a, b, n) => {
+      if (a === undefined || b === undefined || a === b) return;
+      const k = Math.min(a, b) + ':' + Math.max(a, b);
+      heard.set(k, (heard.get(k) || 0) + (Number(n) || 0));
+    };
+    (backbone || []).forEach((e) => add(ix(e.a), ix(e.b), e.packets));
+    (links || []).forEach((l) => add(ix(l.from), ix(l.observer_id), l.count));
+    const edges = [];
+    heard.forEach((n, k) => {
+      const [a, b] = k.split(':').map(Number);
+      edges.push({ a, b, packets: n, kind: n >= MESH_OFTEN ? 'often' : 'rare', marginDb: null });
+    });
+    (predicted || []).forEach((p) => {
+      if (!heard.has(Math.min(p.a, p.b) + ':' + Math.max(p.a, p.b))) edges.push({ a: p.a, b: p.b, packets: 0, kind: 'model', marginDb: p.marginDb });
+    });
+    // Union-find over the edges of the kinds given: each repeater's group.
+    const groupOf = (kinds) => {
+      const up = reps.map((_, i) => i);
+      const find = (x) => (up[x] === x ? x : (up[x] = find(up[x])));
+      edges.forEach((e) => { if (kinds[e.kind]) up[find(e.a)] = find(e.b); });
+      return reps.map((_, i) => find(i));
+    };
+    // The mesh: the biggest group by solid links (two repeaters at least),
+    // or with none, the biggest by whatever evidence there is.
+    const biggest = (g) => {
+      const size = new Map();
+      g.forEach((x) => size.set(x, (size.get(x) || 0) + 1));
+      let main = -1, best = 1;
+      size.forEach((n, x) => { if (n > best) { best = n; main = x; } });
+      return main;
+    };
+    const solid = groupOf({ often: true });
+    const wide = groupOf({ often: true, rare: u.rare, model: u.model });
+    const sMain = biggest(solid);
+    const wMain = sMain >= 0 ? wide[sMain] : biggest(wide);
+    const tier = reps.map((_, i) => (sMain >= 0 && solid[i] === sMain ? 'often' : wMain >= 0 && wide[i] === wMain ? 'weak' : 'none'));
+    const count = reps.map(() => new Set());
+    edges.forEach((e) => { if (e.kind !== 'model') { count[e.a].add(e.b); count[e.b].add(e.a); } });
+    return { tier, edges, links: count.map((s) => s.size) };
+  }
+
+  /**
+   * Each land cell by what reaches it, for the mesh view (Uint8Array):
+   * 0 nothing, 1 only repeaters not in the mesh, 2 only repeaters in it by
+   * weaker evidence, 3 one repeater in the mesh, 4 two or more. Counts the
+   * repeaters `counted` allows. Also the km² of each: { cells, km2: [..] }.
+   */
+  function meshCells(cov, tier, counted) {
+    const n = cov.width * cov.height, water = cov.water;
+    const linked = new Uint8Array(n), solid = new Uint8Array(n), out = new Uint8Array(n);
+    const reached = new Uint8Array(n);
+    (cov.rasters || []).forEach((r, ri) => {
+      if (!r || !r.data || (counted && !counted[ri])) return;
+      const t = tier[ri] || 'none';
+      for (let y = 0; y < r.h; y++) {
+        let i = (r.row0 + y) * cov.width + r.col0, k = y * r.w;
+        for (let x = 0; x < r.w; x++, i++, k++) {
+          if (!(r.data[k] >= 0) || (water && water[i])) continue;
+          reached[i] = 1;
+          if (t === 'none') continue;
+          if (linked[i] < 2) linked[i]++;
+          if (t === 'often') solid[i] = 1;
+        }
+      }
+    });
+    const km2 = [0, 0, 0, 0, 0];
+    for (let i = 0; i < n; i++) {
+      if (!reached[i]) continue;
+      const c = !linked[i] ? 1 : !solid[i] ? 2 : linked[i] >= 2 ? 4 : 3;
+      out[i] = c; km2[c]++;
+    }
+    const a = cellAreaKm2(cov);
+    return { cells: out, km2: km2.map((c) => c * a) };
+  }
+
+  /**
+   * One row per repeater for "Best placed in the mesh": { index, rep, km2
+   * (land in reach), onlyKm2 (land no other repeater in the mesh reaches;
+   * null when it isn't in the mesh), links, tier }.
+   */
+  function meshRows(cov, tier, links, counted) {
+    const n = cov.width * cov.height, water = cov.water, hits = new Uint8Array(n);
+    const each = (fn) => (cov.rasters || []).forEach((r, ri) => {
+      if (!r || !r.data || (counted && !counted[ri])) return;
+      for (let y = 0; y < r.h; y++) {
+        let i = (r.row0 + y) * cov.width + r.col0, k = y * r.w;
+        for (let x = 0; x < r.w; x++, i++, k++) if (r.data[k] >= 0 && !(water && water[i])) fn(i, ri);
+      }
+    });
+    each((i, ri) => { if (tier[ri] !== 'none' && hits[i] < 2) hits[i]++; });
+    const land = (cov.rasters || []).map(() => 0), only = land.slice();
+    each((i, ri) => { land[ri]++; if (tier[ri] !== 'none' && hits[i] === 1) only[ri]++; });
+    const a = cellAreaKm2(cov);
+    return cov.reps.map((rep, i) => ({
+      index: i, rep, km2: land[i] * a, onlyKm2: tier[i] === 'none' ? null : only[i] * a, links: links[i] || 0, tier: tier[i] || 'none',
+    })).filter((r) => !counted || counted[r.index]);
+  }
+
+  /** What each mesh cell is drawn as: [r, g, b, alpha 0-1], by meshCells code. */
+  const MESH_RGB = { two: '#c026d3', one: '#f0abfc', weak: '#7c3aed', none: '#8b8ba3' };
+  function meshPalette() {
+    const rgb = (name, fb) => { const h = cssColor('--mm-mesh-' + name, fb).slice(1); return [0, 2, 4].map((o) => parseInt(h.slice(o, o + 2), 16)); };
+    return [null, rgb('none', MESH_RGB.none).concat(0.45), rgb('weak', MESH_RGB.weak).concat(0.5),
+      rgb('one', MESH_RGB.one).concat(0.5), rgb('two', MESH_RGB.two).concat(0.55)];
+  }
+
+  function meshCanvas(cov, mc) {
+    const cv = document.createElement('canvas');
+    cv.width = cov.width; cv.height = cov.height;
+    const ctx = cv.getContext('2d');
+    const img = ctx.createImageData(cov.width, cov.height);
+    const pal = meshPalette();
+    for (let i = 0; i < mc.cells.length; i++) {
+      const c = pal[mc.cells[i]];
+      if (!c) continue;
+      img.data[i * 4] = c[0]; img.data[i * 4 + 1] = c[1]; img.data[i * 4 + 2] = c[2]; img.data[i * 4 + 3] = Math.round(c[3] * 255);
+    }
+    ctx.putImageData(img, 0, 0);
+    return cv;
+  }
+
+  const MESH_NOTE = 'The mesh: the people-on-the-ground estimate, coloured by how many repeaters in the mesh reach each place. Repeaters are in the mesh when they have been heard reaching each other, or, as weaker evidence, when the model says they do.';
+  const MESH_EVIDENCE = { often: 'heard often', weak: 'weaker evidence', none: 'no link heard or predicted' };
+
+  /** The mesh view's figures, as tiles. mc: meshCells; ev: meshEvidence;
+   * reps: the placed repeaters; unplaced: names of linked repeaters with no
+   * position. */
+  function meshStatsHtml(mc, ev, reps, unplaced) {
+    const k = mc.km2;
+    const n = ev.tier.filter((t) => t === 'often').length;
+    const names = (t) => reps.filter((_, i) => ev.tier[i] === t).map((r) => esc(repName(r)));
+    const weak = names('weak'), none = names('none');
+    const list = (xs) => (xs.length > 3 ? xs.slice(0, 3).join(', ') + ` and ${xs.length - 3} more` : xs.join(', '));
+    const tile = (big, label, cls) => `<div class="mm-mesh-tile"><div class="mm-mesh-big${cls ? ' ' + cls : ''}">${big}</div><div class="mm-mesh-label">${label}</div></div>`;
+    return tile(`${fmtKm2(k[3] + k[4])} km²`, `reached by the mesh as heard: ${n} repeater${n === 1 ? '' : 's'} linked by links heard ${MESH_OFTEN}+ times`, 'mm-mesh-big--mesh')
+      + tile(`+${fmtKm2(k[2])} km²`, weak.length ? `with weaker evidence (a link heard 1 to ${MESH_OFTEN - 1} times, or one the model predicts): ${list(weak)}` : 'with weaker evidence: none at the moment', 'mm-mesh-big--weak')
+      + tile(`${fmtKm2(k[4])} km²`, 'reached by two or more repeaters in the mesh: stays covered if one goes down', 'mm-mesh-big--mesh')
+      + tile(`${fmtKm2(k[1])} km²`, (none.length ? `reached only by repeaters with no link heard or predicted: ${list(none)}` : 'every repeater is linked to the mesh')
+        + (unplaced && unplaced.length ? `. ${unplaced.length} more repeater${unplaced.length === 1 ? ' has' : 's have'} no position to draw` : ''));
+  }
+
+  /** "Best placed in the mesh": every repeater, sortable by reach, what
+   * only it reaches, and links heard. sortKey: 'km2' | 'onlyKm2' | 'links'. */
+  function meshTableHtml(rows, sortKey) {
+    const key = sortKey || 'km2';
+    const v = (r) => (r[key] == null ? -1 : r[key]);
+    const sorted = rows.slice().sort((a, b) => (a.tier === 'none') - (b.tier === 'none') || v(b) - v(a) || b.km2 - a.km2);
+    const th = (k, label, title) => `<th scope="col" class="mm-ins-num" aria-sort="${key === k ? 'descending' : 'none'}"><button type="button" class="mm-mesh-sort${key === k ? ' is-on' : ''}" data-mm-mesh-sort="${k}" title="${title}">${label}${key === k ? ' ▾' : ''}</button></th>`;
+    const body = sorted.map((r) => {
+      const ev = r.tier === 'often' ? MESH_EVIDENCE.often
+        : r.tier === 'weak' ? (r.links ? `weaker: heard 1 to ${MESH_OFTEN - 1} times` : 'weaker: the model predicts it')
+          : MESH_EVIDENCE.none;
+      return `<tr class="mm-mesh-row mm-mesh-row--${r.tier}"><td><a href="#/nodes/${encodeURIComponent(r.rep.public_key || '')}">${esc(repName(r.rep))}</a></td>`
+        + `<td class="mm-ins-num">${fmtKm2(r.km2)} km²</td><td class="mm-ins-num">${r.onlyKm2 == null ? '—' : fmtKm2(r.onlyKm2) + ' km²'}</td>`
+        + `<td class="mm-ins-num">${r.links}</td><td class="mm-mesh-ev">${esc(ev)}</td></tr>`;
+    }).join('');
+    return `<div class="mm-ins-scroll"><table class="analytics-table mm-mesh-table"><thead><tr><th scope="col">Repeater</th>`
+      + th('km2', 'Reach', 'Land it reaches; open water is not counted')
+      + th('onlyKm2', 'Only it', 'Land no other repeater in the mesh reaches: what the mesh would lose without it')
+      + th('links', 'Links heard', 'Repeaters it has been heard linking with')
+      + `<th scope="col">Evidence</th></tr></thead><tbody>${body}</tbody></table></div>`;
+  }
+
+  function fmtKm2(v) { return v < 100 ? (Math.round(v * 10) / 10).toFixed(1).replace(/\.0$/, '') : Math.round(v).toLocaleString(); }
+
 
   /**
    * What a planned repeater adds: { newKm2 (covered by it and by nothing
@@ -2169,6 +2377,7 @@
     setField(session.fieldFit);
     const cache = session.modes;
     let overlay = null, current = null, destroyed = false, shown = null, shownTerrain = null;
+    let meshView = !!(opts && opts.mode === 'mesh'), mesh = null;
     let opacity = 1;
     const readoutEl = el.querySelector('#mmCovReadout');
     const slider = el.querySelector('#mmCovOpacity');
@@ -2212,7 +2421,7 @@
       if (linksKey) linksKey.hidden = !any;
       const wrap = el.querySelector('#mmCovLinksWrap');
       if (wrap) wrap.hidden = !any;
-      if (any && (!linksToggle || linksToggle.checked)) linkLayer.addTo(map); else map.removeLayer(linkLayer);
+      if (any && (!linksToggle || linksToggle.checked) && !(meshView && mesh)) linkLayer.addTo(map); else map.removeLayer(linkLayer);
     }
     const onLinksToggle = () => drawLinks();
 
@@ -2235,7 +2444,7 @@
     }
     if (backboneKey) backboneKey.hidden = !backbone.length;
     function drawBackbone() {
-      const on = backbone.length && (!backboneToggle || backboneToggle.checked) && !timeMask;
+      const on = backbone.length && (!backboneToggle || backboneToggle.checked) && !timeMask && !(meshView && mesh);
       if (on) backboneLayer.addTo(map); else map.removeLayer(backboneLayer);
     }
     const onBackboneToggle = () => drawBackbone();
@@ -2429,7 +2638,8 @@
       if (overlay) { map.removeLayer(overlay); overlay = null; }
       if (!shown) return;
       const b = shown.bounds;
-      overlay = canvasOverlay(L, coverageCanvas(shown), [[b.south, b.west], [b.north, b.east]],
+      const cv = meshView && mesh ? meshCanvas(shown, mesh.cells) : coverageCanvas(shown);
+      overlay = canvasOverlay(L, cv, [[b.south, b.west], [b.north, b.east]],
         { pane: 'mmCoverage', opacity, className: 'mm-cov-overlay' }).addTo(map);
     }
     // The repeaters drawn: those counted in the picker, and during the
@@ -2440,7 +2650,9 @@
       drawReps();
       if (!shown) return;
       merge(shown, counted());
+      computeMesh();
       drawOverlay();
+      drawMesh();
       drawProfile();
       if (planned && !timeMask) computePlan();
     }
@@ -2454,6 +2666,7 @@
           modeKey: shown.modeKey, areaKm2: unionKm2(shown),
           areaHistory: steps.length ? areaHistory(shown, firstSeen, steps) : [],
           repAreas: shown.reps.map((r, i) => ({ rep: r, km2: areas[i] || 0, onlyKm2: only[i] || 0 })),
+          mesh: mesh ? mesh.rows : null,
           calibration: session.cal,
         });
       } catch (_) { /* the tab's business */ }
@@ -2512,10 +2725,95 @@
     const onFieldToggle = () => drawField();
     if (fieldToggle) fieldToggle.addEventListener('change', onFieldToggle);
 
+    // ---- The mesh: the ground view coloured by which repeaters reach each
+    // place and how sure we are they're linked to each other. ----
+    let meshSort = 'km2';
+    const meshUse = { rare: true, model: true };
+    const meshEl = el.querySelector('#mmCovMesh');
+    const meshLayer = L.layerGroup();
+    const scaleEl = el.querySelector('.mm-cov-scale');
+    const rawBackbone = (opts && opts.backbone) || [];
+    const heardKeys = new Set();
+    rawBackbone.forEach((e) => { heardKeys.add(key8({ public_key: e.a })); heardKeys.add(key8({ public_key: e.b })); });
+    links.forEach((l) => { heardKeys.add(key8({ public_key: l.from })); heardKeys.add(key8({ public_key: l.observer_id })); });
+    const unplacedLinked = repeaters.filter((r) => !(Number.isFinite(r.lat) && Number.isFinite(r.lon)) && heardKeys.has(key8(r))).map(repName);
+    function computeMesh() {
+      mesh = null;
+      if (!shown || !shownTerrain || !CONFIG.modes[shown.modeKey].clutter) return;
+      // What the model predicts between repeaters: worked out once a session.
+      if (!session.meshPred || session.meshPred.key !== session.key) {
+        session.meshPred = { key: session.key, links: predictedLinks(placed, shownTerrain) };
+      }
+      const on = counted();
+      const ev = meshEvidence(placed, rawBackbone, links, session.meshPred.links, meshUse);
+      // repeaters left out of the count are left out of the mesh too
+      ev.tier = ev.tier.map((t, i) => (on[i] ? t : 'none'));
+      const mc = meshCells(shown, ev.tier, on);
+      mesh = { ev, cells: mc, rows: meshRows(shown, ev.tier, ev.links, on) };
+    }
+    function drawMesh() {
+      meshLayer.clearLayers();
+      const on = meshView && mesh && !timeMask;
+      if (meshEl) meshEl.hidden = !meshView;
+      const bestEl = el.querySelector('#mmCovMeshBest');
+      if (bestEl) bestEl.hidden = !(meshView && mesh);
+      if (scaleEl) scaleEl.hidden = meshView;
+      if (!on) {
+        map.removeLayer(meshLayer);
+        if (meshEl && meshView) meshEl.querySelector('#mmCovMeshStats').innerHTML = '<p class="text-muted mm-cov-note">Working out the mesh…</p>';
+        drawBackbone();
+        if (!timeMask) drawLinks();
+        return;
+      }
+      // the mesh's own links stand in for the backbone and links heard
+      map.removeLayer(backboneLayer);
+      map.removeLayer(linkLayer);
+      const ink = cssColor('--text', '#1a1a2e'), casing = cssColor('--card-bg', '#ffffff');
+      const weakInk = cssColor('--mm-mesh-weak', MESH_RGB.weak);
+      const maxP = Math.max(1, ...mesh.ev.edges.map((e) => e.packets || 0));
+      mesh.ev.edges.slice().sort((x, y) => (x.packets || 0) - (y.packets || 0)).forEach((e) => {
+        if ((e.kind === 'rare' && !meshUse.rare) || (e.kind === 'model' && !meshUse.model)) return;
+        const A = placed[e.a], B = placed[e.b], ll = [[A.lat, A.lon], [B.lat, B.lon]];
+        const style = e.kind === 'often' ? { color: ink, weight: backboneWeight(e.packets, maxP), opacity: 0.8 }
+          : e.kind === 'rare' ? { color: ink, weight: 2, opacity: 0.9, dashArray: '8 6' }
+            : { color: weakInk, weight: 2.5, opacity: 0.95, dashArray: '2 6' };
+        L.polyline(ll, { color: casing, weight: style.weight + 2.5, opacity: 0.7, interactive: false, dashArray: style.dashArray }).addTo(meshLayer);
+        const tip = `${esc(repName(A))} ↔ ${esc(repName(B))}: ` + (e.kind === 'model'
+          ? `never heard; the model says they reach, ${fmtDb(e.marginDb)} dB to spare`
+          : `heard ${Number(e.packets).toLocaleString()} time${e.packets === 1 ? '' : 's'}`);
+        L.polyline(ll, Object.assign({ lineCap: 'round' }, style)).bindTooltip(tip, { sticky: true }).addTo(meshLayer);
+      });
+      placed.forEach((r, i) => {
+        const t = mesh.ev.tier[i];
+        if (t === 'often' || !counted()[i]) return;
+        L.circleMarker([r.lat, r.lon], {
+          radius: 9, weight: 2.5, fill: false, color: t === 'weak' ? weakInk : ink, dashArray: t === 'weak' ? '3 3' : null, interactive: false,
+        }).addTo(meshLayer);
+      });
+      meshLayer.addTo(map);
+      if (meshEl) {
+        meshEl.querySelector('#mmCovMeshStats').innerHTML = meshStatsHtml(mesh.cells, mesh.ev, placed, unplacedLinked);
+        const tableEl = el.querySelector('#mmCovMeshTable');
+        if (tableEl) tableEl.innerHTML = meshTableHtml(mesh.rows, meshSort);
+      }
+    }
+    const onMeshChange = (e) => {
+      const k = e.target && e.target.dataset && e.target.dataset.mmMeshUse;
+      if (!k) return;
+      meshUse[k] = e.target.checked;
+      computeMesh();
+      drawOverlay();
+      drawMesh();
+      reportStats();
+    };
+    if (meshEl) meshEl.addEventListener('change', onMeshChange);
+
     async function show(modeKey) {
       current = modeKey;
-      el.querySelectorAll('[data-mm-cov]').forEach((b) => b.classList.toggle('active', b.dataset.mmCov === modeKey));
-      if (noteEl) noteEl.textContent = CONFIG.modes[modeKey].note;
+      el.querySelectorAll('[data-mm-cov]').forEach((b) => b.classList.toggle('active', b.dataset.mmCov === (meshView ? 'mesh' : modeKey)));
+      if (noteEl) noteEl.textContent = meshView ? MESH_NOTE : CONFIG.modes[modeKey].note;
+      mesh = null;
+      drawMesh();
       if (howEl) howEl.innerHTML = assumptionsHtml(modeKey, placed.map(radioFor), session.cal, session.fieldFit, session.fieldInfo);
       drawPlaces();
       drawField();
@@ -2573,10 +2871,12 @@
         if (!res.adj[session.place]) res.adj[session.place] = adjustCov(res.cov, session.place);
         shown = merge(res.adj[session.place], counted());
         shownTerrain = res.elevAt;
+        computeMesh();
         set3dReady();
         drawOverlay();
         drawProfile();
         drawLinks();
+        drawMesh();
         reportStats();
         shownListeners.forEach((f) => { try { f(shown, shownTerrain); } catch (_) { /* a plugin's business */ } });
         if (planned) computePlan();
@@ -2659,7 +2959,9 @@
     const onClick = (e) => {
       if (e.target.closest('[data-mm-cov-play]')) { if (playing) stopPlay(); else startPlay(); return; }
       const b = e.target.closest('[data-mm-cov]');
-      if (b) { show(b.dataset.mmCov); return; }
+      if (b) { meshView = b.dataset.mmCov === 'mesh'; show(meshView ? 'ground' : b.dataset.mmCov); return; }
+      const ms = e.target.closest('[data-mm-mesh-sort]');
+      if (ms) { meshSort = ms.dataset.mmMeshSort; drawMesh(); return; }
       const pl = e.target.closest('[data-mm-cov-place]');
       if (pl) { setPlace(pl.dataset.mmCovPlace); return; }
       if (e.target.closest('[data-mm-cov-close]')) { clearProfile(); return; }
@@ -2695,10 +2997,11 @@
     }
     drawLinks();
     drawBackbone();
-    show((opts && opts.mode) || 'ground');
+    show(meshView ? 'ground' : (opts && opts.mode) || 'ground');
     return () => {
       destroyed = true;
       el.removeEventListener('click', onClick);
+      if (meshEl) meshEl.removeEventListener('change', onMeshChange);
       if (slider) slider.removeEventListener('input', onSlide);
       if (panelEl) { panelEl.removeEventListener('input', onSearch); panelEl.removeEventListener('change', onPanelChange); }
       if (planEl) planEl.removeEventListener('change', onPlanChange);
@@ -2721,7 +3024,7 @@
     fitCalibration, calibrationText, setCalibration, getCalibration, CAL,
     clutterLossDb, setField, getField, fieldDbFor, placeLossDb, fitField, fieldSolve, fieldText, fieldBand, adjustCov, FIELD_RGB, loadFieldPoints, fieldPoints, hexCorners, hexBand, session,
     backboneWeight, backboneTip, areaHistory, footprint, coverageImage, legendGradient,
-    growthSteps, presentAt, antennaHeight, knownHeightM, KNOWN_HEIGHTS, coverageCanvas, canvasOverlay, whatIfBase, whatIfDefaults, whatIfJob, whatIfCoverage, whatIfCanvas, cellAreaKm2, coveredKm2, unionKm2, repAreasKm2, repOnlyKm2, planGain, planLinks, planHtml, PLAN_RGB,
+    growthSteps, presentAt, antennaHeight, knownHeightM, KNOWN_HEIGHTS, coverageCanvas, canvasOverlay, whatIfBase, whatIfDefaults, whatIfJob, whatIfCoverage, whatIfCanvas, cellAreaKm2, coveredKm2, unionKm2, repAreasKm2, repOnlyKm2, predictedLinks, meshEvidence, meshCells, meshRows, meshStatsHtml, meshTableHtml, MESH_OFTEN, planGain, planLinks, planHtml, PLAN_RGB,
     repNotes, repArea, repGroups, repSummaryHtml, repPanelHtml, repAction, assumptionsHtml, linkRows, linksTableHtml, init,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

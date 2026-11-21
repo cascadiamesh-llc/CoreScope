@@ -454,6 +454,64 @@ function cellAt(cov, lat, lon) {
     assert.ok(Math.abs(only[0] - 10 * a) < 1e-9 && Math.abs(only[1] - 10 * a) < 1e-9 && only[2] === 0, JSON.stringify(only));
   });
 
+  await test('the mesh: tiers from links heard often, rarely, or only by the model', () => {
+    const rep = (k, lat) => ({ public_key: k + '0'.repeat(56), name: k, lat, lon: -122.3 });
+    const reps = [rep('aaaaaaaa', 47.60), rep('bbbbbbbb', 47.61), rep('cccccccc', 47.62), rep('dddddddd', 47.63), rep('eeeeeeee', 47.80), rep('ffffffff', 47.64)];
+    const backbone = [{ a: reps[0].public_key, b: reps[1].public_key, packets: 900 }, { a: reps[2].public_key, b: reps[3].public_key, packets: 2 }];
+    const links = [{ from: reps[1].public_key, observer_id: reps[2].public_key.toUpperCase(), count: 7 }];
+    const predicted = [{ a: 3, b: 5, marginDb: 30 }, { a: 0, b: 1, marginDb: 50 }];
+    let ev = M.meshEvidence(reps, backbone, links, predicted);
+    assert.deepStrictEqual(ev.tier, ['often', 'often', 'often', 'weak', 'none', 'weak']);
+    assert.deepStrictEqual(ev.links, [1, 2, 2, 1, 0, 0]);
+    assert.strictEqual(ev.edges.filter((e) => e.kind === 'model').length, 1, 'a heard pair is not also a model edge');
+    // switch the weaker evidence off
+    ev = M.meshEvidence(reps, backbone, links, predicted, { rare: false });
+    assert.deepStrictEqual(ev.tier, ['often', 'often', 'often', 'none', 'none', 'none']);
+    ev = M.meshEvidence(reps, backbone, links, predicted, { model: false });
+    assert.deepStrictEqual(ev.tier, ['often', 'often', 'often', 'weak', 'none', 'none']);
+    // nothing heard often: the weaker evidence makes the mesh
+    ev = M.meshEvidence(reps, [], [], predicted);
+    assert.deepStrictEqual(ev.tier, ['weak', 'weak', 'none', 'none', 'none', 'none']);
+    assert.deepStrictEqual(M.meshEvidence(reps, [], [], []).tier, reps.map(() => 'none'));
+  });
+
+  await test('the mesh: cells by how many linked repeaters reach them, and the table', () => {
+    const cov = { width: 10, height: 1, bounds: { north: 0.0009, south: 0, west: 0, east: 0.009 },
+      reps: [{ name: 'A' }, { name: 'B' }, { name: 'W' }, { name: 'N' }], water: new Uint8Array(10) };
+    const r = (c0, w) => ({ col0: c0, row0: 0, w, h: 1, data: new Int16Array(w).fill(50) });
+    cov.rasters = [r(0, 4), r(2, 3), r(6, 2), r(8, 2)];
+    cov.water[9] = 1;
+    const tier = ['often', 'often', 'weak', 'none'];
+    const mc = M.meshCells(cov, tier);
+    assert.deepStrictEqual(Array.from(mc.cells), [3, 3, 4, 4, 3, 0, 2, 2, 1, 0]);
+    const a = M.cellAreaKm2(cov);
+    assert.ok(Math.abs(mc.km2[4] - 2 * a) < 1e-9 && Math.abs(mc.km2[1] - a) < 1e-9);
+    // leaving B out of the count
+    assert.deepStrictEqual(Array.from(M.meshCells(cov, tier, [true, false, true, true]).cells), [3, 3, 3, 3, 0, 0, 2, 2, 1, 0]);
+    const rows = M.meshRows(cov, tier, [1, 1, 0, 0]);
+    const by = (n) => rows.find((x) => x.rep.name === n);
+    assert.ok(Math.abs(by('A').km2 - 4 * a) < 1e-9 && Math.abs(by('A').onlyKm2 - 2 * a) < 1e-9);
+    assert.ok(Math.abs(by('W').onlyKm2 - 2 * a) < 1e-9 && by('N').onlyKm2 === null && Math.abs(by('N').km2 - a) < 1e-9);
+    const html = M.meshTableHtml(rows.map((x) => Object.assign({}, x, { rep: { name: x.rep.name + ' 🚰', public_key: 'k' } })), 'onlyKm2');
+    assert.ok(html.includes('A 🚰') && html.includes('aria-sort="descending"') && html.includes('data-mm-mesh-sort="links"'), 'names keep their emoji');
+    assert.ok(html.indexOf('N 🚰') > html.indexOf('W 🚰'), 'repeaters outside the mesh go last');
+    assert.ok(html.includes('weaker: the model predicts it') && html.includes('no link heard or predicted'));
+    const stats = M.meshStatsHtml(mc, { tier, edges: [], links: [1, 1, 0, 0] }, cov.reps, ['Far']);
+    assert.ok(stats.includes('2 repeaters linked') && stats.includes('W') && stats.includes('only by repeaters with no link heard or predicted: N') && stats.includes('1 more repeater has no position'), stats);
+  });
+
+  await test('the mesh: links the model predicts between repeaters, rooftops included', () => {
+    const flat = () => 0;
+    const ridge = (lat) => (Math.abs(lat - 47.62) < 0.002 ? 120 : 0);
+    const reps = [{ lat: 47.6, lon: -122.3 }, { lat: 47.64, lon: -122.3 }, { lat: 48.5, lon: -122.3 }];
+    const flatLinks = M.predictedLinks(reps, flat);
+    assert.ok(flatLinks.some((p) => p.a === 0 && p.b === 1 && p.marginDb > 0), JSON.stringify(flatLinks));
+    assert.ok(!flatLinks.some((p) => p.b === 2), 'beyond the repeater view\'s reach');
+    const low = M.predictedLinks(reps.slice(0, 2), ridge);
+    const high = M.predictedLinks([Object.assign({ heightM: 200 }, reps[0]), reps[1]], ridge);
+    assert.ok(!low.length || (high.length && high[0].marginDb > low[0].marginDb), JSON.stringify([low, high]));
+  });
+
   await test('planned repeater: new against already-covered area, and the repeaters it links to', async () => {
     // low land with a little relief (dead-flat ground at sea level counts as water)
     const elev = (lat, lon) => 10 + 0.5 * Math.sin(lat * 3000) + 0.5 * Math.cos(lon * 3000);

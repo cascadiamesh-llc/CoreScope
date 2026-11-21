@@ -248,9 +248,16 @@ test('leaderboard: most relayed, longest links, newest, best placed from the map
   assert.ok(els['#mmStatAreaDetail'].textContent.includes('checked against 12 real links'));
   const placed = els['#mmLeaderPlaced'].innerHTML;
   assert.ok(placed.indexOf('Big') < placed.indexOf('Small') && placed.includes('41 km²') && placed.includes('3.2 km²') && !placed.includes('None'), placed);
-  // ranked by the land only it reaches, not everything in reach
-  assert.ok(placed.indexOf('Hilltop') < placed.indexOf('Big') && placed.indexOf('Small') < placed.indexOf('Shared'), placed);
-  assert.ok(placed.includes('44 km²') && placed.includes('50 km² of land in reach'), placed);
+  // with the mesh: land in reach, linked repeaters only, links alongside
+  A.mediaMeshOnCoverageStats(fake, { modeKey: 'ground', areaKm2: 100, repAreas: [], mesh: [
+    { rep: { public_key: 'aa', name: 'Hub' }, km2: 24.6, onlyKm2: 0.6, links: 11, tier: 'often' },
+    { rep: { public_key: 'bb', name: 'Hill' }, km2: 16.7, onlyKm2: 12.5, links: 1, tier: 'often' },
+    { rep: { public_key: 'cc', name: 'Faint' }, km2: 4.7, onlyKm2: 2.5, links: 0, tier: 'weak' },
+    { rep: { public_key: 'dd', name: 'Alone' }, km2: 30, onlyKm2: null, links: 0, tier: 'none' }] });
+  const m = els['#mmLeaderPlaced'].innerHTML;
+  assert.ok(m.indexOf('Hub') < m.indexOf('Hill') && m.indexOf('Hill') < m.indexOf('Faint') && !m.includes('Alone'), m);
+  assert.ok(m.includes('24.6 km² · 11 links') && m.includes('16.7 km² · 1 link<') && m.includes('12.5 km² of it reached by no other repeater'), m);
+  assert.ok(m.includes('linked by weaker evidence'), m);
 });
 
 test('milestone constants in the test match analytics.js', () => {

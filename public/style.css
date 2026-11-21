@@ -392,6 +392,11 @@
    * (#a21caf is 6.3:1 on white), light on dark ones. Lines, rings and icons
    * keep --mediamesh-path-color. */
   --mediamesh-text-color: #a21caf;
+  --mm-mesh-two: #c026d3;
+  --mm-mesh-one: #f0abfc;
+  --mm-mesh-weak: #7c3aed;
+  --mm-mesh-none: #8b8ba3;
+  --mm-mesh-weak-text: #6d28d9;
   --mediamesh-on-color: #ffffff; /* text on a filled MediaMesh badge, both themes */
   --mediamesh-badge-bg: #a21caf; /* fuchsia 700: white text on it reads at 6:1 */
   /* measured MediaMesh coverage, as the apps colour their coverage dots */
@@ -483,6 +488,7 @@
     --mediamesh-node-color: #e879f9;
     --mediamesh-node-weak-color: #c68cd8;
     --mediamesh-text-color: #f0abfc;
+    --mm-mesh-weak-text: #c4b5fd;
     --section-bg: #1e1e34;
   }
 }
@@ -547,6 +553,7 @@
   --mediamesh-node-color: #e879f9;
   --mediamesh-node-weak-color: #c68cd8;
   --mediamesh-text-color: #f0abfc;
+  --mm-mesh-weak-text: #c4b5fd;
   --section-bg: #1e1e34;
 }
 
@@ -6038,6 +6045,7 @@ body.embed #app.app-fixed {
 .mm-cov-legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 10px; font-size: 0.85em; align-items: center; }
 .mm-cov-sw { display: inline-block; width: 14px; height: 14px; border-radius: 3px; margin-right: 6px; vertical-align: -2px; }
 .mm-cov-scale { display: inline-flex; align-items: center; gap: 6px; }
+.mm-cov-scale[hidden], .mm-mesh[hidden], .mm-mesh-best[hidden] { display: none; }
 .mm-cov-gradient { display: inline-block; width: 140px; height: 12px; border-radius: 3px; border: 1px solid var(--border); }
 .mm-cov-scale-label { color: var(--text-muted); }
 .mm-cov-opacity { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); margin-left: auto; }
@@ -6085,7 +6093,7 @@ body.embed #app.app-fixed {
 .mm-lb h4 { margin: 0 0 6px; font-size: 0.95em; }
 .mm-lb-list { margin: 0; padding-left: 1.4em; font-size: 0.9em; line-height: 1.7; }
 .mm-lb-list li::marker { color: var(--mediamesh-node-color); font-weight: var(--fw-medium, 500); }
-.mm-lb-num { color: var(--text-muted); font-variant-numeric: tabular-nums; margin-left: 4px; }
+.mm-lb-num { color: var(--text-muted); font-variant-numeric: tabular-nums; margin-left: 4px; white-space: nowrap; }
 .mm-lb-empty { font-size: 0.9em; margin: 0; }
 .mm-cov-time { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; margin-top: 8px; font-size: 0.9em; }
 .mm-cov-time[hidden] { display: none; }
@@ -6538,3 +6546,32 @@ html.mm-embed--sky .mm-embed-open:hover { background: var(--mm-sky-ink); color: 
 .mm-ins-arrived { color: var(--status-green-text); font-weight: var(--fw-medium, 500); }
 .mm-ins-arrived-part { color: var(--text-muted); }
 .mm-ins-h3-next { margin-top: 22px; }
+
+/* ---- Coverage: the mesh view ---- */
+.mm-mesh { display: flex; flex-direction: column; gap: 10px; margin: 8px 0 10px; }
+.mm-mesh-use { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; font-size: 0.9em; }
+.mm-mesh-use label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; min-height: 32px; }
+.mm-mesh-fixed { padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border); color: var(--text); }
+.mm-mesh-key { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 0.85em; color: var(--text-muted); }
+.mm-mesh-sw--two { background: var(--mm-mesh-two); }
+.mm-mesh-sw--one { background: var(--mm-mesh-one); }
+.mm-mesh-sw--weak { background: var(--mm-mesh-weak); }
+.mm-mesh-sw--none { background: var(--mm-mesh-none); }
+.mm-mesh-line { display: inline-block; width: 22px; margin-right: 6px; vertical-align: middle; border-top: 3px solid var(--text); }
+.mm-mesh-line--rare { border-top-style: dashed; border-top-width: 2px; }
+.mm-mesh-line--model { border-top: 3px dotted var(--mm-mesh-weak); }
+.mm-mesh-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+.mm-mesh-tile { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--card-bg); }
+.mm-mesh-big { font-size: 1.5em; font-weight: 700; color: var(--text); line-height: 1.2; }
+.mm-mesh-big--mesh { color: var(--mediamesh-text-color, var(--text)); }
+.mm-mesh-big--weak { color: var(--mm-mesh-weak-text, var(--text)); }
+.mm-mesh-label { font-size: 0.85em; color: var(--text-muted); margin-top: 2px; }
+.mm-mesh-best { margin: 12px 0; }
+.mm-mesh-best h4 { margin: 0 0 2px; }
+.mm-mesh-table td, .mm-mesh-table th { white-space: nowrap; }
+.mm-mesh-sort { background: none; border: 0; padding: 4px 0; font: inherit; font-weight: 600; color: var(--text-muted); cursor: pointer; min-height: 32px; }
+.mm-mesh-sort.is-on { color: var(--mediamesh-text-color, var(--text)); }
+.mm-mesh-row--weak td, .mm-mesh-row--weak a { color: var(--mm-mesh-weak-text, var(--text)); }
+.mm-mesh-row--none td { color: var(--text-muted); }
+.mm-mesh-ev { font-size: 0.85em; color: var(--text-muted); }
+

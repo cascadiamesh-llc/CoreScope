@@ -703,10 +703,11 @@
       <div class="mm-cov-head">
         <div>
           <h3 class="mm-cov-title"><span>MediaMesh coverage estimate</span> <strong>based on data from MediaMesh observers</strong> <small class="mm-cov-observer-note">(some areas with MediaMesh may not appear if there is no observer to hear it)</small></h3>
-          <p class="text-muted mm-cov-intro">Where photos, video and voice on 911.150 MHz should get through, from each MediaMesh repeater's position and the terrain. Conservative: 22 dBm, antennas 10 m up, a 10 dB safety margin. Click the map for the terrain profile to any point.</p>
+          <p class="text-muted mm-cov-intro">Where photos, video and voice on 911.150 MHz should get through, from each MediaMesh repeater's position and the terrain. Conservative: 22 dBm, antennas 10 m up unless the owner gave the height, a 10 dB safety margin. Click the map for the terrain profile to any point.</p>
         </div>
         <div class="mm-cov-toggle">
           <button type="button" class="tab-btn active" data-mm-cov="ground">People on the ground</button>
+          <button type="button" class="tab-btn" data-mm-cov="mesh" title="Where the repeaters that hear each other reach, and where two or more of them do">The mesh</button>
           <button type="button" class="tab-btn" data-mm-cov="repeater">Repeater to repeater</button>
           <button type="button" class="tab-btn mm-cov-plan-btn" data-mm-cov-plan aria-pressed="false">＋ Plan a repeater</button>
           <button type="button" class="tab-btn mm-cov-3d-btn" data-mm-cov-3d disabled title="The estimate over the terrain in 3D, with the backbone">3D view</button>
@@ -717,6 +718,24 @@
         <button type="button" class="tab-btn active" data-mm-cov-place="outdoors" aria-pressed="true">Outdoors</button>
         <button type="button" class="tab-btn" data-mm-cov-place="car" aria-pressed="false">In a car</button>
         <button type="button" class="tab-btn" data-mm-cov-place="indoors" aria-pressed="false">Indoors</button>
+      </div>
+      <div class="mm-mesh" id="mmCovMesh" hidden>
+        <div class="mm-mesh-use" role="group" aria-label="Which links count">
+          <span class="mm-cov-places-label">Count links</span>
+          <span class="mm-mesh-fixed">heard 5+ times</span>
+          <label><input type="checkbox" data-mm-mesh-use="rare" checked> heard 1–4 times</label>
+          <label><input type="checkbox" data-mm-mesh-use="model" checked> the model says they reach</label>
+        </div>
+        <div class="mm-mesh-key">
+          <span><span class="mm-cov-sw mm-mesh-sw mm-mesh-sw--two"></span>2+ repeaters in the mesh</span>
+          <span><span class="mm-cov-sw mm-mesh-sw mm-mesh-sw--one"></span>1 repeater in the mesh</span>
+          <span><span class="mm-cov-sw mm-mesh-sw mm-mesh-sw--weak"></span>only repeaters with weaker evidence</span>
+          <span><span class="mm-cov-sw mm-mesh-sw mm-mesh-sw--none"></span>no link heard or predicted</span>
+          <span><span class="mm-mesh-line"></span>heard 5+ times</span>
+          <span><span class="mm-mesh-line mm-mesh-line--rare"></span>heard 1–4 times</span>
+          <span><span class="mm-mesh-line mm-mesh-line--model"></span>the model says they reach</span>
+        </div>
+        <div class="mm-mesh-tiles" id="mmCovMeshStats"></div>
       </div>
       <div class="mm-cov-reps" id="mmCovReps"><div id="mmCovRepSummary"></div><div class="mm-cov-rep-panel" id="mmCovRepPanel" hidden></div></div>
       <div id="mmCovMap" class="mm-cov-map"></div>
@@ -737,6 +756,11 @@
         <button type="button" class="tab-btn mm-cov-play" data-mm-cov-play><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-play"/></svg> Play growth</button>
         <input type="range" id="mmCovTimeRange" min="0" max="0" value="0" aria-label="Day shown">
         <span class="mm-cov-time-label" id="mmCovTimeLabel" aria-live="polite"></span>
+      </div>
+      <div class="mm-mesh-best" id="mmCovMeshBest" hidden>
+        <h4>Best placed in the mesh</h4>
+        <p class="text-muted mm-cov-note">Land each repeater reaches, open water left out. Only it: what the mesh would lose without it. Pick a column to sort.</p>
+        <div id="mmCovMeshTable"></div>
       </div>
       <div class="mm-cov-plan" id="mmCovPlan" hidden aria-live="polite"></div>
       <p class="mm-cov-readout" id="mmCovReadout" aria-live="polite"></p>
@@ -852,7 +876,7 @@
       <h3>MediaMesh leaderboard</h3>
       <div class="mm-lb">
         <section><h4>Most media packets relayed <span class="text-muted">(7 days)</span></h4>${list(relayed)}</section>
-        <section><h4>Best placed <span class="text-muted">(km² of land only it reaches)</span></h4><div id="mmLeaderPlaced"><p class="text-muted mm-lb-empty">Waiting for the coverage map…</p></div></section>
+        <section><h4>Best placed <span class="text-muted">(land it reaches, in the mesh)</span></h4><div id="mmLeaderPlaced"><p class="text-muted mm-lb-empty">Waiting for the coverage map…</p></div></section>
         <section><h4>Longest links heard</h4>${list(longest)}</section>
         <section><h4>Newest on MediaMesh</h4>${list(newest)}</section>
       </div>
@@ -874,12 +898,15 @@
     if (detail && st.calibration && st.calibration.used) detail.textContent = `for people on the ground, checked against ${st.calibration.n} real links`;
     const placed = el.querySelector('#mmLeaderPlaced');
     if (placed) {
-      // Ranked by what each adds that no other repeater reaches: repeaters on
-      // neighbouring rooftops each reach a lot, but mostly the same streets.
-      const only = (x) => (x.onlyKm2 == null ? x.km2 : x.onlyKm2);
-      const top = (st.repAreas || []).filter((x) => only(x) > 0).sort((a, b) => only(b) - only(a)).slice(0, 5);
+      // In a mesh, overlap is how repeaters link up: ranked by the land each
+      // reaches, among those linked into the mesh (heard, or as the model
+      // predicts), with the links heard alongside.
+      const mesh = Array.isArray(st.mesh) ? st.mesh.filter((x) => x.tier !== 'none' && x.km2 > 0) : null;
+      const top = (mesh || (st.repAreas || []).filter((x) => x.km2 > 0)).slice().sort((a, b) => b.km2 - a.km2).slice(0, 5);
+      const tip = (x) => `${mmKm(x.km2)} km² of land in reach` + (x.onlyKm2 != null ? `, ${mmKm(x.onlyKm2)} km² of it reached by no other repeater in the mesh` : '')
+        + (x.tier === 'weak' ? '; linked by weaker evidence' : '');
       placed.innerHTML = top.length
-        ? `<ol class="mm-lb-list">${top.map((x) => `<li><a href="#/nodes/${encodeURIComponent(x.rep.public_key || '')}">${esc(x.rep.name || String(x.rep.public_key || '').slice(0, 8))}</a> <span class="mm-lb-num" title="${mmKm(x.km2)} km² of land in reach, ${mmKm(only(x))} km² of it reached by no other repeater">${mmKm(only(x))} km²</span></li>`).join('')}</ol>`
+        ? `<ol class="mm-lb-list">${top.map((x) => `<li><a href="#/nodes/${encodeURIComponent(x.rep.public_key || '')}">${esc(x.rep.name || String(x.rep.public_key || '').slice(0, 8))}</a> <span class="mm-lb-num" title="${esc(tip(x))}">${mmKm(x.km2)} km²${x.links != null ? ` · ${x.links} link${x.links === 1 ? '' : 's'}` : ''}</span></li>`).join('')}</ol>`
         : '<p class="text-muted mm-lb-empty">Nothing yet.</p>';
     }
   }
