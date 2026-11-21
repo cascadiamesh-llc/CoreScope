@@ -52,14 +52,14 @@ test('stalls: the far end waiting far longer than usual', () => {
 
 test('story: outcome, wait, stall, where pieces were lost, speed', () => {
   const s = R.story(log);
-  assert.ok(s.includes('Arrived incomplete at <strong>Far</strong>, 2 hops away: 5 of 6 pieces. Piece 5 never got there'), s);
+  assert.ok(s.includes('<strong>Far</strong>, 2 hops away, heard 5 of 6 pieces; piece 5 didn\'t reach it. That\'s what this observer heard, not what the recipient got'), s);
   assert.ok(s.includes('first piece reached Far 4 s after the announcement'), s);
   assert.ok(s.includes('stalled for <strong>5 min 22 s</strong> after a parity piece'), s);
-  assert.ok(s.includes('Near &lt;1&gt;, 1 hop out, heard 6; pieces 3 and 5 were lost after it, on the way to Far (3 rebuilt from parity there).'), s);
+  assert.ok(s.includes('Near &lt;1&gt;, 1 hop out, heard 6; pieces 3 and 5 were heard there but not at Far (3 rebuilt from parity there).'), s);
   assert.ok(s.includes('about 0.03 kbit/s'), s);
   assert.ok(!s.includes('<1>'), 'names are escaped');
   const whole = R.story(Object.assign({}, log, { clip: Object.assign({}, log.clip, { outcome: 'whole', missing: [], rebuilt: [] }) }));
-  assert.ok(whole.includes('Arrived whole at <strong>Far</strong>, 2 hops away, 5 min 34 s after it was announced.'), whole);
+  assert.ok(whole.includes('<strong>Far</strong>, 2 hops away, heard all of it, 5 min 34 s after it was announced.'), whole);
   assert.ok(R.story({ sid: 'x', clip: { total: 4, outcome: 'none' }, pieces: [] }).includes('no observer heard any of its 4 pieces'));
 });
 
@@ -79,7 +79,7 @@ test('view: caption without the announcement code, badge, observers table', () =
   const h = R.viewHtml(log);
   assert.ok(h.includes('Flight recorder: Video, 9 s · 6 pieces'), h.slice(0, 300));
   assert.ok(h.includes('“Jade: Ferry at sunset”') && h.includes('#seattle'), h.slice(0, 600));
-  assert.ok(h.includes('mm-ins-outcome--partial') && h.includes('Incomplete'));
+  assert.ok(h.includes('mm-ins-outcome--partial') && h.includes('Heard in part'));
   assert.ok(h.includes('far end') && h.includes('First Hill › Rainier View'));
   assert.strictEqual(R.dur(5), '5 s');
   assert.strictEqual(R.dur(3725), '1 h 2 min');

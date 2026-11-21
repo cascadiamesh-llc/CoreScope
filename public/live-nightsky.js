@@ -12,9 +12,11 @@
  * - The land glows faintly underneath, shoreline and hills, from the same
  *   elevation tiles the coverage estimate uses (MediaMeshCoverage).
  * - When a clip's last piece has passed, how it went shows where it
- *   arrived: a burst when every piece got there, a shimmer when parity
- *   pieces made up for losses, red embers falling for pieces lost. Only
- *   clips whose announcement says how many pieces they have are judged.
+ *   arrived: a burst when the observers heard every piece, a shimmer when
+ *   parity pieces made up for some they missed. A clip they heard only part
+ *   of just fades: observers hear only part of a path, so that says nothing
+ *   about whether it arrived. Only clips whose announcement says how many
+ *   pieces they have count.
  * - Moments: a banner for the first photo, video and voice of the day, a new
  *   longest route today, a whole clip across many hops, and round numbers of
  *   relays.
@@ -37,7 +39,6 @@
   const MIN_SPAN = 0.055;      // never tighter than about 6 km
   const BANNER_MS = 5200;
   const RELAY_MARKS = [100, 250, 500, 1000, 2500, 5000, 10000, 25000, 50000, 100000];
-  const RED = [248, 113, 113];
 
   function kindOf(k) { return KINDS[k] ? k : 'clip'; }
 
@@ -170,9 +171,10 @@
   }
 
   function outcomeText(o) {
-    if (o.outcome === 'whole') return 'every piece arrived';
+    if (o.outcome === 'whole') return 'every piece heard';
     if (o.outcome === 'parity') return `whole: ${o.rebuilt} rebuilt from parity`;
-    if (o.outcome === 'lost') return `${o.missing} piece${o.missing === 1 ? '' : 's'} lost`;
+    // observers hear only part of a clip's path: no claim it didn't arrive
+    if (o.outcome === 'lost') return 'passed out of the observers\' hearing';
     return 'finished';
   }
 
@@ -482,7 +484,6 @@
       const t0 = nowMs / 1000;
       if (o.outcome === 'whole' || o.outcome === 'parity') st.fx.push({ type: 'burst', lat: dest.lat, lon: dest.lon, rgb, t0 });
       if (o.outcome === 'parity') st.fx.push({ type: 'shimmer', lat: dest.lat, lon: dest.lon, rgb: [253, 230, 138], t0, n: Math.min(14, 4 + o.rebuilt * 3) });
-      if (o.outcome === 'lost') st.fx.push({ type: 'fall', lat: dest.lat, lon: dest.lon, rgb: RED, t0, n: Math.min(12, o.missing) });
       if (o.outcome !== 'lost' && tr.maxHops >= 4) moment(`A whole ${KINDS[tr.kind].label.toLowerCase()} across ${tr.maxHops} hops`, ends(tr.hops), 'whole');
     });
   }

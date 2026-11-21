@@ -128,7 +128,7 @@ test('outcomes: whole, made whole by parity, pieces lost, or no claim without a 
   // block 0 loses 2 with 1 parity piece; block 1 (20..24) whole
   assert.deepStrictEqual(S.outcomeOf(tr(25, all(25).filter((i) => i !== 3 && i !== 4), { 0: 1 })), { outcome: 'lost', missing: 2, rebuilt: 0 });
   assert.strictEqual(S.outcomeOf(tr(0, [0, 1])).outcome, null, 'no announcement: no claim');
-  assert.strictEqual(S.outcomeText({ outcome: 'lost', missing: 1 }), '1 piece lost');
+  assert.strictEqual(S.outcomeText({ outcome: 'lost', missing: 1 }), 'passed out of the observers\' hearing', 'never a claim it was lost');
 });
 
 test('the land: sea and lakes left dark, the shore traced, a flat field still land', () => {

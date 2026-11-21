@@ -44,7 +44,7 @@
     return out.join(' → ');
   }
 
-  // ---- Did it get through? ------------------------------------------------
+  // ---- How much of each clip the observers heard ------------------------------------------------
 
   /** The judged clips (heard at all) and their outcomes, overall and by hops. */
   function deliverySummary(clips) {
@@ -75,32 +75,32 @@
   }
 
   function outcomeText(c) {
-    if (c.outcome === 'whole') return 'whole';
-    if (c.outcome === 'parity') return 'whole, with parity';
+    if (c.outcome === 'whole') return 'all of it';
+    if (c.outcome === 'parity') return 'all of it, with parity';
     if (c.outcome === 'partial') return `${c.total - (c.missing || []).length} of ${c.total}`;
-    return 'not heard';
+    return 'none of it';
   }
 
   function deliveryHtml(clips, nameOf, days, unannounced) {
     const s = deliverySummary(clips);
     const priv = (unannounced || []).length;
-    const head = `<h3>Did it get through?</h3><p class="text-muted mm-ins-sub">Each clip's announcement says how many pieces it has, so the pieces heard at the far end (the observer that heard it over the most hops) say whether it arrived. Clips announced on channels the analyzer can read, last ${days} days. A clip sent in a direct message or on a private channel has its announcement encrypted, so it can't be judged here; how fast it crossed still shows below.</p>`;
+    const head = `<h3>How much of each clip the observers heard</h3><p class="text-muted mm-ins-sub">Each clip's announcement says how many pieces it has; this is how many of them reached the observer that heard it furthest along (the far end). It isn't whether the clip arrived: observers only hear pieces that pass near them, a MediaMesh repeater misses some while it listens to the main mesh, and the receiving app rebuilds or asks again for anything it missed. Clips announced on channels the analyzer can read, last ${days} days. A clip sent in a direct message or on a private channel has its announcement encrypted, so it isn't counted here; how fast it crossed still shows below.</p>`;
     const privNote = priv ? `<p class="text-muted">${priv.toLocaleString()} clip${priv === 1 ? '' : 's'} sent privately ${priv === 1 ? 'was' : 'were'} heard in this period.</p>` : '';
     if (!s.n) return head + '<p class="text-muted">No announced clips heard yet in this period.</p>' + privNote;
     const tiles = `<div class="mm-ins-tiles">
-      <div class="mm-ins-tile"><div class="mm-ins-big mm-ins-accent">${pct(s.whole + s.parity, s.n)}%</div><div class="mm-ins-label">of ${s.n.toLocaleString()} clips arrived whole</div></div>
+      <div class="mm-ins-tile"><div class="mm-ins-big mm-ins-accent">${pct(s.whole + s.parity, s.n)}%</div><div class="mm-ins-label">of ${s.n.toLocaleString()} clips heard whole by an observer</div></div>
       <div class="mm-ins-tile"><div class="mm-ins-big">${pct(s.parity, s.n)}%</div><div class="mm-ins-label">whole thanks to parity pieces</div></div>
-      <div class="mm-ins-tile"><div class="mm-ins-big">${pct(s.partial, s.n)}%</div><div class="mm-ins-label">arrived incomplete</div></div>
-      <div class="mm-ins-tile"><div class="mm-ins-big">${s.unheard.toLocaleString()}</div><div class="mm-ins-label">announced but no piece heard by an observer</div></div>
+      <div class="mm-ins-tile"><div class="mm-ins-big">${pct(s.partial, s.n)}%</div><div class="mm-ins-label">heard in part (the rest passed out of the observers' hearing)</div></div>
+      <div class="mm-ins-tile"><div class="mm-ins-big">${s.unheard.toLocaleString()}</div><div class="mm-ins-label">announced, no piece heard by an observer</div></div>
     </div>`;
     const bars = s.byHops.filter((b) => b.n).map((b) => `<div class="mm-ins-bar-row"><span>${b.hops}${b.hops === 5 ? '+' : ''} hop${b.hops === 1 ? '' : 's'}</span>
       <span class="mm-ins-bar" role="img" aria-label="${pct(b.ok, b.n)}% whole"><i style="width:${pct(b.ok, b.n)}%"></i></span><span class="mm-ins-num">${pct(b.ok, b.n)}%</span><span class="text-muted mm-ins-n">${b.n}</span></div>`).join('');
     const recent = clips.filter((c) => c.outcome !== 'none').slice(0, 8).map((c) => `<tr><td><button type="button" class="mm-fr-open" data-mm-clip="${esc(c.sid)}" title="Open its flight recorder: every piece, when and by which path">${esc(clipLabel(c))}</button></td><td>${esc(routeLabel(c, nameOf))}</td><td class="mm-ins-num">${c.hops}</td>
       <td>${piecesHtml(c)}</td><td class="mm-ins-outcome mm-ins-outcome--${esc(c.outcome)}">${esc(outcomeText(c))}</td></tr>`).join('');
     return head + tiles + `<div class="mm-ins-split">
-      <div class="mm-ins-col"><h4>Whole, by hops</h4>${bars}</div>
-      <div class="mm-ins-col mm-ins-wide"><h4>Recent clips</h4><div class="mm-ins-scroll"><table class="analytics-table mm-ins-table"><thead><tr><th scope="col">Clip</th><th scope="col">Route</th><th scope="col" class="mm-ins-num">Hops</th><th scope="col">Pieces</th><th scope="col">Arrived</th></tr></thead><tbody>${recent}</tbody></table></div>
-      ${privNote}<p class="text-muted mm-ins-key">Pick a clip for its flight recorder. <span class="mm-pieces"><span></span></span> heard · <span class="mm-pieces"><span class="is-rebuilt"></span></span> rebuilt from parity · <span class="mm-pieces"><span class="is-missing"></span></span> missing</p></div></div>`;
+      <div class="mm-ins-col"><h4>Heard whole, by hops</h4>${bars}</div>
+      <div class="mm-ins-col mm-ins-wide"><h4>Recent clips</h4><div class="mm-ins-scroll"><table class="analytics-table mm-ins-table"><thead><tr><th scope="col">Clip</th><th scope="col">Route</th><th scope="col" class="mm-ins-num">Hops</th><th scope="col">Pieces heard</th><th scope="col">Far end heard</th></tr></thead><tbody>${recent}</tbody></table></div>
+      ${privNote}<p class="text-muted mm-ins-key">Pick a clip for its flight recorder. <span class="mm-pieces"><span></span></span> heard · <span class="mm-pieces"><span class="is-rebuilt"></span></span> rebuilt from parity · <span class="mm-pieces"><span class="is-missing"></span></span> not heard by an observer</p></div></div>`;
   }
 
   // ---- Speed ----------------------------------------------------------------
@@ -139,7 +139,7 @@
 
   function speedHtml(clips, nameOf, days, unannounced) {
     const s = speedSummary(clips, nameOf, unannounced);
-    const head = `<h3>How fast clips cross the mesh</h3><p class="text-muted mm-ins-sub">From the first piece the far end heard to the last: announced clips that arrived whole, and clips sent privately (in a direct message or on a private channel), timed from the pieces heard. Last ${days} days.</p>`;
+    const head = `<h3>How fast clips cross the mesh</h3><p class="text-muted mm-ins-sub">From the first piece the far end heard to the last: announced clips the far end heard whole, and clips sent privately (in a direct message or on a private channel), timed from the pieces heard. Last ${days} days.</p>`;
     if (!s.n) return head + '<p class="text-muted">No clips with more than one piece heard yet.</p>';
     const maxK = Math.max(...s.byHops.map((b) => b.kbps || 0), 0.1);
     const tiles = `<div class="mm-ins-tiles">
@@ -180,7 +180,7 @@
 
   function busyHtml(b, metric, days) {
     metric = metric || 'packets';
-    const label = { packets: 'packets', clips: 'clips', partial: 'incomplete clips' }[metric];
+    const label = { packets: 'packets', clips: 'clips', partial: 'clips heard in part' }[metric];
     let max = 0, best = null, quiet = null;
     b.grid.forEach((row, d) => row.forEach((c, h) => {
       if (c[metric] > max) { max = c[metric]; best = { d, h, v: c[metric] }; }
@@ -193,7 +193,7 @@
       }
     }
     const head = `<div class="mm-ins-head"><div><h3>When MediaMesh is busy</h3><p class="text-muted mm-ins-sub">Photos, video and voice by weekday and hour, your time, averaged over the last ${days} days.</p></div>
-      <div class="mm-ins-toggle" role="group" aria-label="What to count">${['packets', 'clips', 'partial'].map((m) => `<button type="button" class="tab-btn${m === metric ? ' active' : ''}" data-mm-busy="${m}" aria-pressed="${m === metric}">${{ packets: 'Packets', clips: 'Clips', partial: 'Incomplete' }[m]}</button>`).join('')}</div></div>`;
+      <div class="mm-ins-toggle" role="group" aria-label="What to count">${['packets', 'clips', 'partial'].map((m) => `<button type="button" class="tab-btn${m === metric ? ' active' : ''}" data-mm-busy="${m}" aria-pressed="${m === metric}">${{ packets: 'Packets', clips: 'Clips', partial: 'Heard in part' }[m]}</button>`).join('')}</div></div>`;
     if (!max) return head + `<p class="text-muted">Nothing to show yet: no ${label} in this period.</p>`;
     const cols = Array.from({ length: 24 }, (_, h) => `<th scope="col">${h % 3 === 0 ? hourLabel(h).replace(' ', '') : ''}</th>`).join('');
     const body = b.grid.map((row, d) => `<tr><th scope="row">${DAYS[d]}</th>${row.map((c, h) => {
@@ -204,7 +204,7 @@
     return head + `<div class="mm-ins-scroll"><table class="mm-ins-heat" aria-label="${esc(label)} by weekday and hour"><thead><tr><th></th>${cols}</tr></thead><tbody>${body}</tbody></table></div>
       <div class="mm-ins-tiles mm-ins-tiles--3">
         <div class="mm-ins-tile"><div class="mm-ins-strong">Busiest: ${DAYS[best.d]}, ${hourLabel(best.h)}–${hourLabel((best.h + 1) % 24)}</div><div class="mm-ins-label">${fmtV(best.v)} ${label} in that hour, on average</div></div>
-        <div class="mm-ins-tile"><div class="mm-ins-strong">Quietest: ${DAYS[quiet.d]}, ${hourLabel(quiet.h)}–${hourLabel((quiet.h + 3) % 24)}</div><div class="mm-ins-label">${metric === 'partial' ? 'fewest incomplete clips' : 'a good time for big transfers'}</div></div>
+        <div class="mm-ins-tile"><div class="mm-ins-strong">Quietest: ${DAYS[quiet.d]}, ${hourLabel(quiet.h)}–${hourLabel((quiet.h + 3) % 24)}</div><div class="mm-ins-label">${metric === 'partial' ? 'fewest clips heard in part' : 'a good time for big transfers'}</div></div>
         <div class="mm-ins-tile"><div class="mm-ins-strong">${fmtV(b.grid.reduce((a, r) => a + r.reduce((x, c) => x + c[metric], 0), 0))} ${label}</div><div class="mm-ins-label">in a typical week</div></div>
       </div>`;
   }
@@ -578,7 +578,7 @@
   /** The tab's placeholders for these cards. */
   function cardsHtml() {
     const card = (id, title) => `<div class="analytics-row"><div class="analytics-card flex-1 mm-ins-card" id="${id}"><h3>${title}</h3><p class="text-muted">Loading…</p></div></div>`;
-    return card('mmDeliveryCard', 'Did it get through?') + card('mmSpeedCard', 'How fast clips cross the mesh')
+    return card('mmDeliveryCard', 'How much of each clip the observers heard') + card('mmSpeedCard', 'How fast clips cross the mesh')
       + card('mmWeakCard', 'Where one repeater going down would split MediaMesh') + card('mmBusyCard', 'When MediaMesh is busy');
   }
 

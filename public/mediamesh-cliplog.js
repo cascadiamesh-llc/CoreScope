@@ -111,9 +111,9 @@
     const farName = `<strong>${esc(far.name)}</strong>`;
     const hops = `${far.hops} hop${far.hops === 1 ? '' : 's'}`;
     const took = dur((far.last - Math.min(t0, far.first)) / 1000);
-    if (c && c.outcome === 'whole') out.push(`Arrived whole at ${farName}, ${hops} away, ${took} after it was announced.`);
-    else if (c && c.outcome === 'parity') out.push(`Arrived whole at ${farName}, ${hops} away, in ${took}: piece${(c.rebuilt || []).length === 1 ? '' : 's'} ${list(c.rebuilt || [])} never came, and ${(c.rebuilt || []).length === 1 ? 'was' : 'were'} rebuilt from the parity pieces.`);
-    else if (c && c.outcome === 'partial') out.push(`Arrived incomplete at ${farName}, ${hops} away: ${total - (c.missing || []).length} of ${total} pieces. Piece${(c.missing || []).length === 1 ? '' : 's'} ${list(c.missing || [])} never got there, and the parity pieces weren't enough to rebuild ${(c.missing || []).length === 1 ? 'it' : 'them'}.`);
+    if (c && c.outcome === 'whole') out.push(`${farName}, ${hops} away, heard all of it, ${took} after it was announced.`);
+    else if (c && c.outcome === 'parity') out.push(`${farName}, ${hops} away, heard all of it in ${took}: piece${(c.rebuilt || []).length === 1 ? '' : 's'} ${list(c.rebuilt || [])} didn't reach it, and ${(c.rebuilt || []).length === 1 ? 'was' : 'were'} rebuilt from the parity pieces.`);
+    else if (c && c.outcome === 'partial') out.push(`${farName}, ${hops} away, heard ${total - (c.missing || []).length} of ${total} pieces; piece${(c.missing || []).length === 1 ? '' : 's'} ${list(c.missing || [])} didn't reach it. That's what this observer heard, not what the recipient got: observers miss pieces that pass out of their hearing or while they listen to the main mesh, and the receiving app rebuilds or asks again for what it missed.`);
     else out.push(`${farName} heard ${far.data.size} piece${far.data.size === 1 ? '' : 's'} over ${hops}${c ? '' : ' (no announcement heard, so the total is unknown)'}.`);
     if (Number.isFinite(t0) && log.announcement) {
       const wait = (far.first - t0) / 1000;
@@ -130,7 +130,7 @@
     if (nearer) {
       const lost = [...nearer.data].filter((i) => !far.data.has(i)).sort((a, b) => a - b);
       const fixed = lost.filter((i) => (c && c.rebuilt || []).includes(i));
-      out.push(`${esc(nearer.name)}, ${nearer.hops} hop${nearer.hops === 1 ? '' : 's'} out, heard ${nearer.data.size}; piece${lost.length === 1 ? '' : 's'} ${list(lost)} ${lost.length === 1 ? 'was' : 'were'} lost after it, on the way to ${esc(far.name)}`
+      out.push(`${esc(nearer.name)}, ${nearer.hops} hop${nearer.hops === 1 ? '' : 's'} out, heard ${nearer.data.size}; piece${lost.length === 1 ? '' : 's'} ${list(lost)} ${lost.length === 1 ? 'was' : 'were'} heard there but not at ${esc(far.name)}`
         + (fixed.length && fixed.length < lost.length ? ` (${list(fixed)} rebuilt from parity there).` : fixed.length ? ', and rebuilt from parity there.' : '.'));
     }
     if (c && c.bytes && c.durationS > 0) out.push(`${(c.bytes / 1024).toFixed(1)} KB over ${dur(c.durationS)} from first piece to last: about ${((c.bytes * 8) / c.durationS / 1000).toFixed(2)} kbit/s.`);
@@ -180,7 +180,7 @@
     const every = rowH >= 10 ? 1 : rowH >= 6 ? 5 : 20;
     for (let i = 0; i < total; i++) {
       const cls = missing.has(i) ? 'is-missing' : rebuilt.has(i) ? 'is-rebuilt' : '';
-      if (cls) svg += `<rect class="mm-fr-row ${cls}" x="${left}" y="${(top + i * rowH).toFixed(1)}" width="${W - left - right}" height="${rowH}"><title>Piece ${i + 1}: ${missing.has(i) ? 'never reached the far end' : 'rebuilt from parity at the far end'}</title></rect>`;
+      if (cls) svg += `<rect class="mm-fr-row ${cls}" x="${left}" y="${(top + i * rowH).toFixed(1)}" width="${W - left - right}" height="${rowH}"><title>Piece ${i + 1}: ${missing.has(i) ? 'not heard at the far end' : 'rebuilt from parity at the far end'}</title></rect>`;
       if (cls || i % every === 0 || i === total - 1) svg += label(i, (missing.has(i) ? '× ' : rebuilt.has(i) ? 'rebuilt ' : '') + (i + 1), cls);
     }
     if (parity.length) svg += label(total, 'parity', 'mm-fr-label--head');
@@ -220,7 +220,7 @@
   function viewHtml(log) {
     const c = log.clip;
     const kind = c ? (KIND[c.kind] || 'Clip') + (c.kind !== 'photo' && c.seconds ? `, ${c.seconds} s` : '') : 'Clip';
-    const outcome = c ? { whole: 'Arrived whole', parity: 'Whole with parity', partial: 'Incomplete', none: 'Not heard' }[c.outcome] || '' : '';
+    const outcome = c ? { whole: 'Heard whole', parity: 'Heard whole, with parity', partial: 'Heard in part', none: 'Not heard' }[c.outcome] || '' : '';
     const ann = log.announcement;
     const caption = ann ? ann.text.replace(/(^|[\s:])(VI1|VV1|VE3|VM1):[0-9a-z:]+\s*/i, '$1').trim() : '';
     const when = ann ? new Date(ann.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
@@ -232,7 +232,7 @@
       </div>
       <div class="mm-fr-story">${story(log)}</div>
       <div class="mm-fr-scroll">${waterfallSvg(log)}</div>
-      <p class="text-muted mm-fr-key-line">Each dot is one observer hearing one piece; hover for when and by which path. <span class="mm-fr-row-key is-missing"></span> never reached the far end · <span class="mm-fr-row-key is-rebuilt"></span> rebuilt from parity · shaded: the far end waiting.</p>
+      <p class="text-muted mm-fr-key-line">Each dot is one observer hearing one piece; hover for when and by which path. <span class="mm-fr-row-key is-missing"></span> not heard at the far end · <span class="mm-fr-row-key is-rebuilt"></span> rebuilt from parity · shaded: the far end waiting.</p>
       <div class="mm-ins-scroll">${observersHtml(log)}</div>`;
   }
 

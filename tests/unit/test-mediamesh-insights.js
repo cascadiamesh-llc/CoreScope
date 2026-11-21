@@ -35,7 +35,9 @@ test('delivery: whole, by parity, incomplete, unheard; by hops', () => {
   assert.deepStrictEqual(s.byHops.find((b) => b.hops === 5), { hops: 5, n: 1, ok: 0 });
   assert.deepStrictEqual(s.byHops.find((b) => b.hops === 2), { hops: 2, n: 2, ok: 2 });
   const h = I.deliveryHtml(clips, nameOf, 7);
-  assert.ok(h.includes('67%</div><div class="mm-ins-label">of 3 clips arrived whole'), h);
+  assert.ok(h.includes('67%</div><div class="mm-ins-label">of 3 clips heard whole by an observer'), h);
+  assert.ok(!/arrived incomplete|Did it get through/.test(h), 'what the observers heard, not whether it arrived');
+  assert.ok(h.includes('the receiving app rebuilds or asks again'));
   assert.ok(h.includes('First &lt;Hill&gt;') && !h.includes('First <Hill>'), 'escaped');
   assert.ok(h.includes('class="is-missing"') && h.includes('class="is-rebuilt"') && h.includes('3 of 4'));
   assert.ok(I.deliveryHtml([], nameOf, 7).includes('No announced clips'));
