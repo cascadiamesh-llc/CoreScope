@@ -727,6 +727,14 @@ function cellAt(cov, lat, lon) {
     assert.ok(/<td>40<\/td><td>—<\/td><td>—<\/td><td>−[\d.]+ dBm<\/td><td>—<\/td>/.test(html), html);
     assert.strictEqual(M.linksTableHtml([]), '');
     assert.deepStrictEqual(M.linkRows(undefined, null), []);
+    // a rooftop at either end is taken at the height its owner gave: over a
+    // ridge in between, the taller antenna clears more of it
+    const ridge = (lat) => (Math.abs(lat - (47.6 + kmLat(2))) < kmLat(0.2) ? 40 : 0);
+    const base = { from_role: 'repeater', from_lat: 47.6, from_lon: -122.33, to_lat: 47.6 + kmLat(4), to_lon: -122.33, count: 5, avg_rssi: -100 };
+    const plain = M.linkRows([Object.assign({ from: 'abcdef01', observer_id: 'abcdef02' }, base)], ridge)[0];
+    const roofTx = M.linkRows([Object.assign({ from: '1ffbd69aa03f', observer_id: 'abcdef02' }, base)], ridge)[0];
+    const roofRx = M.linkRows([Object.assign({ from: 'abcdef01', observer_id: '1ffbd69aa03f' }, base)], ridge)[0];
+    assert.ok(roofTx.modelRssi > plain.modelRssi + 3 && roofRx.modelRssi > plain.modelRssi + 3, `${plain.modelRssi} ${roofTx.modelRssi} ${roofRx.modelRssi}`);
   });
 
   // every pixel of a tile encodes one height: (R*256 + G + B/256) - 32768

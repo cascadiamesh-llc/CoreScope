@@ -1822,8 +1822,9 @@
    * figures then). Returns rows sorted by packets heard:
    * { from, to, fromLat, fromLon, toLat, toLon, count, avgSnr, avgRssi,
    *   distM, modelRssi, delta (heard minus model, dB) }.
-   * A repeater or room server is taken as 10 m up at both ends; anything
-   * else as a radio on the ground heard by a 10 m antenna.
+   * A repeater or room server is taken as 10 m up at both ends (or the
+   * height its owner gave); anything else as a radio on the ground heard by
+   * the observer's antenna.
    */
   function linkRows(links, elevAt) {
     const fixed = (role) => /repeater|room/i.test(role || '');
@@ -1841,9 +1842,13 @@
         const radio = radioFor({ radio: l.radio });
         // Loss is the same both ways, so a radio on the ground is worked out
         // from the fixed end towards it.
+        // Each end at its real height where its owner gave one (a rooftop),
+        // so a link off a tall building isn't mistaken for the model being low.
+        const obsH = knownHeightM({ public_key: l.observer_id });
         const p = fixed(l.from_role)
-          ? pathProfile({ lat: l.from_lat, lon: l.from_lon }, l.to_lat, l.to_lon, elevAt, 'repeater', radio)
-          : pathProfile({ lat: l.to_lat, lon: l.to_lon }, l.from_lat, l.from_lon, elevAt, 'ground', radio);
+          ? pathProfile({ lat: l.from_lat, lon: l.from_lon, public_key: l.from }, l.to_lat, l.to_lon, elevAt, 'repeater', radio,
+            obsH ? { rxHeightM: obsH } : null)
+          : pathProfile({ lat: l.to_lat, lon: l.to_lon, public_key: l.observer_id }, l.from_lat, l.from_lon, elevAt, 'ground', radio);
         if (p) {
           row.modelRssi = p.rxDbm;
           row.rawModelRssi = p.rxDbm - p.calibrationDb - p.fieldDb;
