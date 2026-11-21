@@ -483,15 +483,15 @@ function cellAt(cov, lat, lon) {
     cov.water[9] = 1;
     const tier = ['often', 'often', 'weak', 'none'];
     const mc = M.meshCells(cov, tier);
-    assert.deepStrictEqual(Array.from(mc.cells), [3, 3, 4, 4, 3, 0, 2, 2, 1, 0]);
+    assert.deepStrictEqual(Array.from(mc.cells), [3, 3, 4, 4, 3, 0, 2, 2, 1, 1], 'water counts too');
     const a = M.cellAreaKm2(cov);
-    assert.ok(Math.abs(mc.km2[4] - 2 * a) < 1e-9 && Math.abs(mc.km2[1] - a) < 1e-9);
+    assert.ok(Math.abs(mc.km2[4] - 2 * a) < 1e-9 && Math.abs(mc.km2[1] - 2 * a) < 1e-9);
     // leaving B out of the count
-    assert.deepStrictEqual(Array.from(M.meshCells(cov, tier, [true, false, true, true]).cells), [3, 3, 3, 3, 0, 0, 2, 2, 1, 0]);
+    assert.deepStrictEqual(Array.from(M.meshCells(cov, tier, [true, false, true, true]).cells), [3, 3, 3, 3, 0, 0, 2, 2, 1, 1]);
     const rows = M.meshRows(cov, tier, [1, 1, 0, 0]);
     const by = (n) => rows.find((x) => x.rep.name === n);
     assert.ok(Math.abs(by('A').km2 - 4 * a) < 1e-9 && Math.abs(by('A').onlyKm2 - 2 * a) < 1e-9);
-    assert.ok(Math.abs(by('W').onlyKm2 - 2 * a) < 1e-9 && by('N').onlyKm2 === null && Math.abs(by('N').km2 - a) < 1e-9);
+    assert.ok(Math.abs(by('W').onlyKm2 - 2 * a) < 1e-9 && by('N').onlyKm2 === null && Math.abs(by('N').km2 - 2 * a) < 1e-9, 'water in reach counts');
     const html = M.meshTableHtml(rows.map((x) => Object.assign({}, x, { rep: { name: x.rep.name + ' 🚰', public_key: 'k' } })), 'onlyKm2');
     assert.ok(html.includes('A 🚰') && html.includes('aria-sort="descending"') && html.includes('data-mm-mesh-sort="links"'), 'names keep their emoji');
     assert.ok(html.indexOf('N 🚰') > html.indexOf('W 🚰'), 'repeaters outside the mesh go last');

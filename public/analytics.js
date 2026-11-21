@@ -759,7 +759,7 @@
       </div>
       <div class="mm-mesh-best" id="mmCovMeshBest" hidden>
         <h4>Best placed in the mesh</h4>
-        <p class="text-muted mm-cov-note">Land each repeater reaches, open water left out. Only it: what the mesh would lose without it. Pick a column to sort.</p>
+        <p class="text-muted mm-cov-note">Land and water each repeater reaches. Only it: what the mesh would lose without it. Pick a column to sort.</p>
         <div id="mmCovMeshTable"></div>
       </div>
       <div class="mm-cov-plan" id="mmCovPlan" hidden aria-live="polite"></div>
@@ -876,7 +876,7 @@
       <h3>MediaMesh leaderboard</h3>
       <div class="mm-lb">
         <section><h4>Most media packets relayed <span class="text-muted">(7 days)</span></h4>${list(relayed)}</section>
-        <section><h4>Best placed <span class="text-muted">(land it reaches, in the mesh)</span></h4><div id="mmLeaderPlaced"><p class="text-muted mm-lb-empty">Waiting for the coverage map…</p></div></section>
+        <section><h4>Best placed <span class="text-muted">(land and water it reaches, in the mesh)</span></h4><div id="mmLeaderPlaced"><p class="text-muted mm-lb-empty">Waiting for the coverage map…</p></div></section>
         <section><h4>Longest links heard</h4>${list(longest)}</section>
         <section><h4>Newest on MediaMesh</h4>${list(newest)}</section>
       </div>
@@ -903,7 +903,7 @@
       // predicts), with the links heard alongside.
       const mesh = Array.isArray(st.mesh) ? st.mesh.filter((x) => x.tier !== 'none' && x.km2 > 0) : null;
       const top = (mesh || (st.repAreas || []).filter((x) => x.km2 > 0)).slice().sort((a, b) => b.km2 - a.km2).slice(0, 5);
-      const tip = (x) => `${mmKm(x.km2)} km² of land in reach` + (x.onlyKm2 != null ? `, ${mmKm(x.onlyKm2)} km² of it reached by no other repeater in the mesh` : '')
+      const tip = (x) => `${mmKm(x.km2)} km² of land and water in reach` + (x.onlyKm2 != null ? `, ${mmKm(x.onlyKm2)} km² of it reached by no other repeater in the mesh` : '')
         + (x.tier === 'weak' ? '; linked by weaker evidence' : '');
       placed.innerHTML = top.length
         ? `<ol class="mm-lb-list">${top.map((x) => `<li><a href="#/nodes/${encodeURIComponent(x.rep.public_key || '')}">${esc(x.rep.name || String(x.rep.public_key || '').slice(0, 8))}</a> <span class="mm-lb-num" title="${esc(tip(x))}">${mmKm(x.km2)} km²${x.links != null ? ` · ${x.links} link${x.links === 1 ? '' : 's'}` : ''}</span></li>`).join('')}</ol>`

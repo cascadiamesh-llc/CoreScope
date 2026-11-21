@@ -1504,13 +1504,14 @@
   }
 
   /**
-   * Each land cell by what reaches it, for the mesh view (Uint8Array):
+   * Each cell by what reaches it, for the mesh view (Uint8Array), water
+   * included: in Seattle the water taxis and ferries are on it.
    * 0 nothing, 1 only repeaters not in the mesh, 2 only repeaters in it by
    * weaker evidence, 3 one repeater in the mesh, 4 two or more. Counts the
    * repeaters `counted` allows. Also the km² of each: { cells, km2: [..] }.
    */
   function meshCells(cov, tier, counted) {
-    const n = cov.width * cov.height, water = cov.water;
+    const n = cov.width * cov.height;
     const linked = new Uint8Array(n), solid = new Uint8Array(n), out = new Uint8Array(n);
     const reached = new Uint8Array(n);
     (cov.rasters || []).forEach((r, ri) => {
@@ -1519,7 +1520,7 @@
       for (let y = 0; y < r.h; y++) {
         let i = (r.row0 + y) * cov.width + r.col0, k = y * r.w;
         for (let x = 0; x < r.w; x++, i++, k++) {
-          if (!(r.data[k] >= 0) || (water && water[i])) continue;
+          if (!(r.data[k] >= 0)) continue;
           reached[i] = 1;
           if (t === 'none') continue;
           if (linked[i] < 2) linked[i]++;
@@ -1539,16 +1540,16 @@
 
   /**
    * One row per repeater for "Best placed in the mesh": { index, rep, km2
-   * (land in reach), onlyKm2 (land no other repeater in the mesh reaches;
+   * (land and water in reach), onlyKm2 (what no other repeater in the mesh reaches;
    * null when it isn't in the mesh), links, tier }.
    */
   function meshRows(cov, tier, links, counted) {
-    const n = cov.width * cov.height, water = cov.water, hits = new Uint8Array(n);
+    const n = cov.width * cov.height, hits = new Uint8Array(n);
     const each = (fn) => (cov.rasters || []).forEach((r, ri) => {
       if (!r || !r.data || (counted && !counted[ri])) return;
       for (let y = 0; y < r.h; y++) {
         let i = (r.row0 + y) * cov.width + r.col0, k = y * r.w;
-        for (let x = 0; x < r.w; x++, i++, k++) if (r.data[k] >= 0 && !(water && water[i])) fn(i, ri);
+        for (let x = 0; x < r.w; x++, i++, k++) if (r.data[k] >= 0) fn(i, ri);
       }
     });
     each((i, ri) => { if (tier[ri] !== 'none' && hits[i] < 2) hits[i]++; });
@@ -1583,7 +1584,7 @@
     return cv;
   }
 
-  const MESH_NOTE = 'The mesh: the people-on-the-ground estimate, coloured by how many repeaters in the mesh reach each place. Repeaters are in the mesh when they have been heard reaching each other, or, as weaker evidence, when the model says they do.';
+  const MESH_NOTE = 'The mesh: the people-on-the-ground estimate, coloured by how many repeaters in the mesh reach each place, water included (water taxis and ferries). Repeaters are in the mesh when they have been heard reaching each other, or, as weaker evidence, when the model says they do.';
   const MESH_EVIDENCE = { often: 'heard often', weak: 'weaker evidence', none: 'no link heard or predicted' };
 
   /** The mesh view's figures, as tiles. mc: meshCells; ev: meshEvidence;
@@ -1619,8 +1620,8 @@
         + `<td class="mm-ins-num">${r.links}</td><td class="mm-mesh-ev">${esc(ev)}</td></tr>`;
     }).join('');
     return `<div class="mm-ins-scroll"><table class="analytics-table mm-mesh-table"><thead><tr><th scope="col">Repeater</th>`
-      + th('km2', 'Reach', 'Land it reaches; open water is not counted')
-      + th('onlyKm2', 'Only it', 'Land no other repeater in the mesh reaches: what the mesh would lose without it')
+      + th('km2', 'Reach', 'Land and water it reaches')
+      + th('onlyKm2', 'Only it', 'What no other repeater in the mesh reaches: what the mesh would lose without it')
       + th('links', 'Links heard', 'Repeaters it has been heard linking with')
       + `<th scope="col">Evidence</th></tr></thead><tbody>${body}</tbody></table></div>`;
   }

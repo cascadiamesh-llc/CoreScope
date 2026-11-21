@@ -27,16 +27,16 @@ Repeaters with no link heard or predicted are grey.
 
 ## What's drawn and counted
 
-Each land cell is one of: reached by two or more repeaters in the mesh
-(stays covered if one goes down), by one, only by repeaters with weaker
-evidence, or only by repeaters outside the mesh. Open water is drawn but
-not counted, as everywhere on the map.
+Each cell is one of: reached by two or more repeaters in the mesh (stays
+covered if one goes down), by one, only by repeaters with weaker evidence,
+or only by repeaters outside the mesh. Water is drawn and counted here:
+water taxis and ferries are on it.
 
-"Best placed in the mesh" lists every repeater with the land it reaches,
-the land only it reaches among repeaters in the mesh (what the mesh would
+"Best placed in the mesh" lists every repeater with the land and water it
+reaches, what only it reaches among repeaters in the mesh (what the mesh would
 lose without it), and how many repeaters it has been heard linking with. In a
 mesh, overlap is how repeaters link up, so the leaderboard's Best placed
-ranks repeaters in the mesh by the land they reach, with their links.
+ranks repeaters in the mesh by the land and water they reach, with their links.
 
 ## Antenna heights
 
