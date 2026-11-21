@@ -1564,8 +1564,8 @@
   const MESH_RGB = { two: '#c026d3', one: '#f0abfc', weak: '#7c3aed', none: '#8b8ba3' };
   function meshPalette() {
     const rgb = (name, fb) => { const h = cssColor('--mm-mesh-' + name, fb).slice(1); return [0, 2, 4].map((o) => parseInt(h.slice(o, o + 2), 16)); };
-    return [null, rgb('none', MESH_RGB.none).concat(0.45), rgb('weak', MESH_RGB.weak).concat(0.5),
-      rgb('one', MESH_RGB.one).concat(0.5), rgb('two', MESH_RGB.two).concat(0.55)];
+    return [null, rgb('none', MESH_RGB.none).concat(0.6), rgb('weak', MESH_RGB.weak).concat(0.65),
+      rgb('one', MESH_RGB.one).concat(0.6), rgb('two', MESH_RGB.two).concat(0.72)];
   }
 
   function meshCanvas(cov, mc) {
@@ -2418,7 +2418,7 @@
       });
       if (linksEl) linksEl.innerHTML = linksTableHtml(rows);
       const any = rows.length > 0;
-      if (linksKey) linksKey.hidden = !any;
+      if (linksKey) linksKey.hidden = !any || meshView;
       const wrap = el.querySelector('#mmCovLinksWrap');
       if (wrap) wrap.hidden = !any;
       if (any && (!linksToggle || linksToggle.checked) && !(meshView && mesh)) linkLayer.addTo(map); else map.removeLayer(linkLayer);
@@ -2758,6 +2758,9 @@
       const bestEl = el.querySelector('#mmCovMeshBest');
       if (bestEl) bestEl.hidden = !(meshView && mesh);
       if (scaleEl) scaleEl.hidden = meshView;
+      // the mesh draws its own links: the backbone and links-heard switches don't apply
+      if (backboneKey) backboneKey.hidden = meshView || !backbone.length;
+      if (linksKey) linksKey.hidden = meshView || !(links.length);
       if (!on) {
         map.removeLayer(meshLayer);
         if (meshEl && meshView) meshEl.querySelector('#mmCovMeshStats').innerHTML = '<p class="text-muted mm-cov-note">Working out the mesh…</p>';
@@ -2774,10 +2777,10 @@
       mesh.ev.edges.slice().sort((x, y) => (x.packets || 0) - (y.packets || 0)).forEach((e) => {
         if ((e.kind === 'rare' && !meshUse.rare) || (e.kind === 'model' && !meshUse.model)) return;
         const A = placed[e.a], B = placed[e.b], ll = [[A.lat, A.lon], [B.lat, B.lon]];
-        const style = e.kind === 'often' ? { color: ink, weight: backboneWeight(e.packets, maxP), opacity: 0.8 }
+        const style = e.kind === 'often' ? { color: ink, weight: 1 + backboneWeight(e.packets, maxP) / 2, opacity: 0.7 }
           : e.kind === 'rare' ? { color: ink, weight: 2, opacity: 0.9, dashArray: '8 6' }
             : { color: weakInk, weight: 2.5, opacity: 0.95, dashArray: '2 6' };
-        L.polyline(ll, { color: casing, weight: style.weight + 2.5, opacity: 0.7, interactive: false, dashArray: style.dashArray }).addTo(meshLayer);
+        L.polyline(ll, { color: casing, weight: style.weight + 2, opacity: 0.5, interactive: false, dashArray: style.dashArray }).addTo(meshLayer);
         const tip = `${esc(repName(A))} ↔ ${esc(repName(B))}: ` + (e.kind === 'model'
           ? `never heard; the model says they reach, ${fmtDb(e.marginDb)} dB to spare`
           : `heard ${Number(e.packets).toLocaleString()} time${e.packets === 1 ? '' : 's'}`);
