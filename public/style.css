@@ -6532,3 +6532,4 @@ html.mm-embed--sky .mm-embed-open:hover { background: var(--mm-sky-ink); color: 
 .obs-setup-guide { margin-top: 10px; }
 .obs-setup-hint { margin: 0 0 20px; padding: 12px 14px; border: 1px solid var(--mediamesh-path-color, var(--accent)); border-radius: 10px; background: var(--card-bg); color: var(--text); }
 .obs-setup-hint .obs-setup-cmd { margin: 8px 0 0; }
+.mm-ins-wholeline { margin: -6px 0 16px; font-size: 0.9em; }

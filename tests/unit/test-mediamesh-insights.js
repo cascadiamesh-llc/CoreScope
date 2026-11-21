@@ -35,7 +35,9 @@ test('delivery: whole, by parity, incomplete, unheard; by hops', () => {
   assert.deepStrictEqual(s.byHops.find((b) => b.hops === 5), { hops: 5, n: 1, ok: 0 });
   assert.deepStrictEqual(s.byHops.find((b) => b.hops === 2), { hops: 2, n: 2, ok: 2 });
   const h = I.deliveryHtml(clips, nameOf, 7);
-  assert.ok(h.includes('67%</div><div class="mm-ins-label">of 3 clips heard whole by an observer'), h);
+  assert.ok(h.includes('Heard whole by an observer: 2 of 3 (1 with parity). The rest passed out of the observers\' hearing'), h);
+  assert.ok(h.includes('>3</div><div class="mm-ins-label">announced clips heard by observers, up to 6 hops') && !/\d+%/.test(h.split('<h4>')[0].split('</p>').slice(1).join('')), 'counts, no percentages');
+  assert.ok(h.includes('<h4>Clips heard, by hops</h4>'));
   assert.ok(!/arrived incomplete|Did it get through/.test(h), 'what the observers heard, not whether it arrived');
   assert.ok(h.includes('the receiving app rebuilds or asks again'));
   assert.ok(h.includes('First &lt;Hill&gt;') && !h.includes('First <Hill>'), 'escaped');
@@ -64,6 +66,8 @@ test('clips sent privately: timed in the speed card, counted in the delivery car
   assert.ok(h.includes('median speed, 1 clip, 1 sent privately') && h.includes('Sent privately, 1.0 kB'), h);
   const d = I.deliveryHtml([], nameOf, 7, priv);
   assert.ok(d.includes('No announced clips') && d.includes('2 clips sent privately were heard') && d.includes('direct message'));
+  const both = I.deliveryHtml([clip({ outcome: 'partial', missing: [1, 2] })], nameOf, 7, priv);
+  assert.ok(both.includes('>2</div><div class="mm-ins-label">more sent privately') && both.includes('Heard whole by an observer: 0 of 1.'), both);
   assert.strictEqual(I.deliverySummary([]).n, 0, 'not judged');
   assert.ok(I.speedHtml([], nameOf, 7).includes('No clips with more than one piece heard yet'));
 });
