@@ -99,7 +99,7 @@
         <div class="mm-wi-result" data-wi-result aria-live="polite"></div>
         <p class="mm-wi-key text-muted"><span class="mm-wi-sw mm-wi-sw--gain"></span> reached only with the change · <span class="mm-wi-sw mm-wi-sw--lost"></span> lost with it · <span class="mm-wi-sw mm-wi-sw--both"></span> reached either way</p>
         <button type="button" class="btn-secondary mm-wi-reset" data-wi-reset>Back to today's settings</button>
-        <p class="text-muted mm-wi-note">Today's estimate gives every repeater ${fmtNum(d.heightM)} m, ${fmtNum(d.txDbm)} dBm and a ${fmtNum(d.gainDbi)} dBi antenna. Same terrain and the same conservative model, out to ${(root.MediaMeshCoverage && root.MediaMeshCoverage.CONFIG.modes.ground.radiusKm) || 30} km. People: 2020 census.</p>
+        <p class="text-muted mm-wi-note">Today's estimate gives this repeater an antenna ${fmtNum(d.heightM)} m up, ${fmtNum(d.txDbm)} dBm and a ${fmtNum(d.gainDbi)} dBi antenna. Same terrain and the same conservative model, out to ${(root.MediaMeshCoverage && root.MediaMeshCoverage.CONFIG.modes.ground.radiusKm) || 30} km. People: 2020 census.</p>
       </div></details>`;
   }
 

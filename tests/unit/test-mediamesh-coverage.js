@@ -474,6 +474,13 @@ function cellAt(cov, lat, lon) {
     // a higher antenna gets further
     assert.strictEqual(M.antennaHeight({}), 10);
     assert.strictEqual(M.antennaHeight({ heightM: 30 }), 30);
+    // heights the owners gave, by key; the repeater's own still wins
+    assert.strictEqual(M.antennaHeight({ public_key: '1FFBD69AA03FAADC' }), 67.7);
+    assert.strictEqual(M.antennaHeight({ public_key: '1ea5e1952c93' }), 41.1);
+    assert.strictEqual(M.antennaHeight({ public_key: 'd011cafedd96' }), 8.8);
+    assert.strictEqual(M.antennaHeight({ public_key: 'abcdef0123' }), 10);
+    assert.strictEqual(M.antennaHeight({ public_key: '1ea5e1952c93', heightM: 20 }), 20);
+    assert.ok(M.KNOWN_HEIGHTS.every((h) => /^[0-9a-f]{8}$/.test(h.key) && h.ft > 0));
     const hill = (lat) => (lat > 47.605 && lat < 47.607 ? 60 : 0);
     const low = M.pathProfile(planned, 47.62, -122.33, hill, 'repeater');
     const high = M.pathProfile(Object.assign({ heightM: 50 }, planned), 47.62, -122.33, hill, 'repeater');

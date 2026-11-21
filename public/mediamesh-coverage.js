@@ -189,9 +189,29 @@
 
   const DEFAULT_RADIO = radioFor(null);
 
-  /** A repeater's antenna height: its own (a planned one's) or the default. */
+  /** Antenna heights above the street that repeater owners have given, by
+   * the start of the repeater's public key. Everything else gets
+   * CONFIG.txHeightM. Feet as given, so the list is easy to check. */
+  const FT = 0.3048;
+  const KNOWN_HEIGHTS = [
+    { key: '1ea5e195', name: 'First Hill', ft: 135 },
+    { key: '1ffbd69a', name: 'First Hill Skyline', ft: 222 },
+    { key: '5491c13d', name: 'Yesler Terrace', ft: 103 },
+    { key: 'd011cafe', name: 'Kremwerk', ft: 29 },
+  ];
+  function knownHeightM(rep) {
+    const pk = String((rep && rep.public_key) || '').toLowerCase();
+    if (!pk) return null;
+    const k = KNOWN_HEIGHTS.find((h) => pk.startsWith(h.key));
+    return k ? Math.round(k.ft * FT * 10) / 10 : null;
+  }
+
+  /** A repeater's antenna height above the ground: its own (a planned one's),
+   * the one its owner gave, or the default. */
   function antennaHeight(rep) {
-    return rep && rep.heightM > 0 && rep.heightM <= 300 ? rep.heightM : CONFIG.txHeightM;
+    if (rep && rep.heightM > 0 && rep.heightM <= 300) return rep.heightM;
+    const known = knownHeightM(rep);
+    return known > 0 && known <= 300 ? known : CONFIG.txHeightM;
   }
 
   /** Free-space path loss in dB for a distance in km. */
@@ -1778,7 +1798,7 @@
     const reported = (radios || []).filter((r) => r.reported).length;
     const other = (radios || []).filter((r) => r.reported && r.sensitivityDbm !== def.sensitivityDbm).length;
     const items = [
-      `<strong>Sending:</strong> ${c.txDbm} dBm into a ${c.txGainDbi} dBi antenna through ${c.cableDb} dB of cable, ${c.txHeightM} m above the ground at every repeater.`,
+      `<strong>Sending:</strong> ${c.txDbm} dBm into a ${c.txGainDbi} dBi antenna through ${c.cableDb} dB of cable, ${c.txHeightM} m above the ground at every repeater${KNOWN_HEIGHTS.length ? `, except where the owner gave its height: ${KNOWN_HEIGHTS.map((h) => `${h.name} ${Math.round(h.ft * FT)} m`).join(', ')}` : ''}.`,
       mode.clutter
         ? `<strong>Receiving:</strong> a companion or standalone radio held in the hand at ${mode.rxHeightM} m: ${fmtDb(mode.rxGainDbi)} dBi for a short antenna next to the body, and buildings and trees by distance from the repeater (ITU-R P.2108, the median: ${fmtDb(clutterLossDb(0.25))} dB at 250 m, ${fmtDb(clutterLossDb(1))} dB from about 500 m on), none over open water.`
           + ` <strong>Where you are:</strong> ${CONFIG.places.map((pl) => pl.lossDb ? `${pl.label.toLowerCase()}, ${fmtDb(placeLossDb(pl.key))} dB more${pl.key === 'car' && f && Number.isFinite(f.carLossDb) ? ' (measured on drives)' : pl.key === 'indoors' ? ' (ITU-R P.2109, a typical building)' : ''}` : pl.label.toLowerCase() + ' as drawn').join('; ')}.`
@@ -2696,7 +2716,7 @@
     fitCalibration, calibrationText, setCalibration, getCalibration, CAL,
     clutterLossDb, setField, getField, fieldDbFor, placeLossDb, fitField, fieldSolve, fieldText, fieldBand, adjustCov, FIELD_RGB, loadFieldPoints, fieldPoints, hexCorners, hexBand, session,
     backboneWeight, backboneTip, areaHistory, footprint, coverageImage, legendGradient,
-    growthSteps, presentAt, antennaHeight, coverageCanvas, canvasOverlay, whatIfBase, whatIfDefaults, whatIfJob, whatIfCoverage, whatIfCanvas, cellAreaKm2, coveredKm2, unionKm2, repAreasKm2, repOnlyKm2, planGain, planLinks, planHtml, PLAN_RGB,
+    growthSteps, presentAt, antennaHeight, knownHeightM, KNOWN_HEIGHTS, coverageCanvas, canvasOverlay, whatIfBase, whatIfDefaults, whatIfJob, whatIfCoverage, whatIfCanvas, cellAreaKm2, coveredKm2, unionKm2, repAreasKm2, repOnlyKm2, planGain, planLinks, planHtml, PLAN_RGB,
     repNotes, repArea, repGroups, repSummaryHtml, repPanelHtml, repAction, assumptionsHtml, linkRows, linksTableHtml, init,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
