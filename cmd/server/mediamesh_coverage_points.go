@@ -55,6 +55,9 @@ type MediaMeshCoverageConfig struct {
 	DBPath            string `json:"dbPath,omitempty"`
 	RetentionDays     int    `json:"retentionDays,omitempty"`
 	RequireKnownRadio *bool  `json:"requireKnownRadio,omitempty"`
+	// Peers: other analyzers running MediaMesh, for the Cascadia-wide view
+	// (mediamesh_peers.go).
+	Peers []MediaMeshPeer `json:"peers,omitempty"`
 }
 
 func (c *Config) mediaMeshCoverage() MediaMeshCoverageConfig {
