@@ -1,0 +1,64 @@
+/* Unit tests for public/mediamesh-lab.js: MediaMeshLab. */
+'use strict';
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+require(path.join(__dirname, '../../public/mediamesh-lab.js'));
+const L = globalThis.MediaMeshLab;
+const pub = (f) => fs.readFileSync(path.join(__dirname, '../../public', f), 'utf8');
+
+let passed = 0, failed = 0;
+function test(name, fn) {
+  try { fn(); passed++; console.log('  ✅ ' + name); } catch (e) { failed++; console.log('  ❌ ' + name + ': ' + e.message); }
+}
+
+console.log('\n=== MediaMeshLab ===');
+
+// a ring 0-1-2-3-0 with a tail 3-4
+const adj = L.adjacency(5, [[0, 1], [1, 2], [2, 3], [3, 0], [3, 4], [1, 1]]);
+const all = [true, true, true, true, true];
+
+test('hops and routes between repeaters', () => {
+  assert.deepStrictEqual(L.hopsFrom(adj, all, 0), [0, 1, 2, 1, 2]);
+  assert.deepStrictEqual(L.hopsFrom(adj, [true, true, true, false, true], 0), [0, 1, 2, -1, -1]);
+  const r = L.routes(adj, all, all);
+  assert.deepStrictEqual(r, { pairs: 10, ok: 10, medianHops: 2 });
+  const cut = L.routes(adj, [true, true, true, false, true], [true, true, true, false, true]);
+  assert.strictEqual(cut.pairs, 6);
+  assert.strictEqual(cut.ok, 3, 'the tail is cut off');
+});
+
+test('path hashes: a repeater only when exactly one starts so', () => {
+  const placed = [{ public_key: '1ea5e195aa' }, { public_key: '1ffbd69abb' }, { public_key: 'fc1ce02acc' }];
+  assert.strictEqual(L.hopIndex(placed, '1EA5'), 0);
+  assert.strictEqual(L.hopIndex(placed, '1F'), 1);
+  assert.strictEqual(L.hopIndex(placed, '1'), -1, 'more than one');
+  assert.strictEqual(L.hopIndex(placed, 'abcd'), -1);
+});
+
+test('a clip replayed: as it went, the other way round, or lost and why', () => {
+  const placed = ['aa', 'bb', 'cc', 'dd', 'ee'].map((k) => ({ public_key: k + '000000', name: k.toUpperCase() }));
+  const clip = { path: ['AA', 'BB', 'CC'], hops: 3 };
+  assert.deepStrictEqual(L.replayClip(clip, placed, adj, all), { ok: true, hops: 3, way: [0, 1, 2], reason: '' });
+  const round = L.replayClip(clip, placed, adj, [true, false, true, true, true]);
+  assert.deepStrictEqual(round, { ok: true, hops: 3, way: [0, 3, 2], reason: 'rerouted' });
+  assert.ok(L.reasonText(round, placed, clip).includes('AA → DD → CC'));
+  assert.strictEqual(L.replayClip(clip, placed, adj, [false, true, true, true, true]).reason, 'first-down');
+  assert.strictEqual(L.replayClip(clip, placed, adj, [true, true, false, true, true]).reason, 'last-down');
+  assert.strictEqual(L.replayClip({ path: ['AA', 'DD', 'EE'] }, placed, adj, [true, true, true, false, true]).reason, 'no-way');
+  const unk = L.replayClip({ path: ['AA', 'ZZ'], hops: 2 }, placed, adj, all);
+  assert.strictEqual(unk.ok, null);
+  assert.ok(L.reasonText(unk, placed, { path: ['AA', 'ZZ'] }).includes("can't tell"));
+});
+
+test('wiring: the page, the script, the link from the MediaMesh tab, colours from variables', () => {
+  assert.ok(pub('index.html').includes('<script src="mediamesh-lab.js?v=__BUST__"></script>'));
+  assert.ok(pub('app.js').includes("'mediamesh-lab': 'MediaMeshLab'"));
+  assert.ok(pub('analytics.js').includes('href="#/mediamesh-lab"'));
+  const css = pub('style.css').match(/\.mml-[^{]*\{[^}]*\}/g) || [];
+  assert.ok(css.length > 15);
+  for (const r of css) assert.ok(!/(^|[;{\s])(color|background):\s*#/i.test(r), 'a fixed colour: ' + r.slice(0, 60));
+});
+
+console.log(`\n${passed} passed, ${failed} failed`);
+process.exit(failed ? 1 : 0);
