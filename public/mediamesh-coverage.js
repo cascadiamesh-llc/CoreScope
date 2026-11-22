@@ -1696,7 +1696,7 @@
     const img = ctx.createImageData(cov.width, cov.height);
     const pal = {};
     [1, 2, 3].forEach((k) => { const h = cssColor('--mm-conf-' + k, CONF_RGB[k]).slice(1); pal[k] = [0, 2, 4].map((o) => parseInt(h.slice(o, o + 2), 16)); });
-    const alpha = { 1: 0.3, 2: 0.55, 3: 0.75 };
+    const alpha = { 1: 0.45, 2: 0.6, 3: 0.8 };
     for (let i = 0; i < conf.cells.length; i++) {
       const c = conf.cells[i];
       if (!c) continue;
@@ -1709,11 +1709,12 @@
   /** The biggest corrections, for "What it learned": [{ lat, lon, res, n,
    * near (the closest repeater's name) }]. */
   function learnedTop(points, reps, k) {
-    return (points || []).slice().sort((a, b) => Math.abs(b.res) * Math.min(5, b.n) - Math.abs(a.res) * Math.min(5, a.n)).slice(0, k || 3).map((p) => {
+    const seen = new Set();
+    return (points || []).slice().sort((a, b) => Math.abs(b.res) * Math.min(5, b.n) - Math.abs(a.res) * Math.min(5, a.n)).map((p) => {
       let near = null, bd = Infinity;
       (reps || []).forEach((r) => { const d = distanceM(p.lat, p.lon, r.lat, r.lon); if (d < bd) { bd = d; near = r; } });
       return Object.assign({}, p, { near: near ? repName(near) : '', nearKm: bd / 1000 });
-    });
+    }).filter((p) => (seen.has(p.near) ? false : (seen.add(p.near), true))).slice(0, k || 3);
   }
 
   function learnedHtml(conf, top) {
