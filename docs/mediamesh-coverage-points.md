@@ -54,7 +54,7 @@ For each cell and each MediaMesh repeater within 6 km, the card compares the mea
 With **Learn from mapping** on (the default), the people-on-the-ground
 estimate is moved toward what people found, where they found it: each mapped
 cell's best measured margin (outdoors: a vehicle's cells get the car's loss
-back; a cell where no MediaMesh repeater answered counts as 6 dB short)
+back; a cell where no MediaMesh repeater answered counts as 6 dB short, for half as much and at most 10 dB down, since a phone indoors or in a pocket hears nothing too)
 against the estimate there, spread to the estimate's cells within 600 m,
 nearest counting most. One ping moves it part of the way, several nearly all
 of it. This is on top of the whole-estimate and per-repeater corrections

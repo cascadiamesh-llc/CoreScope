@@ -1588,7 +1588,7 @@
 
   /** How far a measured cell's correction reaches (m), and how much it may
    * move the estimate (dB). */
-  const LEARN = { radiusM: 600, maxDb: 20, linkM: 500, measuredM: 300 };
+  const LEARN = { radiusM: 600, maxDb: 20, unheardDb: 10, linkM: 500, measuredM: 300 };
 
   /**
    * Local corrections from the cells people mapped (fieldPoints cells):
@@ -1613,9 +1613,11 @@
       const model = at.margin > NO_DATA / 2 ? at.margin : CONFIG.field.unheardDb - 10;
       // nobody answered where the estimate already says no: nothing to learn
       if (!heard.length && model < CONFIG.field.unheardDb) return;
-      const res = Math.max(-LEARN.maxDb, Math.min(LEARN.maxDb, meas - model));
+      // nobody answering can also be a phone indoors or in a pocket: it
+      // counts for less, and moves the estimate down by at most LEARN.unheardDb
+      const res = Math.max(heard.length ? -LEARN.maxDb : -LEARN.unheardDb, Math.min(LEARN.maxDb, meas - model));
       points.push({ lat: c.lat, lon: c.lon, res, n: c.n });
-      const w0 = Math.min(5, c.n);
+      const w0 = Math.min(5, c.n) * (heard.length ? 1 : 0.5);
       const rRow = Math.ceil(LEARN.radiusM / M_PER_DEG_LAT / cellH);
       const rCol = Math.ceil(LEARN.radiusM / (M_PER_DEG_LAT * Math.cos(c.lat * Math.PI / 180)) / cellW);
       const row0 = Math.floor((b.north - c.lat) / cellH), col0 = Math.floor((c.lon - b.west) / cellW);

@@ -515,8 +515,9 @@ function cellAt(cov, lat, lon) {
     const car = M.learnFromField(cov, [{ lat: mid.lat, lon: mid.lon, n: 5, car: true, reps: [{ key: 'aa', margin: 2, n: 5 }] }], 8);
     assert.ok(Math.abs(car.delta[i]) < 0.5);
     // nobody answered where the estimate said 10 dB: counts as unheardDb
+    // (a phone indoors hears nothing too: it counts for less, and at most 10 dB)
     const none = M.learnFromField(cov, [{ lat: mid.lat, lon: mid.lon, n: 5, reps: [] }]);
-    assert.ok(none.delta[i] < -15, String(none.delta[i]));
+    assert.ok(none.delta[i] < -8 && none.delta[i] >= -10, String(none.delta[i]));
     // a single ping moves it only part way
     const one = M.learnFromField(cov, [{ lat: mid.lat, lon: mid.lon, n: 1, reps: [{ key: 'aa', margin: 2, n: 1 }] }]);
     assert.ok(one.delta[i] > -8 && one.delta[i] < -2, String(one.delta[i]));
