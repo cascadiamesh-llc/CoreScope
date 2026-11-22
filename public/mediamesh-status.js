@@ -197,12 +197,13 @@
 
   function placesHtml(list, placed) {
     if (!list || !list.length) return '<p class="text-muted">Working out where media still gets through…</p>';
-    const word = { up: 'Getting through', weak: 'One repeater left', down: 'Cut off' };
+    const word = { up: 'Two or more', weak: 'One repeater', down: 'Cut off' };
     return `<ul class="mms-places">${list.map((p) => {
       const via = p.state === 'down'
         ? (p.nearest ? `Nearest that still works: ${esc(repName(placed[p.nearest.index]))}, ${p.nearest.km < 10 ? p.nearest.km.toFixed(1) : Math.round(p.nearest.km)} km away` : 'No repeater is up')
         : `Through ${p.through.slice(0, 3).map((i) => esc(repName(placed[i]))).join(', ')}${p.through.length > 3 ? ` and ${p.through.length - 3} more` : ''}`;
-      return `<li class="mms-place mms-place--${p.state}"><span class="mms-dot" aria-hidden="true"></span><span class="mms-place-text"><strong>${esc(p.area)}</strong><br><span class="text-muted">${via}</span></span><span class="mms-state">${word[p.state]}</span></li>`;
+      const state = p.state === 'weak' && p.anyQuiet ? 'One repeater left' : word[p.state];
+      return `<li class="mms-place mms-place--${p.state}"><span class="mms-dot" aria-hidden="true"></span><span class="mms-place-text"><strong>${esc(p.area)}</strong><br><span class="text-muted">${via}</span></span><span class="mms-state">${state}</span></li>`;
     }).join('')}</ul>`;
   }
 
