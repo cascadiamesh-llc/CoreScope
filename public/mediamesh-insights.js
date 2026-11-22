@@ -127,7 +127,7 @@
     if (!a.recipients) {
       return `<h3>Did it arrive?</h3><p class="text-muted mm-ins-sub">The receiving app knows: with <strong>Share delivery receipts</strong> on in MeshCore Open TAK, it tells the analyzer each clip it got and whether it was whole (never what was in it, or who sent it). None shared yet.</p>`;
     }
-    return `<h3>Did it arrive?</h3><p class="text-muted mm-ins-sub">From the receiving apps: MeshCore Open TAK users with Share delivery receipts on report each clip they got and whether it was whole, signed by their radio. Never what was in it, or who sent it.</p>
+    return `<h3>Did it arrive?</h3><p class="text-muted mm-ins-sub">Reported by the receiving phones and standalones: each clip they got, and whether it was whole. Never what was in it, or who sent it.</p>
     <div class="mm-ins-tiles">
       <div class="mm-ins-tile"><div class="mm-ins-big mm-ins-accent">${pct(a.whole, a.recipients)}%</div><div class="mm-ins-label">arrived whole: ${a.whole.toLocaleString()} of ${a.recipients.toLocaleString()} deliver${a.recipients === 1 ? 'y' : 'ies'} of ${a.clips.toLocaleString()} clip${a.clips === 1 ? '' : 's'}</div></div>
       <div class="mm-ins-tile"><div class="mm-ins-big">${a.asked.toLocaleString()}</div><div class="mm-ins-label">whole after the app asked again for a missing piece</div></div>
