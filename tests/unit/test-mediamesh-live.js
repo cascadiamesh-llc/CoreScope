@@ -43,6 +43,14 @@ test('a path: resolved keys first, unique prefixes, then the observer', () => {
   assert.deepStrictEqual(q.map((x) => x.name), ['First Hill 🏙️']);
 });
 
+test('observers with a position join the index; the repeaters keep theirs', () => {
+  const i2 = M.addObservers(M.buildIndex(reps, []), [{ id: 'EE77', name: 'Obs', lat: 47.4, lon: -122.2 }, { id: 'aa11bb', name: 'Other', lat: 1, lon: 1 }, { id: 'dd', lat: null }]);
+  assert.strictEqual(i2.byKey.get('ee77').name, 'Obs');
+  assert.strictEqual(i2.byKey.get('aa11bb').name, 'Myrtle Reservoir 🌊');
+  assert.ok(!i2.byKey.has('dd'));
+  assert.strictEqual(i2.reps.length, 3);
+});
+
 test('an observer already on the path is not added again', () => {
   const p = M.placePath(['aa11', 'bb'], null, 'aa11bb', idx);
   assert.deepStrictEqual(p.map((x) => x.name), ['Myrtle Reservoir 🌊', 'Kremwerk']);

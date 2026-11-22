@@ -79,6 +79,18 @@
     return { byKey, reps };
   }
 
+  /** Observers with a position (/api/observers) join the index, for where
+   * a packet was heard. */
+  function addObservers(idx, observers) {
+    (observers || []).forEach((o) => {
+      const pk = String(o.id || '').toLowerCase();
+      if (pk && !idx.byKey.has(pk) && Number.isFinite(o.lat) && Number.isFinite(o.lon) && !(o.lat === 0 && o.lon === 0)) {
+        idx.byKey.set(pk, { pk, lat: o.lat, lon: o.lon, name: o.name || pk.slice(0, 8) });
+      }
+    });
+    return idx;
+  }
+
   const near2 = (a, b) => (a.lat - b.lat) ** 2 + ((a.lon - b.lon) * Math.cos(a.lat * Math.PI / 180)) ** 2;
 
   /** A path's places: each hop (by the server's resolved key, else by its
@@ -390,6 +402,7 @@
       if (clip) addClip(Object.assign({ pts, hash: r.hash }, clip), now, {});
       else addEmber(pts[0]);
     }
+    fetch('/api/observers').then((r) => r.json()).then((d) => addObservers(idx, (d && d.observers) || d)).catch(() => { /* links and repeaters only */ });
     const wsHandler = (msg) => { if (msg && msg.type === 'packet') onPacket(msg.data); };
     if (typeof root.onWS === 'function') root.onWS(wsHandler);
 
@@ -602,5 +615,5 @@
     };
   }
 
-  root.MediaMeshLive = { KINDS, rgbOf, buildIndex, placePath, routeKm, routeText, outcomeOf, createTracker, transferHtml, readPacket, clipFor, attach };
+  root.MediaMeshLive = { KINDS, rgbOf, buildIndex, addObservers, placePath, routeKm, routeText, outcomeOf, createTracker, transferHtml, readPacket, clipFor, attach };
 })(typeof window !== 'undefined' ? window : globalThis);

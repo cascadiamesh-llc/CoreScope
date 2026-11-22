@@ -27,7 +27,7 @@ Packets come over the page's shared WebSocket. A packet counts when an observer 
 How each hop is placed:
 - by the server's resolved key;
 - otherwise by its prefix among the MediaMesh repeaters, taking the one nearest the hop before when several match;
-- the observer's own node, taken from the links heard on radio2, comes last.
+- the observer comes last, placed at its own repeater or at the position it reports on the Observers page.
 
 Hops that can't be placed are left out. Repeaters without a position aren't drawn.
 
