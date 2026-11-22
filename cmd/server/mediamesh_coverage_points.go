@@ -639,6 +639,7 @@ func (s *Server) coveragePoints() (*covPointsStore, error) {
 				select {
 				case <-t.C:
 					st.prune(days)
+					s.recordLinkHistory(st, true)
 				case <-s.covPoints.stop:
 					return
 				}

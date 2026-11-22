@@ -6699,3 +6699,29 @@ html.mm-embed--sky .mm-embed-open:hover { background: var(--mm-sky-ink); color: 
 .mmg-label { font-size: 0.8em; color: var(--text-muted); }
 .mmg-note { font-size: 0.85em; margin: 0; }
 
+/* ---- Forecast (mediamesh-forecast.js) ---- */
+.mmf-page { padding: 16px 20px 24px; display: flex; flex-direction: column; gap: 14px; max-width: 1400px; margin: 0 auto; width: 100%; box-sizing: border-box; }
+.mmf-head h1 { margin: 0 0 4px; color: var(--mediamesh-text-color, var(--text)); }
+.mmf-head p, .mmf-page > p { margin: 0; }
+.mmf-days { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.mmf-day { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--card-bg); color: var(--text); }
+.mmf-day--now { border-color: var(--mediamesh-node-color); }
+.mmf-dayhead { display: flex; gap: 10px; align-items: center; }
+.mmf-when { font-size: 0.85em; color: var(--text-muted); }
+.mmf-what { font-weight: 700; }
+.mmf-db { font-size: 1.6em; font-weight: 700; margin-top: 8px; color: var(--text); }
+.mmf-up { color: var(--mms-good); }
+.mmf-down { color: var(--mms-warn); }
+.mmf-text { font-size: 0.85em; color: var(--text-muted); }
+.mmf-split { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; }
+.mmf-card { flex: 2 1 300px; min-width: 0; border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--card-bg); color: var(--text); }
+.mmf-wide { flex: 3 1 460px; }
+.mmf-card h2 { font-size: 1em; margin: 0 0 8px; }
+.mmf-sub { margin: 0 0 6px; font-size: 0.85em; }
+.mmf-fig { margin: 0; }
+.mmf-fig svg { width: 100%; height: auto; border-left: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.mmf-fig circle { fill: var(--mediamesh-node-color); opacity: 0.7; }
+.mmf-axis { display: flex; justify-content: space-between; font-size: 0.8em; color: var(--text-muted); }
+.mmf-learn { margin: 6px 0 0; font-size: 0.9em; }
+.mmf-note { font-size: 0.85em; }
+
