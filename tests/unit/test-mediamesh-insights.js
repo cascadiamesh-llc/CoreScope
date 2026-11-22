@@ -72,6 +72,16 @@ test('clips sent privately: timed in the speed card, counted in the delivery car
   assert.ok(I.speedHtml([], nameOf, 7).includes('No clips with more than one piece heard yet'));
 });
 
+test('speed: the bytes sent after the first piece, and private clips sized from their piece numbers', () => {
+  // the server's numbers for a clip heard in part: 144 pieces of 163 B over 250 s
+  const priv = [clip({ outcome: 'unannounced', kind: 'unknown', total: 0, heard: 6, hops: 7, durationS: 250, bytes: 145 * 163, rateBytes: 144 * 163, bytesEstimated: true })];
+  const s = I.speedSummary([], nameOf, priv);
+  assert.ok(Math.abs(s.kbps - (144 * 163 * 8) / 250 / 1000) < 1e-9, String(s.kbps));
+  const h = I.speedHtml([], nameOf, 7, priv);
+  assert.ok(h.includes('0.8 kbit/s') && h.includes('about 23.6 kB'), h);
+  assert.ok(h.includes('counted from their numbers'));
+});
+
 test('did it arrive: receipts from the receiving apps, per clip and overall', () => {
   const clips = [clip({ outcome: 'partial', missing: [1, 2], delivery: { recipients: 1, whole: 1, asked: 1, rebuilt: 0 } }),
     clip({ delivery: { recipients: 3, whole: 2, asked: 0, rebuilt: 1 } }), clip({})];

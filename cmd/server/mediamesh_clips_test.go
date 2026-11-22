@@ -207,10 +207,37 @@ func TestUnannouncedMediaClips(t *testing.T) {
 	if c.Observer != "far" || c.Hops != 2 || c.Heard != 5 || c.Parity != 1 || c.Observers != 2 {
 		t.Fatalf("far end %s hops %d heard %d parity %d observers %d", c.Observer, c.Hops, c.Heard, c.Parity, c.Observers)
 	}
-	if c.DurationS != 20 || c.Bytes != 750 {
-		t.Fatalf("%.0f s %d bytes (the parity piece is no clip data, a repeat counts once)", c.DurationS, c.Bytes)
+	// timed from piece 0 to piece 4 as first heard: 4 pieces sent after the clock started
+	if c.DurationS != 16 || c.Bytes != 750 || c.RateBytes != 600 || c.BytesEstimated {
+		t.Fatalf("%.0f s %d bytes, %d timed (the parity piece is no clip data, a repeat counts once)", c.DurationS, c.Bytes, c.RateBytes)
 	}
 	if later.SID != "a1b2c3d4" || later.Heard != 2 || later.DurationS != 30 || later.At <= c.At {
 		t.Fatalf("the later clip: %+v", later)
+	}
+}
+
+// A clip sent privately that the observers heard only some of: the piece
+// numbers say how many were sent between, counted on through 255 -> 0.
+func TestUnannouncedClipSpan(t *testing.T) {
+	t0 := time.Date(2026, 11, 22, 17, 48, 0, 0, time.UTC)
+	var p []mediaClipPiece
+	for i, idx := range []int{121, 140, 200, 253, 4, 9} {
+		p = append(p, mediaClipPiece{sid: 0x10346c47, info: idx, bytes: 163, observer: "far", obsName: "far", path: []string{"aa", "bb"}, at: t0.Add(time.Duration(i*50) * time.Second)})
+	}
+	got := unannouncedMediaClips(nil, p)
+	if len(got) != 1 {
+		t.Fatalf("%d clips", len(got))
+	}
+	c := got[0]
+	// 121 .. 265: 144 pieces after the first, over 250 s
+	if c.DurationS != 250 || c.RateBytes != 144*163 || c.Bytes != 145*163 || !c.BytesEstimated || c.Heard != 6 {
+		t.Fatalf("%+v", c)
+	}
+	if k := float64(c.RateBytes) * 8 / c.DurationS / 1000; k < 0.7 || k > 0.8 {
+		t.Fatalf("%.2f kbit/s", k)
+	}
+	// numbers that don't run forward say nothing: back to what was heard
+	if span, _ := piecesSpanned([]pieceAt{{index: 5, bytes: 1, at: t0}, {index: 5, bytes: 1, at: t0.Add(time.Second)}}); span != 0 {
+		t.Fatalf("span %d", span)
 	}
 }

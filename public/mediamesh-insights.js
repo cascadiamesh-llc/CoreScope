@@ -168,12 +168,14 @@
   /** Clips with a time and size to go on: kbit/s and seconds. Announced
    * clips that arrived whole, and clips sent privately (no announcement the
    * analyzer can read: whether whole isn't known, but the far end's pieces
-   * still time the crossing). Newest first. */
+   * still time the crossing). Newest first. The bytes timed are those sent
+   * after the first piece (rateBytes): for a clip sent privately, the server
+   * counts the pieces the observers missed from the pieces' numbers. */
   function speedRows(clips, unannounced) {
     return (clips || []).filter((c) => (c.outcome === 'whole' || c.outcome === 'parity') && c.durationS > 0 && c.bytes > 0)
       .concat((unannounced || []).filter((c) => c.durationS > 0 && c.bytes > 0 && c.heard >= 2))
       .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))
-      .map((c) => Object.assign({}, c, { kbps: (c.bytes * 8) / c.durationS / 1000 }));
+      .map((c) => Object.assign({}, c, { kbps: ((c.rateBytes > 0 ? c.rateBytes : c.bytes) * 8) / c.durationS / 1000 }));
   }
 
   function speedSummary(clips, nameOf, unannounced) {
@@ -199,7 +201,7 @@
 
   function speedHtml(clips, nameOf, days, unannounced) {
     const s = speedSummary(clips, nameOf, unannounced);
-    const head = `<h3>How fast clips cross the mesh</h3><p class="text-muted mm-ins-sub">From the first piece the far end heard to the last: announced clips the far end heard whole, and clips sent privately (in a direct message or on a private channel), timed from the pieces heard. Last ${days} days.</p>`;
+    const head = `<h3>How fast clips cross the mesh</h3><p class="text-muted mm-ins-sub">From the first piece the far end heard to the last: announced clips the far end heard whole, and clips sent privately (in a direct message or on a private channel), timed from the pieces heard, with the pieces in between that no observer heard counted from their numbers. Last ${days} days.</p>`;
     if (!s.n) return head + '<p class="text-muted">No clips with more than one piece heard yet.</p>';
     const maxK = Math.max(...s.byHops.map((b) => b.kbps || 0), 0.1);
     const tiles = `<div class="mm-ins-tiles">
@@ -209,7 +211,7 @@
     </div>`;
     const bars = s.byHops.filter((b) => b.n).map((b) => `<div class="mm-ins-bar-row"><span>${b.hops}${b.hops === 5 ? '+' : ''} hop${b.hops === 1 ? '' : 's'}</span>
       <span class="mm-ins-bar"><i style="width:${Math.round(((b.kbps || 0) / maxK) * 100)}%"></i></span><span class="mm-ins-num">${fmtK(b.kbps)}</span><span class="text-muted mm-ins-n">${b.n}</span></div>`).join('');
-    const rows = s.rows.slice(0, 8).map((c) => `<tr><td class="mm-ins-when">${whenHtml(c.at)}</td><td>${esc(routeLabel(c, nameOf))}</td><td class="mm-ins-num">${c.hops}</td><td>${esc(clipLabel(c))}, ${(c.bytes / 1000).toFixed(1)} kB</td>
+    const rows = s.rows.slice(0, 8).map((c) => `<tr><td class="mm-ins-when">${whenHtml(c.at)}</td><td>${esc(routeLabel(c, nameOf))}</td><td class="mm-ins-num">${c.hops}</td><td>${esc(clipLabel(c))}, ${c.bytesEstimated ? '<span title="Worked out from the numbers of the first and last pieces heard">about ' : ''}${(c.bytes / 1000).toFixed(1)} kB${c.bytesEstimated ? '</span>' : ''}</td>
       <td class="mm-ins-num">${Math.round(c.durationS)} s</td><td class="mm-ins-num"><strong>${fmtK(c.kbps)}</strong></td></tr>`).join('');
     return head + tiles + `<div class="mm-ins-split">
       <div class="mm-ins-col"><h4>kbit/s by hops (median)</h4>${bars}</div>

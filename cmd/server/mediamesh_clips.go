@@ -109,7 +109,14 @@ type MediaMeshClip struct {
 	LastAt    string   `json:"lastAt,omitempty"`
 	DurationS float64  `json:"durationS"`
 	Bytes     int      `json:"bytes"`
-	Observers int      `json:"observers"`
+	// RateBytes: what was sent between the far end's first piece and its
+	// last, for the speed (bytes per durationS). The first piece's own bytes
+	// went before the clock started. For a clip sent privately, the pieces
+	// in between that no observer heard count too, from their numbers.
+	RateBytes int `json:"rateBytes,omitempty"`
+	// BytesEstimated: bytes is worked out from the piece numbers, not heard.
+	BytesEstimated bool `json:"bytesEstimated,omitempty"`
+	Observers      int  `json:"observers"`
 	// what the receiving apps reported (delivery receipts), if any did
 	Delivery *MediaMeshDelivery `json:"delivery,omitempty"`
 }
@@ -225,6 +232,9 @@ func analyseMediaClips(anns []mediaClipAnn, pieces []mediaClipPiece) []MediaMesh
 			c.FirstAt, c.LastAt = far.first.UTC().Format(time.RFC3339), far.last.UTC().Format(time.RFC3339)
 			c.DurationS = far.last.Sub(far.first).Seconds()
 			c.Bytes = far.bytes
+			if n := len(far.data); n > 1 {
+				c.RateBytes = far.bytes * (n - 1) / n
+			}
 			missingBy := map[int][]int{}
 			for idx := 0; idx < a.total; idx++ {
 				if !far.data[idx] {
@@ -329,6 +339,7 @@ func unannouncedClip(sid uint32, ps []mediaClipPieceP) (MediaMeshClip, bool) {
 		path        []string
 		first, last time.Time
 		bytes       int
+		pieces      []pieceAt
 	}
 	obs := map[string]*seen{}
 	for _, p := range ps {
@@ -348,6 +359,7 @@ func unannouncedClip(sid uint32, ps []mediaClipPieceP) (MediaMeshClip, bool) {
 				o.bytes += p.bytes
 			}
 			o.data[p.info] = true
+			o.pieces = append(o.pieces, pieceAt{index: p.info, bytes: p.bytes, at: p.at})
 		}
 		if o.path == nil || len(p.path) > o.maxHops {
 			o.maxHops, o.path = len(p.path), p.path
@@ -380,7 +392,81 @@ func unannouncedClip(sid uint32, ps []mediaClipPieceP) (MediaMeshClip, bool) {
 	if far.path != nil {
 		c.Path = far.path
 	}
+	// Observers hear only some of a private clip's pieces: the numbers of the
+	// first and last the far end heard say how many were sent in between.
+	if span, size := piecesSpanned(far.pieces); span > 0 && size > 0 {
+		first, last := spanEnds(far.pieces)
+		if d := last.Sub(first).Seconds(); d > 0 {
+			c.FirstAt, c.LastAt, c.DurationS = first.UTC().Format(time.RFC3339), last.UTC().Format(time.RFC3339), d
+			c.RateBytes = span * size
+			if est := (span + 1) * size; est > c.Bytes {
+				c.Bytes, c.BytesEstimated = est, true
+			}
+		}
+	}
 	return c, true
+}
+
+// pieceAt is one data piece as an observer first heard it.
+type pieceAt struct {
+	index, bytes int
+	at           time.Time
+}
+
+// firstHeard: each piece once, at the time it was first heard, in order.
+func firstHeard(ps []pieceAt) []pieceAt {
+	seen := map[int]bool{}
+	sorted := append([]pieceAt(nil), ps...)
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].at.Before(sorted[j].at) })
+	out := make([]pieceAt, 0, len(sorted))
+	for _, p := range sorted {
+		if !seen[p.index] {
+			seen[p.index] = true
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// piecesSpanned: how many pieces were sent after the first one heard, up to
+// the last, and the usual piece size. A piece's number is one byte, so it
+// starts again at 0 after 255: numbers are counted on through each wrap, in
+// the order heard. 0 when the numbers don't run forward.
+func piecesSpanned(ps []pieceAt) (span, size int) {
+	f := firstHeard(ps)
+	if len(f) < 2 {
+		return 0, 0
+	}
+	sizes := make([]int, len(f))
+	off, prev := 0, -1
+	firstU, lastU := 0, 0
+	for i, p := range f {
+		sizes[i] = p.bytes
+		u := p.index + off
+		for prev >= 0 && u < prev-128 {
+			off += 256
+			u += 256
+		}
+		if i == 0 {
+			firstU = u
+		}
+		lastU, prev = u, u
+	}
+	sort.Ints(sizes)
+	size = sizes[len(sizes)/2]
+	if lastU <= firstU {
+		return 0, 0
+	}
+	return lastU - firstU, size
+}
+
+// spanEnds: when the first and the last of the pieces were first heard.
+func spanEnds(ps []pieceAt) (time.Time, time.Time) {
+	f := firstHeard(ps)
+	if len(f) == 0 {
+		return time.Time{}, time.Time{}
+	}
+	return f[0].at, f[len(f)-1].at
 }
 
 func (s *Server) handleMediaMeshClips(w http.ResponseWriter, r *http.Request) {
