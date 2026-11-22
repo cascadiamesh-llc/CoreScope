@@ -2304,6 +2304,60 @@
   }
 
   /**
+   * The people-on-the-ground estimate outside the coverage card (the
+   * outage board, the lab): the same calibration, field fit and session
+   * cache as the card, so both show the same numbers and only one works it
+   * out. placed: repeaters with positions; links: the links heard; opts as
+   * for init (loadTile, workers). Resolves { cov (for people outdoors),
+   * elevAt, failed }.
+   */
+  async function groundCoverage(placed, links, opts, onProgress) {
+    const loader = opts && opts.loadTile;
+    const key = JSON.stringify(placed.map((r) => [r.lat, r.lon, r.radio || '']));
+    const linksSig = JSON.stringify((links || []).map((l) => [l.from, l.observer_id]).sort());
+    if (session.key !== key || session.loader !== loader || session.linksSig !== linksSig) {
+      session.key = key; session.loader = loader; session.linksSig = linksSig; session.modes = {}; session.cal = null;
+      session.fieldInfo = null; session.fieldFit = null;
+    }
+    if (!session.modes.ground) {
+      session.modes.ground = (async () => {
+        const mode = CONFIG.modes.ground;
+        const terrain = await loadTerrainLevels(terrainPlan(placed, mode), loader);
+        if (terrain.total && terrain.failed === terrain.total) throw new Error('terrain');
+        if (!session.cal) {
+          setCalibration(0);
+          session.cal = fitCalibration(linkRows(links || [], terrain.elevAt));
+        }
+        setCalibration(session.cal.offsetDb);
+        const pool = (opts && opts.workers === false) ? null : workerPool();
+        try {
+          const cov = await computeCoverage(placed, terrain.elevAt, 'ground', onProgress, pool ? { run: pool.run } : null);
+          return { cov, elevAt: terrain.elevAt, failed: terrain.failed };
+        } finally {
+          if (pool) pool.close();
+        }
+      })();
+    }
+    let res;
+    try {
+      res = await session.modes.ground;
+    } catch (e) {
+      delete session.modes.ground;
+      throw e;
+    }
+    if (!session.fieldInfo) {
+      const info = await fieldPoints(opts);
+      session.fieldInfo = info || { cells: [] };
+      session.fieldFit = fitField(session.fieldInfo.cells, placed, res.elevAt);
+      res.adj = null;
+    }
+    setField(session.fieldFit);
+    if (!res.adj) res.adj = {};
+    if (!res.adj.outdoors) res.adj.outdoors = adjustCov(res.cov, 'outdoors');
+    return { cov: res.adj.outdoors, elevAt: res.elevAt, failed: res.failed };
+  }
+
+  /**
    * Draws the coverage card's map in el (which holds #mmCovMap, the mode
    * buttons [data-mm-cov] and #mmCovStatus). repeaters: the MediaMesh tab's
    * list (with lat/lon where known). opts.links: the links heard on radio2.
@@ -3028,7 +3082,7 @@
     fitCalibration, calibrationText, setCalibration, getCalibration, CAL,
     clutterLossDb, setField, getField, fieldDbFor, placeLossDb, fitField, fieldSolve, fieldText, fieldBand, adjustCov, FIELD_RGB, loadFieldPoints, fieldPoints, hexCorners, hexBand, session,
     backboneWeight, backboneTip, areaHistory, footprint, coverageImage, legendGradient,
-    growthSteps, presentAt, antennaHeight, knownHeightM, KNOWN_HEIGHTS, coverageCanvas, canvasOverlay, whatIfBase, whatIfDefaults, whatIfJob, whatIfCoverage, whatIfCanvas, cellAreaKm2, coveredKm2, unionKm2, repAreasKm2, repOnlyKm2, predictedLinks, meshEvidence, meshCells, meshRows, meshStatsHtml, meshTableHtml, MESH_OFTEN, planGain, planLinks, planHtml, PLAN_RGB,
+    growthSteps, presentAt, antennaHeight, knownHeightM, KNOWN_HEIGHTS, coverageCanvas, canvasOverlay, whatIfBase, whatIfDefaults, whatIfJob, whatIfCoverage, whatIfCanvas, cellAreaKm2, coveredKm2, unionKm2, repAreasKm2, repOnlyKm2, predictedLinks, meshEvidence, meshCells, meshRows, meshCanvas, meshPalette, groundCoverage, meshStatsHtml, meshTableHtml, MESH_OFTEN, planGain, planLinks, planHtml, PLAN_RGB,
     repNotes, repArea, repGroups, repSummaryHtml, repPanelHtml, repAction, assumptionsHtml, linkRows, linksTableHtml, init,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

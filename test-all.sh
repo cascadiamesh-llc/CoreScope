@@ -25,6 +25,7 @@ node tests/unit/test-mediamesh-node.js
 node tests/unit/test-mediamesh-observer.js
 node tests/unit/test-mediamesh-embed.js
 node tests/unit/test-observer-setup.js
+node tests/unit/test-mediamesh-status.js
 node tests/unit/test-mediamesh-cliplog.js
 node tests/unit/test-live-nightsky.js
 node tests/unit/test-mediamesh-3d.js

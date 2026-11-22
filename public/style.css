@@ -397,6 +397,13 @@
   --mm-mesh-weak: #7c3aed;
   --mm-mesh-none: #8b8ba3;
   --mm-mesh-weak-text: #6d28d9;
+  --mms-good: #15803d;
+  --mms-warn: #b45309;
+  --mms-bad: #b91c1c;
+  --mms-alert-bg: #fef3c7;
+  --mms-alert-text: #78350f;
+  --mms-ok-bg: #dcfce7;
+  --mms-ok-text: #14532d;
   --mediamesh-on-color: #ffffff; /* text on a filled MediaMesh badge, both themes */
   --mediamesh-badge-bg: #a21caf; /* fuchsia 700: white text on it reads at 6:1 */
   /* measured MediaMesh coverage, as the apps colour their coverage dots */
@@ -489,6 +496,13 @@
     --mediamesh-node-weak-color: #c68cd8;
     --mediamesh-text-color: #f0abfc;
     --mm-mesh-weak-text: #c4b5fd;
+    --mms-good: #4ade80;
+    --mms-warn: #fbbf24;
+    --mms-bad: #f87171;
+    --mms-alert-bg: #451a03;
+    --mms-alert-text: #fde68a;
+    --mms-ok-bg: #052e16;
+    --mms-ok-text: #bbf7d0;
     --section-bg: #1e1e34;
   }
 }
@@ -554,6 +568,13 @@
   --mediamesh-node-weak-color: #c68cd8;
   --mediamesh-text-color: #f0abfc;
   --mm-mesh-weak-text: #c4b5fd;
+  --mms-good: #4ade80;
+  --mms-warn: #fbbf24;
+  --mms-bad: #f87171;
+  --mms-alert-bg: #451a03;
+  --mms-alert-text: #fde68a;
+  --mms-ok-bg: #052e16;
+  --mms-ok-text: #bbf7d0;
   --section-bg: #1e1e34;
 }
 
@@ -6576,4 +6597,41 @@ html.mm-embed--sky .mm-embed-open:hover { background: var(--mm-sky-ink); color: 
 .mm-mesh-row--weak td, .mm-mesh-row--weak a { color: var(--mm-mesh-weak-text, var(--text)); }
 .mm-mesh-row--none td { color: var(--text-muted); }
 .mm-mesh-ev { font-size: 0.85em; color: var(--text-muted); }
+
+/* ---- Is MediaMesh up? (mediamesh-status.js) ---- */
+.mms-page { display: flex; flex-direction: column; }
+.mms-banner { padding: 12px 20px; font-size: 15px; display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.mms-banner--alert { background: var(--mms-alert-bg); color: var(--mms-alert-text); }
+.mms-banner--ok { background: var(--mms-ok-bg); color: var(--mms-ok-text); }
+.mms-banner--unknown { background: var(--card-bg); color: var(--text); }
+.mms-body { padding: 16px 20px 24px; display: flex; flex-direction: column; gap: 16px; max-width: 1400px; width: 100%; box-sizing: border-box; margin: 0 auto; }
+.mms-head h1 { margin: 0 0 4px; color: var(--mediamesh-text-color, var(--text)); }
+.mms-head p { margin: 0; }
+.mms-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+.mms-tile { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--card-bg); }
+.mms-big { font-size: 1.6em; font-weight: 700; color: var(--text); }
+.mms-good { color: var(--mms-good); }
+.mms-warn { color: var(--mms-warn); }
+.mms-bad { color: var(--mms-bad); }
+.mms-label { font-size: 0.85em; color: var(--text-muted); margin-top: 2px; }
+.mms-split { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+.mms-mapwrap { flex: 3 1 420px; min-width: 0; }
+.mms-map { height: 520px; border-radius: 10px; border: 1px solid var(--border); }
+.mms-key { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 0.85em; color: var(--text-muted); margin-top: 6px; }
+.mms-ring { display: inline-block; width: 12px; height: 12px; border-radius: 50%; border: 3px solid var(--mms-bad); box-sizing: border-box; margin-right: 6px; vertical-align: -2px; }
+.mms-side { flex: 2 1 300px; min-width: 0; border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--card-bg); }
+.mms-side h2 { font-size: 1em; margin: 4px 0 8px; }
+.mms-places, .mms-quiet { list-style: none; margin: 0 0 12px; padding: 0; }
+.mms-place { display: flex; gap: 10px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.mms-place-text { flex: 1; min-width: 0; color: var(--text); }
+.mms-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; }
+.mms-place--up .mms-dot { background: var(--mms-good); }
+.mms-place--weak .mms-dot { background: var(--mms-warn); }
+.mms-place--down .mms-dot { background: var(--mms-bad); }
+.mms-state { font-size: 0.85em; font-weight: 600; white-space: nowrap; }
+.mms-place--up .mms-state { color: var(--mms-good); }
+.mms-place--weak .mms-state { color: var(--mms-warn); }
+.mms-place--down .mms-state { color: var(--mms-bad); }
+.mms-quiet li { padding: 4px 0; }
+.mms-note { font-size: 0.85em; margin: 6px 0 0; }
 
