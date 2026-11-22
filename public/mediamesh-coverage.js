@@ -3223,6 +3223,13 @@
         onStats: opts && opts.onPeople,
       });
     }
+    // Photos, video and voice crossing the map as they're heard (mediamesh-live.js).
+    let live = null;
+    if (root.MediaMeshLive && typeof root.MediaMeshLive.attach === 'function') {
+      try {
+        live = root.MediaMeshLive.attach({ L, map, mapEl, repeaters: placed, links, toggle: el.querySelector('#mmCovLiveToggle') });
+      } catch (_) { live = null; }
+    }
     drawLinks();
     drawBackbone();
     show(meshView ? 'ground' : (opts && opts.mode) || 'ground');
@@ -3239,6 +3246,7 @@
       if (timeRange) timeRange.removeEventListener('input', onTimeInput);
       stopPlay();
       if (reach) { try { reach(); } catch (_) { /* gone */ } }
+      if (live) { try { live(); } catch (_) { /* gone */ } }
       if (root.MediaMesh3D && root.MediaMesh3D.isOpen()) root.MediaMesh3D.close();
       if (linksToggle) linksToggle.removeEventListener('change', onLinksToggle);
       if (fieldToggle) fieldToggle.removeEventListener('change', onFieldToggle);

@@ -79,6 +79,8 @@
   if (typeof window !== 'undefined') {
     window._liveMediaMesh = { ringCap: mediaMeshRingCap, ringFractions: mediaMeshRingFractions, hopStyle: pathHopStyle,
       clipOf: mediaMeshClipOf, parseAnnouncement: mediaMeshParseAnnouncement, transferKey: mediaMeshTransferKey,
+      liveClip: function (typeName, payload, hash, at) { return mediaMeshLiveClip(typeName, payload, hash, at); },
+      paritySid: function (sid) { return mediaMeshParitySid(sid); },
       transferHtml: function (t, now) { return mediaMeshTransferHtml(t, now); } };
   }
   let clickablePaths = [];

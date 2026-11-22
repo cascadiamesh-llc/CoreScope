@@ -386,6 +386,7 @@
    * as MeshCore Open TAK and Wadamesh TAK mark them. */
   --mediamesh-path-color: #d946ef;
   --mediamesh-node-color: #d946ef;
+  --mmlive-photo: #15803d; --mmlive-video: #334155; --mmlive-voice: #1d4ed8; --mmlive-clip: #475569; --mmlive-ember: #64748b; --mmlive-parity: #b45309;
   /* A repeater only seen relaying MediaMesh (weaker evidence): greyer pink. */
   --mediamesh-node-weak-color: #bd70d2;
   /* MediaMesh pink for TEXT: dark enough to read on light backgrounds
@@ -497,6 +498,7 @@
     --trace-ghost-color: #94a3b8;
     --mediamesh-path-color: #e879f9;
     --mediamesh-node-color: #e879f9;
+    --mmlive-photo: #7cd991; --mmlive-video: #eff0f2; --mmlive-voice: #6096f0; --mmlive-clip: #b4cdeb; --mmlive-ember: #9fb4d8; --mmlive-parity: #fde68a;
     --mediamesh-node-weak-color: #c68cd8;
     --mediamesh-text-color: #f0abfc;
     --mm-mesh-weak-text: #c4b5fd;
@@ -569,6 +571,7 @@
   --trace-ghost-color: #94a3b8;
   --mediamesh-path-color: #e879f9;
   --mediamesh-node-color: #e879f9;
+  --mmlive-photo: #7cd991; --mmlive-video: #eff0f2; --mmlive-voice: #6096f0; --mmlive-clip: #b4cdeb; --mmlive-ember: #9fb4d8; --mmlive-parity: #fde68a;
   --mediamesh-node-weak-color: #c68cd8;
   --mediamesh-text-color: #f0abfc;
   --mm-mesh-weak-text: #c4b5fd;
@@ -6744,3 +6747,37 @@ html.mm-embed--sky .mm-embed-open:hover { background: var(--mm-sky-ink); color: 
 .mmc-note { font-size: 0.85em; margin-top: 8px !important; }
 .mmc-label span { display: inline-block; white-space: nowrap; transform: translate(-50%, -150%); padding: 2px 8px; border-radius: 999px; font-weight: 700; font-size: 0.85em; background: var(--card-bg); color: var(--text); border: 1px solid var(--mediamesh-node-color); }
 .mmc-label { background: none; border: none; }
+
+/* ---- Live packets on the MediaMesh coverage map (mediamesh-live.js) ---- */
+.mmlive-canvas { position: absolute; inset: 0; z-index: 640; pointer-events: none; }
+.mmlive-canvas[hidden], .mmlive-panel[hidden], .mmlive-banner[hidden], .mmlive-body[hidden], .mmlive-replay[hidden] { display: none; }
+.mmlive-panel { position: absolute; top: 10px; right: 10px; z-index: 800; width: 300px; max-width: calc(100% - 70px); box-sizing: border-box; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--card-bg); color: var(--text); font-size: 0.8rem; line-height: 1.35; }
+.mmlive-head { display: flex; align-items: center; gap: 6px; }
+.mmlive-head strong { flex: 1; }
+.mmlive-live { width: 9px; height: 9px; border-radius: 50%; background: var(--mms-bad); animation: mmlive-pulse 1.6s ease-in-out infinite; }
+@keyframes mmlive-pulse { 50% { opacity: 0.35; transform: scale(0.8); } }
+.mmlive-fold { min-width: 28px; min-height: 28px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--text); cursor: pointer; font-size: 1rem; line-height: 1; }
+.mmlive-count { margin: 4px 0; color: var(--text-muted); }
+.mmlive-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.mmlive-item { display: flex; gap: 6px; align-items: baseline; }
+.mmlive-item--done .mmlive-text { color: var(--text-muted); }
+.mmlive-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; transform: translateY(-1px); border: 1px solid var(--border); }
+.mmlive-dot--photo { background: var(--mmlive-photo); }
+.mmlive-dot--video { background: var(--mmlive-video); }
+.mmlive-dot--voice { background: var(--mmlive-voice); }
+.mmlive-dot--clip { background: var(--mmlive-clip); }
+.mmlive-ago { color: var(--text-muted); white-space: nowrap; }
+.mmlive-btn { margin-top: 6px; min-height: 32px; width: 100%; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--mediamesh-text-color, var(--text)); cursor: pointer; font: inherit; }
+.mmlive-bar { height: 3px; margin-top: 6px; border-radius: 2px; background: var(--border); overflow: hidden; }
+.mmlive-bar span { display: block; height: 100%; width: 0; background: var(--mediamesh-node-color); }
+.mmlive-banner { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 790; max-width: calc(100% - 420px); min-width: 180px; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--mediamesh-node-color); background: var(--card-bg); color: var(--text); font-size: 0.8rem; text-align: center; display: flex; flex-direction: column; animation: mmlive-in 0.4s ease-out; }
+.mmlive-banner span { color: var(--text-muted); font-size: 0.75rem; }
+@keyframes mmlive-in { from { opacity: 0; transform: translate(-50%, -8px); } }
+.mm-cov-sw--live { width: 10px; height: 10px; border-radius: 50%; background: var(--mms-bad); }
+@media (max-width: 640px) {
+  .mmlive-panel { width: auto; left: 54px; font-size: 0.75rem; }
+  .mmlive-banner { top: auto; bottom: 26px; max-width: calc(100% - 20px); border-radius: 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mmlive-live, .mmlive-banner { animation: none; }
+}

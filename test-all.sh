@@ -30,6 +30,7 @@ node tests/unit/test-mediamesh-lab.js
 node tests/unit/test-mediamesh-grow.js
 node tests/unit/test-mediamesh-forecast.js
 node tests/unit/test-mediamesh-cascadia.js
+node tests/unit/test-mediamesh-live.js
 node tests/unit/test-mediamesh-cliplog.js
 node tests/unit/test-live-nightsky.js
 node tests/unit/test-mediamesh-3d.js
