@@ -63,7 +63,7 @@ test('clips sent privately: timed in the speed card, counted in the delivery car
   assert.deepStrictEqual([s.n, s.priv], [1, 1], 'two pieces at least');
   assert.ok(Math.abs(s.kbps - 0.4) < 1e-9);
   const h = I.speedHtml([], nameOf, 7, priv);
-  assert.ok(h.includes('median speed, 1 clip, 1 sent privately') && h.includes('Sent privately, 1.0 kB'), h);
+  assert.ok(h.includes('median speed end to end, 1 clip, 1 sent privately') && h.includes('Sent privately, 1.0 kB'), h);
   const d = I.deliveryHtml([], nameOf, 7, priv);
   assert.ok(d.includes('No announced clips') && d.includes('2 clips sent privately were heard') && d.includes('direct message'));
   const both = I.deliveryHtml([clip({ outcome: 'partial', missing: [1, 2] })], nameOf, 7, priv);
@@ -80,6 +80,18 @@ test('speed: the bytes sent after the first piece, and private clips sized from 
   const h = I.speedHtml([], nameOf, 7, priv);
   assert.ok(h.includes('0.8 kbit/s') && h.includes('about 23.6 kB'), h);
   assert.ok(h.includes('counted from their numbers'));
+});
+
+test('speed while sending: pauses of over 15 s left out', () => {
+  const priv = [clip({ outcome: 'unannounced', kind: 'unknown', total: 0, heard: 22, hops: 7, durationS: 264, sendingS: 134, bytes: 145 * 163, rateBytes: 144 * 163, bytesEstimated: true })];
+  const s = I.speedSummary([], nameOf, priv);
+  assert.ok(Math.abs(s.sendKbps - (144 * 163 * 8) / 134 / 1000) < 1e-9, String(s.sendKbps));
+  const h = I.speedHtml([], nameOf, 7, priv);
+  assert.ok(h.includes('1.4 kbit/s</div><div class="mm-ins-label">median while sending'), h);
+  assert.ok(h.includes('264 s') && h.includes('(130 s paused)') && h.includes('>While sending</th>'));
+  // without the server's figure, while sending is the whole time
+  const old = I.speedSummary([], nameOf, [clip({ outcome: 'unannounced', kind: 'unknown', total: 0, heard: 6, durationS: 20, bytes: 1000 })]);
+  assert.strictEqual(old.sendKbps, old.kbps);
 });
 
 test('did it arrive: receipts from the receiving apps, per clip and overall', () => {

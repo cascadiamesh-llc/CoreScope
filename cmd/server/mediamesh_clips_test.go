@@ -236,8 +236,41 @@ func TestUnannouncedClipSpan(t *testing.T) {
 	if k := float64(c.RateBytes) * 8 / c.DurationS / 1000; k < 0.7 || k > 0.8 {
 		t.Fatalf("%.2f kbit/s", k)
 	}
+	// every gap is long: no steady stretch to judge pauses by, nothing cut
+	if c.SendingS != 250 {
+		t.Fatalf("sending %.0f s", c.SendingS)
+	}
 	// numbers that don't run forward say nothing: back to what was heard
 	if span, _ := piecesSpanned([]pieceAt{{index: 5, bytes: 1, at: t0}, {index: 5, bytes: 1, at: t0.Add(time.Second)}}); span != 0 {
 		t.Fatalf("span %d", span)
+	}
+}
+
+// Today's 7-hop clip as Rainier View heard it: steady at about a piece every
+// 1.2 s, with two long waits. The waits are cut to the usual pace.
+func TestSendingSeconds(t *testing.T) {
+	t0 := time.Date(2026, 11, 22, 17, 48, 47, 0, time.UTC)
+	at := func(m, s int) time.Time { return t0.Add(time.Duration(m*60+s) * time.Second) }
+	ps := []pieceAt{
+		{121, 163, at(0, 0)}, {124, 163, at(0, 20)}, {143, 163, at(0, 33)}, {140, 163, at(0, 36)}, {147, 163, at(0, 42)},
+		{163, 163, at(0, 49)}, {168, 163, at(0, 58)}, {171, 163, at(1, 0)}, {188, 163, at(2, 18)}, {198, 163, at(2, 26)},
+		{201, 163, at(2, 27)}, {218, 163, at(2, 58)}, {219, 163, at(3, 3)}, {225, 163, at(3, 3)}, {220, 163, at(3, 5)},
+		{228, 163, at(3, 5)}, {239, 163, at(4, 2)}, {243, 163, at(4, 3)}, {253, 163, at(4, 12)}, {4, 163, at(4, 16)},
+		{248, 163, at(4, 17)}, {9, 163, at(4, 24)},
+	}
+	whole := 264.0
+	got := sendingSeconds(ps)
+	if got >= whole-60 || got <= 60 {
+		t.Fatalf("sending %.0f s of %.0f", got, whole)
+	}
+	span, size := piecesSpanned(ps)
+	if span != 144 {
+		t.Fatalf("span %d: the late 248 is no wrap", span)
+	}
+	if k := float64(span*size) * 8 / got / 1000; k < 1.2 || k > 1.6 {
+		t.Fatalf("%.2f kbit/s while sending over %.0f s", k, got)
+	}
+	if sendingSeconds(ps[:1]) != 0 {
+		t.Fatal("one piece")
 	}
 }

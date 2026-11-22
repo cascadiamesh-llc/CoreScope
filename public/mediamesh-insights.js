@@ -175,7 +175,12 @@
     return (clips || []).filter((c) => (c.outcome === 'whole' || c.outcome === 'parity') && c.durationS > 0 && c.bytes > 0)
       .concat((unannounced || []).filter((c) => c.durationS > 0 && c.bytes > 0 && c.heard >= 2))
       .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))
-      .map((c) => Object.assign({}, c, { kbps: ((c.rateBytes > 0 ? c.rateBytes : c.bytes) * 8) / c.durationS / 1000 }));
+      .map((c) => {
+        const b = c.rateBytes > 0 ? c.rateBytes : c.bytes;
+        // while sending: pauses of over 15 s cut out (the server's sendingS)
+        const sendS = c.sendingS > 0 && c.sendingS < c.durationS ? c.sendingS : c.durationS;
+        return Object.assign({}, c, { kbps: (b * 8) / c.durationS / 1000, sendKbps: (b * 8) / sendS / 1000, paused: c.durationS - sendS });
+      });
   }
 
   function speedSummary(clips, nameOf, unannounced) {
@@ -194,28 +199,29 @@
     });
     const photo1 = median(rows.filter((c) => c.kind === 'photo' && c.hops <= 1).map((c) => c.durationS));
     const priv = rows.filter((c) => c.outcome === 'unannounced').length;
-    return { n: rows.length, priv, kbps: median(rows.map((c) => c.kbps)), byHops, fastest, photo1, rows };
+    return { n: rows.length, priv, kbps: median(rows.map((c) => c.kbps)), sendKbps: median(rows.map((c) => c.sendKbps)), byHops, fastest, photo1, rows };
   }
 
   const fmtK = (v) => (v == null ? '—' : v < 10 ? v.toFixed(1) : String(Math.round(v)));
 
   function speedHtml(clips, nameOf, days, unannounced) {
     const s = speedSummary(clips, nameOf, unannounced);
-    const head = `<h3>How fast clips cross the mesh</h3><p class="text-muted mm-ins-sub">From the first piece the far end heard to the last: announced clips the far end heard whole, and clips sent privately (in a direct message or on a private channel), timed from the pieces heard, with the pieces in between that no observer heard counted from their numbers. Last ${days} days.</p>`;
+    const head = `<h3>How fast clips cross the mesh</h3><p class="text-muted mm-ins-sub">From the first piece the far end heard to the last: announced clips the far end heard whole, and clips sent privately (in a direct message or on a private channel), timed from the pieces heard, with the pieces in between that no observer heard counted from their numbers. While sending leaves out the pauses: gaps of over 15 s in which far fewer pieces went than usual, as when the sending app waits on the far end. Last ${days} days.</p>`;
     if (!s.n) return head + '<p class="text-muted">No clips with more than one piece heard yet.</p>';
     const maxK = Math.max(...s.byHops.map((b) => b.kbps || 0), 0.1);
     const tiles = `<div class="mm-ins-tiles">
-      <div class="mm-ins-tile"><div class="mm-ins-big">${fmtK(s.kbps)} kbit/s</div><div class="mm-ins-label">median speed, ${s.n} clip${s.n === 1 ? '' : 's'}${s.priv ? `, ${s.priv} sent privately` : ''}</div></div>
+      <div class="mm-ins-tile"><div class="mm-ins-big">${fmtK(s.kbps)} kbit/s</div><div class="mm-ins-label">median speed end to end, ${s.n} clip${s.n === 1 ? '' : 's'}${s.priv ? `, ${s.priv} sent privately` : ''}</div></div>
+      <div class="mm-ins-tile"><div class="mm-ins-big">${fmtK(s.sendKbps)} kbit/s</div><div class="mm-ins-label">median while sending, leaving out pauses of over 15 s</div></div>
       <div class="mm-ins-tile"><div class="mm-ins-big">${s.photo1 == null ? '—' : Math.round(s.photo1) + ' s'}</div><div class="mm-ins-label">a photo over one hop, typical</div></div>
       <div class="mm-ins-tile mm-ins-tile--wide"><div class="mm-ins-big mm-ins-accent mm-ins-route">${s.fastest ? esc(s.fastest.route) : '—'}</div><div class="mm-ins-label">${s.fastest ? `fastest route this period, ${fmtK(s.fastest.kbps)} kbit/s over ${s.fastest.n} clips` : 'fastest route: needs two clips on one route'}</div></div>
     </div>`;
     const bars = s.byHops.filter((b) => b.n).map((b) => `<div class="mm-ins-bar-row"><span>${b.hops}${b.hops === 5 ? '+' : ''} hop${b.hops === 1 ? '' : 's'}</span>
       <span class="mm-ins-bar"><i style="width:${Math.round(((b.kbps || 0) / maxK) * 100)}%"></i></span><span class="mm-ins-num">${fmtK(b.kbps)}</span><span class="text-muted mm-ins-n">${b.n}</span></div>`).join('');
     const rows = s.rows.slice(0, 8).map((c) => `<tr><td class="mm-ins-when">${whenHtml(c.at)}</td><td>${esc(routeLabel(c, nameOf))}</td><td class="mm-ins-num">${c.hops}</td><td>${esc(clipLabel(c))}, ${c.bytesEstimated ? '<span title="Worked out from the numbers of the first and last pieces heard">about ' : ''}${(c.bytes / 1000).toFixed(1)} kB${c.bytesEstimated ? '</span>' : ''}</td>
-      <td class="mm-ins-num">${Math.round(c.durationS)} s</td><td class="mm-ins-num"><strong>${fmtK(c.kbps)}</strong></td></tr>`).join('');
+      <td class="mm-ins-num">${Math.round(c.durationS)} s${c.paused >= 1 ? `<span class="text-muted mm-ins-paused" title="Paused for this long in all: gaps of over 15 s with far fewer pieces than usual"> (${Math.round(c.paused)} s paused)</span>` : ''}</td><td class="mm-ins-num"><strong>${fmtK(c.kbps)}</strong></td><td class="mm-ins-num">${fmtK(c.sendKbps)}</td></tr>`).join('');
     return head + tiles + `<div class="mm-ins-split">
       <div class="mm-ins-col"><h4>kbit/s by hops (median)</h4>${bars}</div>
-      <div class="mm-ins-col mm-ins-wide"><h4>Recent clips</h4><div class="mm-ins-scroll"><table class="analytics-table mm-ins-table"><thead><tr><th scope="col">Sent</th><th scope="col">Route</th><th scope="col" class="mm-ins-num">Hops</th><th scope="col">Clip</th><th scope="col" class="mm-ins-num">Took</th><th scope="col" class="mm-ins-num">kbit/s</th></tr></thead><tbody>${rows}</tbody></table></div></div></div>`;
+      <div class="mm-ins-col mm-ins-wide"><h4>Recent clips</h4><div class="mm-ins-scroll"><table class="analytics-table mm-ins-table"><thead><tr><th scope="col">Sent</th><th scope="col">Route</th><th scope="col" class="mm-ins-num">Hops</th><th scope="col">Clip</th><th scope="col" class="mm-ins-num">Took</th><th scope="col" class="mm-ins-num">kbit/s</th><th scope="col" class="mm-ins-num" title="Leaving out pauses of over 15 s">While sending</th></tr></thead><tbody>${rows}</tbody></table></div></div></div>`;
   }
 
   // ---- When it's busy -------------------------------------------------------

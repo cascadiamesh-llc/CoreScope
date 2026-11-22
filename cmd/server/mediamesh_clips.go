@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/hex"
+	"math"
 	"net/http"
 	"regexp"
 	"sort"
@@ -114,6 +115,9 @@ type MediaMeshClip struct {
 	// went before the clock started. For a clip sent privately, the pieces
 	// in between that no observer heard count too, from their numbers.
 	RateBytes int `json:"rateBytes,omitempty"`
+	// SendingS: durationS less the pauses (gaps of over 15 s in which far
+	// fewer pieces went than usual), for the speed while sending.
+	SendingS float64 `json:"sendingS,omitempty"`
 	// BytesEstimated: bytes is worked out from the piece numbers, not heard.
 	BytesEstimated bool `json:"bytesEstimated,omitempty"`
 	Observers      int  `json:"observers"`
@@ -159,6 +163,7 @@ func analyseMediaClips(anns []mediaClipAnn, pieces []mediaClipPiece) []MediaMesh
 		path        []string
 		first, last time.Time
 		bytes       int
+		pieces      []pieceAt
 	}
 	per := map[uint32]map[string]*seen{}
 	for _, p := range pieces {
@@ -192,6 +197,7 @@ func analyseMediaClips(anns []mediaClipAnn, pieces []mediaClipPiece) []MediaMesh
 				o.bytes += p.bytes
 			}
 			o.data[p.info] = true
+			o.pieces = append(o.pieces, pieceAt{index: p.info, bytes: p.bytes, at: p.at})
 		}
 		if o.path == nil || len(p.path) > o.maxHops {
 			o.maxHops, o.path = len(p.path), p.path
@@ -235,6 +241,7 @@ func analyseMediaClips(anns []mediaClipAnn, pieces []mediaClipPiece) []MediaMesh
 			if n := len(far.data); n > 1 {
 				c.RateBytes = far.bytes * (n - 1) / n
 			}
+			c.SendingS = sendingSeconds(far.pieces)
 			missingBy := map[int][]int{}
 			for idx := 0; idx < a.total; idx++ {
 				if !far.data[idx] {
@@ -399,6 +406,7 @@ func unannouncedClip(sid uint32, ps []mediaClipPieceP) (MediaMeshClip, bool) {
 		if d := last.Sub(first).Seconds(); d > 0 {
 			c.FirstAt, c.LastAt, c.DurationS = first.UTC().Format(time.RFC3339), last.UTC().Format(time.RFC3339), d
 			c.RateBytes = span * size
+			c.SendingS = sendingSeconds(far.pieces)
 			if est := (span + 1) * size; est > c.Bytes {
 				c.Bytes, c.BytesEstimated = est, true
 			}
@@ -428,45 +436,126 @@ func firstHeard(ps []pieceAt) []pieceAt {
 	return out
 }
 
+// unwrapIndexes: the pieces' numbers counted on through each wrap of the
+// one-byte number (255 -> 0): each taken nearest the highest so far, so a
+// piece heard late, over a longer path, doesn't count as a wrap.
+func unwrapIndexes(f []pieceAt) []int {
+	out := make([]int, len(f))
+	hi := 0
+	for i, p := range f {
+		u := p.index
+		if i > 0 {
+			k := int(math.Round(float64(hi-p.index) / 256))
+			u = p.index + 256*k
+		}
+		out[i] = u
+		if i == 0 || u > hi {
+			hi = u
+		}
+	}
+	return out
+}
+
 // piecesSpanned: how many pieces were sent after the first one heard, up to
-// the last, and the usual piece size. A piece's number is one byte, so it
-// starts again at 0 after 255: numbers are counted on through each wrap, in
-// the order heard. 0 when the numbers don't run forward.
+// the furthest, and the usual piece size. 0 when the numbers don't run
+// forward.
 func piecesSpanned(ps []pieceAt) (span, size int) {
 	f := firstHeard(ps)
 	if len(f) < 2 {
 		return 0, 0
 	}
 	sizes := make([]int, len(f))
-	off, prev := 0, -1
-	firstU, lastU := 0, 0
 	for i, p := range f {
 		sizes[i] = p.bytes
-		u := p.index + off
-		for prev >= 0 && u < prev-128 {
-			off += 256
-			u += 256
-		}
-		if i == 0 {
-			firstU = u
-		}
-		lastU, prev = u, u
 	}
 	sort.Ints(sizes)
-	size = sizes[len(sizes)/2]
-	if lastU <= firstU {
+	us := unwrapIndexes(f)
+	hi := us[0]
+	for _, u := range us {
+		if u > hi {
+			hi = u
+		}
+	}
+	if hi <= us[0] {
 		return 0, 0
 	}
-	return lastU - firstU, size
+	return hi - us[0], sizes[len(sizes)/2]
 }
 
-// spanEnds: when the first and the last of the pieces were first heard.
+// Pauses: a gap between pieces heard of over sendingPauseS seconds, in which
+// pieces went at less than a third of the clip's usual pace, is the sender
+// waiting (for the far end, say), not the radio.
+const sendingPauseS = 15
+
+// sendingSeconds: the time from the first piece heard to the furthest, with
+// each pause cut to what its pieces take at the clip's usual pace (seconds a
+// piece over the gaps of sendingPauseS or less, counting the pieces between
+// that weren't heard from their numbers). Pieces heard late, behind one
+// further on, are left out. 0 when there is nothing to go on.
+func sendingSeconds(ps []pieceAt) float64 {
+	f := firstHeard(ps)
+	if len(f) < 2 {
+		return 0
+	}
+	us := unwrapIndexes(f)
+	type gap struct {
+		s float64
+		n int
+	}
+	gaps := []gap{}
+	hi, at := us[0], f[0].at
+	for i := 1; i < len(f); i++ {
+		if us[i] <= hi {
+			continue
+		}
+		gaps = append(gaps, gap{f[i].at.Sub(at).Seconds(), us[i] - hi})
+		hi, at = us[i], f[i].at
+	}
+	if len(gaps) == 0 {
+		return 0
+	}
+	var ss float64
+	var sn int
+	for _, g := range gaps {
+		if g.s <= sendingPauseS {
+			ss += g.s
+			sn += g.n
+		}
+	}
+	if sn == 0 || ss <= 0 {
+		// no steady stretch to go by: nothing cut
+		total := 0.0
+		for _, g := range gaps {
+			total += g.s
+		}
+		return total
+	}
+	usual := ss / float64(sn)
+	total := 0.0
+	for _, g := range gaps {
+		if g.s > sendingPauseS && g.s/float64(g.n) > 3*usual {
+			total += usual * float64(g.n)
+		} else {
+			total += g.s
+		}
+	}
+	return total
+}
+
+// spanEnds: when the first piece and the furthest were first heard.
 func spanEnds(ps []pieceAt) (time.Time, time.Time) {
 	f := firstHeard(ps)
 	if len(f) == 0 {
 		return time.Time{}, time.Time{}
 	}
-	return f[0].at, f[len(f)-1].at
+	us := unwrapIndexes(f)
+	hi, last := us[0], f[0].at
+	for i, u := range us {
+		if u > hi {
+			hi, last = u, f[i].at
+		}
+	}
+	return f[0].at, last
 }
 
 func (s *Server) handleMediaMeshClips(w http.ResponseWriter, r *http.Request) {
