@@ -101,7 +101,7 @@
       if (p && !(out.length && out[out.length - 1] === p)) out.push(p);
     });
     const ob = observerId ? idx.byKey.get(String(observerId).toLowerCase()) : null;
-    if (ob && !(out.length && out[out.length - 1] === ob)) out.push(ob);
+    if (ob && !out.includes(ob)) out.push(ob);
     return out.map((p) => ({ lat: p.lat, lon: p.lon, name: p.name }));
   }
 
@@ -348,6 +348,8 @@
       $('[data-mmlive-list]').innerHTML = tracker.list(LIST_MAX).map((tr) => transferHtml(tr, now)).join('');
     }
 
+    let panelTimer = 0;
+    function schedulePanel() { if (!panelTimer) panelTimer = setTimeout(() => { panelTimer = 0; if (!destroyed && on) renderPanel(); }, 300); }
     function kick() { if (!raf && on && !destroyed) raf = win.requestAnimationFrame(frame); }
 
     /** A clip packet: its comet, its transfer, any moment. */
@@ -361,6 +363,7 @@
       if (!(replay && !o.replay)) {
         const moments = tracker.note(p, ms, o);
         if (moments.length) showBanner(moments[moments.length - 1]);
+        schedulePanel();
       }
       kick();
     }
@@ -590,7 +593,7 @@
       destroyed = true;
       if (typeof root.offWS === 'function') root.offWS(wsHandler);
       if (raf) win.cancelAnimationFrame(raf);
-      clearInterval(ticker); clearTimeout(bannerTimer);
+      clearInterval(ticker); clearTimeout(bannerTimer); clearTimeout(panelTimer);
       if (mo) mo.disconnect();
       map.off('resize', resize);
       if (opts.toggle) opts.toggle.removeEventListener('change', onToggle);

@@ -43,6 +43,11 @@ test('a path: resolved keys first, unique prefixes, then the observer', () => {
   assert.deepStrictEqual(q.map((x) => x.name), ['First Hill 🏙️']);
 });
 
+test('an observer already on the path is not added again', () => {
+  const p = M.placePath(['aa11', 'bb'], null, 'aa11bb', idx);
+  assert.deepStrictEqual(p.map((x) => x.name), ['Myrtle Reservoir 🌊', 'Kremwerk']);
+});
+
 test('an ambiguous prefix takes the repeater nearest the hop before', () => {
   const p = M.placePath(['bb', 'aa'], null, '', idx);
   assert.deepStrictEqual(p.map((x) => x.name), ['Kremwerk', 'First Hill 🏙️']);
