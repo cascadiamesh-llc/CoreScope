@@ -119,13 +119,14 @@ func TestMediaMeshClipLog(t *testing.T) {
 		piece(sid, 0, 5, obs("Far", 6, `["aa","bb"]`, true), obs("Near", 5, `["aa"]`, true)),
 		piece(sid, 2, 9, obs("Far", 10, `["aa","bb"]`, true), obs("Main", 9, `["aa"]`, false)),
 		piece(sid^mediaClipFecXor, 1, 12, obs("Far", 12, `["aa","bb"]`, true)),
+		piece(sid^mediaClipRepairXor, 5, 14, obs("Far", 14, `["aa","bb"]`, true)),
 		piece(0x0badf00d, 0, 7, obs("Far", 7, `["aa"]`, true)),
 	}
 	srv.store.mu.Lock()
 	srv.store.packets = append(srv.store.packets, txs...)
 	srv.store.mu.Unlock()
 
-	for _, ask := range []uint32{sid, sid ^ mediaClipFecXor} {
+	for _, ask := range []uint32{sid, sid ^ mediaClipFecXor, sid ^ mediaClipRepairXor} {
 		log := srv.store.mediaMeshClipLog(ask, at.Add(-time.Hour).Format(time.RFC3339))
 		if log.SID != "1a2b3c4d" || log.Clip == nil || log.Announcement == nil {
 			t.Fatalf("asked %08x: %+v", ask, log)
@@ -136,10 +137,16 @@ func TestMediaMeshClipLog(t *testing.T) {
 		if log.Announcement.Channel != "#seattle" || len(log.Announcement.Heard) != 1 {
 			t.Errorf("announcement: %+v", log.Announcement)
 		}
-		if len(log.Pieces) != 3 {
+		if len(log.Pieces) != 4 {
 			t.Fatalf("pieces: %+v", log.Pieces)
 		}
-		p0, p2, par := log.Pieces[0], log.Pieces[1], log.Pieces[2]
+		p0, p2, par, rep := log.Pieces[0], log.Pieces[1], log.Pieces[2], log.Pieces[3]
+		if !rep.Parity || !rep.Repair || rep.Seed != 5 || rep.Index != -1 {
+			t.Errorf("repair: %+v", rep)
+		}
+		if log.Clip.Parity != 2 {
+			t.Errorf("parity and repair pieces: %d", log.Clip.Parity)
+		}
 		if p0.Index != 0 || len(p0.Heard) != 2 || p0.Heard[0].Name != "Near" || p0.Heard[1].Name != "Far" {
 			t.Errorf("piece 0: %+v", p0)
 		}
@@ -165,7 +172,7 @@ func TestMediaMeshClipLog(t *testing.T) {
 	}
 	var got MediaMeshClipLog
 	getJSON(t, router, "/api/analytics/mediamesh/clips/1a2b3c4d", &got)
-	if got.Clip == nil || len(got.Pieces) != 3 {
+	if got.Clip == nil || len(got.Pieces) != 4 {
 		t.Errorf("endpoint: %+v", got)
 	}
 }
@@ -272,5 +279,57 @@ func TestSendingSeconds(t *testing.T) {
 	}
 	if sendingSeconds(ps[:1]) != 0 {
 		t.Fatal("one piece")
+	}
+}
+
+// Fast MediaMesh's repair pieces (sid ^ 0x0F0DEC0D, by seed) mend any lost
+// pieces, one each, whichever they are; a repeated seed counts once.
+func TestRepairPiecesRebuild(t *testing.T) {
+	t0 := time.Date(2026, 11, 22, 21, 54, 0, 0, time.UTC)
+	anns := []mediaClipAnn{{sid: 0xfdb6c3b8, kind: "photo", total: 18, at: t0}, {sid: 0x00000002, kind: "photo", total: 18, at: t0}}
+	var p []mediaClipPiece
+	add := func(sid uint32, info, sec int) {
+		p = append(p, mediaClipPiece{sid: sid, info: info, bytes: 163, observer: "far", obsName: "far", path: []string{"aa", "bb"}, at: t0.Add(time.Duration(sec) * time.Second)})
+	}
+	// clip 1: 14 of 18 heard, then 4 repair pieces (one twice)
+	for i := 0; i < 18; i++ {
+		if i != 3 && i != 7 && i != 11 && i != 15 {
+			add(0xfdb6c3b8, i, i)
+		}
+	}
+	for _, seed := range []int{40, 41, 41, 99, 120} {
+		add(0xfdb6c3b8^mediaClipRepairXor, seed, 30)
+	}
+	// clip 2: 10 of 18 heard and 3 repair pieces: not enough
+	for i := 0; i < 10; i++ {
+		add(2, i, i)
+	}
+	for _, seed := range []int{1, 2, 3} {
+		add(2^mediaClipRepairXor, seed, 30)
+	}
+	by := map[string]MediaMeshClip{}
+	for _, c := range analyseMediaClips(anns, p) {
+		by[c.SID] = c
+	}
+	if c := by["fdb6c3b8"]; c.Outcome != "parity" || len(c.Rebuilt) != 4 || c.Parity != 4 || c.Heard != 14 || len(c.Missing) != 0 {
+		t.Fatalf("clip 1: %+v", c)
+	}
+	if c := by["00000002"]; c.Outcome != "partial" || len(c.Missing) != 8 || c.Parity != 3 {
+		t.Fatalf("clip 2: %+v", c)
+	}
+	// repair pieces of an announced clip are no clip sent privately
+	if u := unannouncedMediaClips(anns, p); len(u) != 0 {
+		t.Fatalf("unannounced: %+v", u)
+	}
+	// and a private clip's repair pieces count as its parity, not a clip of their own
+	var q []mediaClipPiece
+	for i := 0; i < 5; i++ {
+		q = append(q, mediaClipPiece{sid: 0xA1B2C3D4, info: i, bytes: 163, observer: "far", path: []string{"aa"}, at: t0.Add(time.Duration(i) * time.Second)})
+	}
+	q = append(q, mediaClipPiece{sid: 0xA1B2C3D4 ^ mediaClipRepairXor, info: 7, bytes: 163, observer: "far", path: []string{"aa"}, at: t0.Add(9 * time.Second)})
+	q = append(q, mediaClipPiece{sid: 0xA1B2C3D4 ^ mediaClipRepairXor, info: 8, bytes: 163, observer: "far", path: []string{"aa"}, at: t0.Add(10 * time.Second)})
+	u := unannouncedMediaClips(nil, q)
+	if len(u) != 1 || u[0].SID != "a1b2c3d4" || u[0].Parity != 2 || u[0].Heard != 5 {
+		t.Fatalf("private: %+v", u)
 	}
 }

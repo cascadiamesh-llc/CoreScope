@@ -100,6 +100,18 @@ test('tracker: parity pieces make up for lost ones', () => {
   assert.ok(M.transferHtml(o, t + 9000).startsWith('<li class="mmlive-item mmlive-item--done">'));
 });
 
+test('tracker: Fast MediaMesh repair pieces mend any lost pieces, one each', () => {
+  const T = M.createTracker();
+  const t = Date.now();
+  [0, 2, 4].forEach((i, k) => T.note({ key: 'r', kind: 'photo', pts: pts3, hash: 'd' + i, index: i, total: 6 }, t + k));
+  // 3 lost (1, 3, 5): two repair pieces, one heard twice, aren't enough; a third is
+  [7, 7, 9].forEach((seed, k) => T.note({ key: 'r', kind: 'photo', pts: pts3, hash: 'r' + k, index: seed, parity: true, repair: true, total: 6 }, t + 10 + k));
+  assert.strictEqual(M.outcomeOf(T.transfers.get('r')).outcome, 'lost');
+  T.note({ key: 'r', kind: 'photo', pts: pts3, hash: 'r9', index: 11, parity: true, repair: true, total: 6 }, t + 20);
+  const o = M.outcomeOf(T.transfers.get('r'));
+  assert.deepStrictEqual([o.outcome, o.rebuilt], ['parity', 3]);
+});
+
 test('tracker: the longest route today, once beaten', () => {
   const T = M.createTracker();
   const t = new Date(2026, 10, 22, 9).getTime();
@@ -164,7 +176,7 @@ test('clipFor uses live.js\'s parsing and learns the kind from announcements', (
   };
   const ann = new Map([['11111111', { sid: '11111111', kind: 'photo', total: 9, seconds: 0 }]]);
   const c = M.clipFor('RAW_CUSTOM', { raw: '561111111103' }, [], 'h', 0, ann, false);
-  assert.deepStrictEqual(c, { key: 'sid|11111111', kind: 'photo', seconds: 0, index: 3, parity: false, total: 9 });
+  assert.deepStrictEqual(c, { key: 'sid|11111111', kind: 'photo', seconds: 0, index: 3, parity: false, repair: false, total: 9 });
   const p = M.clipFor('RAW_CUSTOM', { raw: '562222222203' }, [], 'h', 0, ann, false);
   assert.strictEqual(p.parity, true);
   assert.strictEqual(p.key, 'sid|11111111');

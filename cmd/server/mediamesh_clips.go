@@ -17,7 +17,11 @@ import (
 // [0x56|0x57][sid:4][index][...], on raw data or in channel data (type
 // 0x5643) the analyzer can read. Parity pieces follow on channel pushes:
 // [0x56][sid ^ 0xFEC0FEC0][block*8 + j][lastLen][...]; any e pieces lost
-// from a block of 20 come back from any e of its parity pieces.
+// from a block of 20 come back from any e of its parity pieces. Fast
+// MediaMesh (on by default in both apps) sends repair pieces instead:
+// [0x56][sid ^ 0x0F0DEC0D][seed][lastLen][...], each a mix of all the clip's
+// pieces (VoxFountain), so any m lost pieces come back from about m of them,
+// whichever were lost. Both count as parity here.
 //
 // For each clip the "far end" is the observer that heard its pieces over the
 // most hops (most pieces breaking a tie): what it heard says whether the
@@ -29,9 +33,10 @@ import (
 // weekday and hour).
 
 const (
-	mediaClipFecXor   = 0xFEC0FEC0
-	mediaClipFecBlock = 20
-	mediaClipsMax     = 400
+	mediaClipFecXor    = 0xFEC0FEC0
+	mediaClipRepairXor = 0x0F0DEC0D
+	mediaClipFecBlock  = 20
+	mediaClipsMax      = 400
 )
 
 var mediaClipAnnRe = regexp.MustCompile(`(?i)(?:^|[\s:])(VI1|VV1|VE3|VM1):([0-9a-z]+):([0-9a-z]+):([0-9a-z]+):([0-9a-z]+)`)
@@ -158,7 +163,8 @@ func analyseMediaClips(anns []mediaClipAnn, pieces []mediaClipPiece) []MediaMesh
 	type seen struct {
 		name        string
 		data        map[int]bool
-		parity      map[int]int // block -> parity pieces
+		parity      map[int]int  // block -> parity pieces
+		repair      map[int]bool // Fast MediaMesh repair pieces heard, by seed
 		maxHops     int
 		path        []string
 		first, last time.Time
@@ -167,12 +173,15 @@ func analyseMediaClips(anns []mediaClipAnn, pieces []mediaClipPiece) []MediaMesh
 	}
 	per := map[uint32]map[string]*seen{}
 	for _, p := range pieces {
-		sid, parity := p.sid, false
+		sid, parity, repair := p.sid, false, false
 		if _, ok := bySid[sid]; !ok {
-			if _, ok := bySid[sid^mediaClipFecXor]; !ok {
+			if _, ok := bySid[sid^mediaClipFecXor]; ok {
+				sid, parity = sid^mediaClipFecXor, true
+			} else if _, ok := bySid[sid^mediaClipRepairXor]; ok {
+				sid, repair = sid^mediaClipRepairXor, true
+			} else {
 				continue
 			}
-			sid, parity = sid^mediaClipFecXor, true
 		}
 		a := anns[bySid[sid]]
 		if p.at.Before(a.at.Add(-10*time.Minute)) || p.at.After(a.at.Add(6*time.Hour)) {
@@ -187,10 +196,12 @@ func analyseMediaClips(anns []mediaClipAnn, pieces []mediaClipPiece) []MediaMesh
 		}
 		o := per[sid][key]
 		if o == nil {
-			o = &seen{name: p.obsName, data: map[int]bool{}, parity: map[int]int{}}
+			o = &seen{name: p.obsName, data: map[int]bool{}, parity: map[int]int{}, repair: map[int]bool{}}
 			per[sid][key] = o
 		}
-		if parity {
+		if repair {
+			o.repair[p.info] = true
+		} else if parity {
 			o.parity[p.info/8]++
 		} else if p.info < a.total {
 			if !o.data[p.info] {
@@ -235,6 +246,7 @@ func analyseMediaClips(anns []mediaClipAnn, pieces []mediaClipPiece) []MediaMesh
 			for _, n := range far.parity {
 				c.Parity += n
 			}
+			c.Parity += len(far.repair)
 			c.FirstAt, c.LastAt = far.first.UTC().Format(time.RFC3339), far.last.UTC().Format(time.RFC3339)
 			c.DurationS = far.last.Sub(far.first).Seconds()
 			c.Bytes = far.bytes
@@ -252,13 +264,20 @@ func analyseMediaClips(anns []mediaClipAnn, pieces []mediaClipPiece) []MediaMesh
 				c.Outcome = "whole"
 			} else {
 				c.Outcome = "parity"
+				var left []int
 				for b, miss := range missingBy {
 					if len(miss) <= far.parity[b] {
 						c.Rebuilt = append(c.Rebuilt, miss...)
 					} else {
-						c.Outcome = "partial"
-						c.Missing = append(c.Missing, miss...)
+						left = append(left, miss...)
 					}
+				}
+				// repair pieces mend any of what's left, one each
+				if len(left) > 0 && len(left) <= len(far.repair) {
+					c.Rebuilt = append(c.Rebuilt, left...)
+				} else if len(left) > 0 {
+					c.Outcome = "partial"
+					c.Missing = append(c.Missing, left...)
 				}
 				sort.Ints(c.Missing)
 				sort.Ints(c.Rebuilt)
@@ -292,7 +311,7 @@ func unannouncedMediaClips(anns []mediaClipAnn, pieces []mediaClipPiece) []Media
 	// later is the parity one.
 	firstAt := map[uint32]time.Time{}
 	for _, p := range pieces {
-		if announced[p.sid] || announced[p.sid^mediaClipFecXor] {
+		if announced[p.sid] || announced[p.sid^mediaClipFecXor] || announced[p.sid^mediaClipRepairXor] {
 			continue
 		}
 		if t, ok := firstAt[p.sid]; !ok || p.at.Before(t) {
@@ -306,8 +325,11 @@ func unannouncedMediaClips(anns []mediaClipAnn, pieces []mediaClipPiece) []Media
 			continue
 		}
 		sid, parity := p.sid, false
-		if other, ok := firstAt[p.sid^mediaClipFecXor]; ok && (other.Before(t) || (other.Equal(t) && p.sid^mediaClipFecXor < p.sid)) {
-			sid, parity = p.sid^mediaClipFecXor, true
+		for _, x := range []uint32{mediaClipFecXor, mediaClipRepairXor} {
+			if other, ok := firstAt[p.sid^x]; ok && (other.Before(t) || (other.Equal(t) && p.sid^x < p.sid)) {
+				sid, parity = p.sid^x, true
+				break
+			}
 		}
 		bySid[sid] = append(bySid[sid], mediaClipPieceP{p, parity})
 	}

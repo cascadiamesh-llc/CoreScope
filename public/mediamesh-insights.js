@@ -160,7 +160,7 @@
     return head + tiles + `<div class="mm-ins-split">
       <div class="mm-ins-col"><h4>Clips heard, by hops</h4>${bars}</div>
       <div class="mm-ins-col mm-ins-wide"><h4>Recent clips</h4><div class="mm-ins-scroll"><table class="analytics-table mm-ins-table"><thead><tr><th scope="col">Sent</th><th scope="col">Clip</th><th scope="col">Route</th><th scope="col" class="mm-ins-num">Hops</th><th scope="col">Pieces heard</th><th scope="col">Far end heard</th><th scope="col">Recipient</th></tr></thead><tbody>${recent}</tbody></table></div>
-      <p class="text-muted mm-ins-key">Pick a clip for its flight recorder. <span class="mm-pieces"><span></span></span> heard · <span class="mm-pieces"><span class="is-rebuilt"></span></span> rebuilt from parity · <span class="mm-pieces"><span class="is-missing"></span></span> not heard by an observer</p></div></div>`;
+      <p class="text-muted mm-ins-key">Pick a clip for its flight recorder. <span class="mm-pieces"><span></span></span> heard · <span class="mm-pieces"><span class="is-rebuilt"></span></span> rebuilt from parity or repair pieces · <span class="mm-pieces"><span class="is-missing"></span></span> not heard by an observer</p></div></div>`;
   }
 
   // ---- Speed ----------------------------------------------------------------

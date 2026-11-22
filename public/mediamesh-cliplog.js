@@ -130,7 +130,7 @@
     const st = stalls(log, far.id)[0];
     if (st) {
       const p = st.after;
-      const what = p.parity ? 'a parity piece' : `piece ${p.index + 1}`;
+      const what = p.repair ? 'a repair piece' : p.parity ? 'a parity piece' : `piece ${p.index + 1}`;
       out.push(`It stalled for <strong>${dur((st.to - st.from) / 1000)}</strong> after ${what}, at +${dur((st.from - t0) / 1000)}, before the next piece reached ${esc(far.name)}.`);
     }
     // loss along the way: an observer nearer the sender that heard more than the far end
@@ -188,10 +188,10 @@
     const every = rowH >= 10 ? 1 : rowH >= 6 ? 5 : 20;
     for (let i = 0; i < total; i++) {
       const cls = missing.has(i) ? 'is-missing' : rebuilt.has(i) ? 'is-rebuilt' : '';
-      if (cls) svg += `<rect class="mm-fr-row ${cls}" x="${left}" y="${(top + i * rowH).toFixed(1)}" width="${W - left - right}" height="${rowH}"><title>Piece ${i + 1}: ${missing.has(i) ? 'not heard at the far end' : 'rebuilt from parity at the far end'}</title></rect>`;
+      if (cls) svg += `<rect class="mm-fr-row ${cls}" x="${left}" y="${(top + i * rowH).toFixed(1)}" width="${W - left - right}" height="${rowH}"><title>Piece ${i + 1}: ${missing.has(i) ? 'not heard at the far end' : 'rebuilt from parity or repair pieces at the far end'}</title></rect>`;
       if (cls || i % every === 0 || i === total - 1) svg += label(i, (missing.has(i) ? '× ' : rebuilt.has(i) ? 'rebuilt ' : '') + (i + 1), cls);
     }
-    if (parity.length) svg += label(total, 'parity', 'mm-fr-label--head');
+    if (parity.length) svg += label(total, parity.some((p) => p.repair) ? 'repair' : 'parity', 'mm-fr-label--head');
     const rowOf = (p) => (p.parity ? total + 1 + parity.indexOf(p) : p.index);
     (log.pieces || []).forEach((p) => {
       const row = rowOf(p);
@@ -199,7 +199,7 @@
         const k = colour.get(h.observer || h.name) || 0;
         const at = t(h.at);
         const route = (h.path || []).map((hop) => hopName(log, hop)).join(' › ');
-        const what = p.parity ? `Parity piece (block ${p.block + 1})` : `Piece ${p.index + 1}`;
+        const what = p.repair ? `Repair piece (mix ${p.seed + 1})` : p.parity ? `Parity piece (block ${p.block + 1})` : `Piece ${p.index + 1}`;
         svg += `<circle class="mm-fr-dot mm-fr-o${k}" cx="${x(at).toFixed(1)}" cy="${y(row).toFixed(1)}" r="${r.toFixed(1)}"><title>${esc(what)} · ${esc(h.name || h.observer)} · +${esc(dur((at - t0) / 1000))}${route ? ' · via ' + esc(route) : ''}</title></circle>`;
       });
     });
@@ -218,7 +218,7 @@
       })();
       const far = c && c.observer === o.id ? ' <span class="mm-fr-far">far end</span>' : '';
       return `<tr><td><span class="mm-fr-key mm-fr-o${i % OBS_COLOURS}" aria-hidden="true"></span>${esc(o.name)}${far}</td><td class="mm-ins-num">${o.hops}</td>
-        <td class="mm-ins-num">${o.data.size}${c ? ' / ' + c.total : ''}${o.parity ? ` <span class="text-muted">+${o.parity} parity</span>` : ''}</td>
+        <td class="mm-ins-num">${o.data.size}${c ? ' / ' + c.total : ''}${o.parity ? ` <span class="text-muted" title="Parity and Fast MediaMesh repair pieces">+${o.parity} repair</span>` : ''}</td>
         <td class="mm-ins-num">+${esc(dur((o.first - t0) / 1000))}</td><td class="mm-ins-num">+${esc(dur((o.last - t0) / 1000))}</td><td class="mm-fr-via">${via || '<span class="text-muted">direct</span>'}</td></tr>`;
     }).join('');
     return `<table class="analytics-table mm-ins-table mm-fr-obs"><thead><tr><th scope="col">Observer</th><th scope="col" class="mm-ins-num">Hops</th><th scope="col" class="mm-ins-num">Pieces</th><th scope="col" class="mm-ins-num">First</th><th scope="col" class="mm-ins-num">Last</th><th scope="col">Route</th></tr></thead><tbody>${rows}</tbody></table>`;

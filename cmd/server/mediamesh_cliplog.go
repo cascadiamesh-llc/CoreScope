@@ -23,10 +23,13 @@ type MediaMeshClipHeard struct {
 	Path     []string `json:"path"`
 }
 
-// MediaMeshClipPiece is one packet of the clip: a data piece (Index) or a
-// parity piece (Block, J).
+// MediaMeshClipPiece is one packet of the clip: a data piece (Index), a
+// parity piece (Block, J), or a Fast MediaMesh repair piece (Repair, Seed;
+// Parity too).
 type MediaMeshClipPiece struct {
 	Parity bool                 `json:"parity,omitempty"`
+	Repair bool                 `json:"repair,omitempty"`
+	Seed   int                  `json:"seed,omitempty"`
 	Index  int                  `json:"index"`
 	Block  int                  `json:"block,omitempty"`
 	J      int                  `json:"j,omitempty"`
@@ -88,9 +91,14 @@ func (s *Server) handleMediaMeshClipLog(w http.ResponseWriter, r *http.Request) 
 }
 
 // mediaMeshClipLog gathers everything about clip sid since `since` (RFC
-// 3339). A parity piece carries sid ^ 0xFEC0FEC0; either id finds the clip.
+// 3339). A parity piece carries sid ^ 0xFEC0FEC0 and a repair piece sid ^
+// 0x0F0DEC0D; any of the ids finds the clip.
 func (s *PacketStore) mediaMeshClipLog(sid uint32, since string) *MediaMeshClipLog {
-	alt := sid ^ mediaClipFecXor
+	// the ids that may belong to it: its own, or those of the clip it repairs
+	ids := map[uint32]bool{}
+	for _, base := range []uint32{sid, sid ^ mediaClipFecXor, sid ^ mediaClipRepairXor} {
+		ids[base], ids[base^mediaClipFecXor], ids[base^mediaClipRepairXor] = true, true, true
+	}
 	out := &MediaMeshClipLog{SID: sidHex(sid), Pieces: []MediaMeshClipPiece{}, Hops: map[string]MediaMeshClipHop{}}
 	var anns []mediaClipAnn
 	var pieces []mediaClipPiece
@@ -124,7 +132,7 @@ func (s *PacketStore) mediaMeshClipLog(sid uint32, since string) *MediaMeshClipL
 				continue
 			}
 			a, ok := parseMediaClipAnnouncement(text)
-			if !ok || (a.sid != sid && a.sid != alt) {
+			if !ok || (a.sid != sid && a.sid != sid^mediaClipFecXor && a.sid != sid^mediaClipRepairXor) {
 				continue
 			}
 			a.at = parseTimestamp(tx.FirstSeen)
@@ -149,7 +157,7 @@ func (s *PacketStore) mediaMeshClipLog(sid uint32, since string) *MediaMeshClipL
 			continue
 		}
 		psid, info, ok := parseMediaClipBytes(b)
-		if !ok || (psid != sid && psid != alt) {
+		if !ok || !ids[psid] {
 			continue
 		}
 		piece := MediaMeshClipPiece{Index: info, Hash: tx.Hash, Bytes: len(b), Heard: []MediaMeshClipHeard{}, wire: psid}
@@ -176,6 +184,30 @@ func (s *PacketStore) mediaMeshClipLog(sid uint32, since string) *MediaMeshClipL
 	if len(anns) > 0 && anns[0].sid != sid {
 		sid = anns[0].sid
 		out.SID = sidHex(sid)
+	} else if len(anns) == 0 {
+		// no announcement (a clip sent privately): its own pieces go first,
+		// parity and repair pieces after them
+		first := map[uint32]string{}
+		for _, p := range out.Pieces {
+			if t, ok := first[p.wire]; !ok || p.Heard[0].At < t {
+				first[p.wire] = p.Heard[0].At
+			}
+		}
+		for _, base := range []uint32{sid, sid ^ mediaClipFecXor, sid ^ mediaClipRepairXor} {
+			t, ok := first[base]
+			if !ok {
+				continue
+			}
+			if other, ok := first[base^mediaClipFecXor]; ok && other < t {
+				continue
+			}
+			if other, ok := first[base^mediaClipRepairXor]; ok && other < t {
+				continue
+			}
+			sid = base
+			out.SID = sidHex(sid)
+			break
+		}
 	}
 	// Only what was heard around the announcement: a session id can come
 	// round again weeks later (analyseMediaClips's window).
@@ -199,9 +231,24 @@ func (s *PacketStore) mediaMeshClipLog(sid uint32, since string) *MediaMeshClipL
 	}
 	for i := range out.Pieces {
 		p := &out.Pieces[i]
-		if p.wire != sid {
+		switch p.wire {
+		case sid:
+		case sid ^ mediaClipRepairXor:
+			p.Parity, p.Repair, p.Seed, p.Index = true, true, p.Index, -1
+		case sid ^ mediaClipFecXor:
 			p.Parity, p.Block, p.J, p.Index = true, p.Index/8, p.Index%8, -1
+		default:
+			p.Index = -2 // another clip's, dropped below
 		}
+	}
+	{
+		kept := out.Pieces[:0]
+		for _, p := range out.Pieces {
+			if p.Index != -2 {
+				kept = append(kept, p)
+			}
+		}
+		out.Pieces = kept
 	}
 	if clips := analyseMediaClips(anns, pieces); len(clips) > 0 {
 		c := clips[0]
@@ -213,6 +260,12 @@ func (s *PacketStore) mediaMeshClipLog(sid uint32, since string) *MediaMeshClipL
 			return !a.Parity
 		}
 		if a.Parity {
+			if a.Repair != b.Repair {
+				return !a.Repair
+			}
+			if a.Repair {
+				return a.Seed < b.Seed
+			}
 			if a.Block != b.Block {
 				return a.Block < b.Block
 			}

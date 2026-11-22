@@ -81,6 +81,7 @@
       clipOf: mediaMeshClipOf, parseAnnouncement: mediaMeshParseAnnouncement, transferKey: mediaMeshTransferKey,
       liveClip: function (typeName, payload, hash, at) { return mediaMeshLiveClip(typeName, payload, hash, at); },
       paritySid: function (sid) { return mediaMeshParitySid(sid); },
+      repairSid: function (sid) { return mediaMeshRepairSid(sid); },
       transferHtml: function (t, now) { return mediaMeshTransferHtml(t, now); } };
   }
   let clickablePaths = [];
@@ -165,10 +166,14 @@
   // carry the session id XOR 0xFEC0FEC0. Push-to-talk audio on a channel
   // (0x53 start, 0x54 audio) is always voice.
   const MEDIAMESH_FEC_SID_XOR = 0xFEC0FEC0;
+  // Fast MediaMesh's repair packets (VoxFountain): a mix of all the clip's
+  // packets each, any one mending any lost one, under sid ^ 0x0F0DEC0D.
+  const MEDIAMESH_REPAIR_SID_XOR = 0x0F0DEC0D;
   const MEDIAMESH_CLIP_PREFIXES = { VI1: 'photo', VV1: 'video', VE3: 'voice', VM1: 'voice' };
 
   function mediaMeshSidHex(n) { return ((n >>> 0).toString(16)).padStart(8, '0'); }
   function mediaMeshParitySid(sid) { return mediaMeshSidHex((parseInt(sid, 16) ^ MEDIAMESH_FEC_SID_XOR) >>> 0); }
+  function mediaMeshRepairSid(sid) { return mediaMeshSidHex((parseInt(sid, 16) ^ MEDIAMESH_REPAIR_SID_XOR) >>> 0); }
 
   // A clip announcement in a message's text: { sid, kind, total, seconds,
   // caption }, or null. The text may start with the sender's name.
@@ -4952,15 +4957,16 @@
   function mediaMeshSkyClip(typeName, payload, hops, announced) {
     const clip = mediaMeshClipOf(typeName, payload);
     if (!clip) return null;
-    let sid = clip.sid, parity = false;
+    let sid = clip.sid, parity = false, repair = false;
     if (sid && !announced.has(sid) && announced.has(mediaMeshParitySid(sid))) { sid = mediaMeshParitySid(sid); parity = true; }
+    else if (sid && !announced.has(sid) && announced.has(mediaMeshRepairSid(sid))) { sid = mediaMeshRepairSid(sid); parity = true; repair = true; }
     const a = sid ? announced.get(sid) : null;
     return {
       key: mediaMeshTransferKey(sid, payload, hops),
       kind: clip.talk ? 'voice' : (a ? a.kind : 'clip'),
       seconds: a ? a.seconds : 0,
       // for judging how it went: which piece, and how many there are
-      sid, parity, index: clip.talk ? null : clip.index, total: a ? a.total : 0,
+      sid, parity, repair, index: clip.talk ? null : clip.index, total: a ? a.total : 0,
     };
   }
 
@@ -5061,8 +5067,9 @@
     };
     let sid = clip.sid, parity = false;
     if (sid && !mmAnnounced.has(sid) && !open('sid|' + sid)) {
-      const data = mediaMeshParitySid(sid);
-      if (mmAnnounced.has(data) || open('sid|' + data)) { sid = data; parity = true; }
+      for (const data of [mediaMeshParitySid(sid), mediaMeshRepairSid(sid)]) {
+        if (mmAnnounced.has(data) || open('sid|' + data)) { sid = data; parity = true; break; }
+      }
     }
     const key = mediaMeshTransferKey(sid, payload, hops);
     let t = open(key);

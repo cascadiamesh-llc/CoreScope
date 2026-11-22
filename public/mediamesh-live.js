@@ -153,6 +153,8 @@
       const par = (tr.parity && tr.parity[b]) || 0;
       if (miss <= par) rebuilt += miss; else missing += miss;
     }
+    const rep = tr.repair ? tr.repair.size || 0 : 0;
+    if (missing && missing <= rep) { rebuilt += missing; missing = 0; }
     return { outcome: missing ? 'lost' : rebuilt ? 'parity' : 'whole', missing, rebuilt };
   }
 
@@ -226,7 +228,7 @@
       let tr = transfers.get(p.key);
       const idle = o.replay ? REPLAY_IDLE_MS : IDLE_MS;
       if (!tr || ms - tr.last > idle) {
-        tr = { key: p.key, kind, first: ms, last: ms, idx: new Set(), parity: {}, total: 0, seconds: 0, pts: p.pts, maxHops: 0, hashes: new Set(), judged: false, counted: false };
+        tr = { key: p.key, kind, first: ms, last: ms, idx: new Set(), parity: {}, repair: new Set(), total: 0, seconds: 0, pts: p.pts, maxHops: 0, hashes: new Set(), judged: false, counted: false };
         transfers.delete(p.key);
         transfers.set(p.key, tr);
         if (transfers.size > 300) transfers.delete(transfers.keys().next().value);
@@ -236,7 +238,8 @@
       if (p.total > 0) tr.total = p.total;
       if (p.seconds > 0) tr.seconds = p.seconds;
       if (p.hash) tr.hashes.add(p.hash);
-      if (p.parity && Number.isFinite(p.index)) { const b = Math.floor(p.index / 8); tr.parity[b] = (tr.parity[b] || 0) + 1; } else if (Number.isFinite(p.index)) tr.idx.add(p.index);
+      if (p.repair && Number.isFinite(p.index)) tr.repair.add(p.index);
+      else if (p.parity && Number.isFinite(p.index)) { const b = Math.floor(p.index / 8); tr.parity[b] = (tr.parity[b] || 0) + 1; } else if (Number.isFinite(p.index)) tr.idx.add(p.index);
       if (p.pts.length > tr.maxHops) { tr.maxHops = p.pts.length; tr.pts = p.pts; }
       const day = dayOf(o.dayMs || ms, o.known !== false);
       if (!tr.counted && tr.kind !== 'clip') {
@@ -317,11 +320,13 @@
     const c = live && H.liveClip ? H.liveClip(typeName, payload, hash, at) : H.clipOf(typeName, payload);
     if (!c) return null;
     let sid = c.sid, parity = false;
+    let repair = false;
     if (sid && !announced.has(sid) && H.paritySid && announced.has(H.paritySid(sid))) { sid = H.paritySid(sid); parity = true; }
+    else if (sid && !announced.has(sid) && H.repairSid && announced.has(H.repairSid(sid))) { sid = H.repairSid(sid); parity = true; repair = true; }
     const a = sid ? announced.get(sid) : null;
     return {
       key: H.transferKey(sid, payload, hops), kind: c.talk ? 'voice' : (a ? a.kind : 'clip'),
-      seconds: a ? a.seconds : 0, index: c.talk ? null : c.index, parity, total: a ? a.total : 0,
+      seconds: a ? a.seconds : 0, index: c.talk ? null : c.index, parity, repair, total: a ? a.total : 0,
     };
   }
 

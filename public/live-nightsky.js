@@ -158,6 +158,9 @@
       const par = (tr.parity && tr.parity[b]) || 0;
       if (miss <= par) rebuilt += miss; else missing += miss;
     }
+    // Fast MediaMesh's repair packets mend any of what's left, one each
+    const rep = tr.repair ? tr.repair.size || 0 : 0;
+    if (missing && missing <= rep) { rebuilt += missing; missing = 0; }
     return { outcome: missing ? 'lost' : rebuilt ? 'parity' : 'whole', missing, rebuilt };
   }
 
@@ -437,7 +440,7 @@
     const ms = t * 1000;
     const idle = st.replay ? REPLAY_IDLE_MS : TRANSFER_IDLE_MS;
     if (!tr || ms - tr.last > idle) {
-      tr = { kind, first: ms, last: ms, label: transferLabel(kind, p.hops, p.seconds), counted: false, idx: new Set(), parity: {}, total: 0, hops: p.hops, maxHops: 0, judged: false, epoch: p.t || Date.now() };
+      tr = { kind, first: ms, last: ms, label: transferLabel(kind, p.hops, p.seconds), counted: false, idx: new Set(), parity: {}, repair: new Set(), total: 0, hops: p.hops, maxHops: 0, judged: false, epoch: p.t || Date.now() };
       st.counts.all++;
       st.transfers.set(key, tr);
       st.ticker.unshift(tr);
@@ -447,7 +450,8 @@
     if (tr.kind === 'clip' && kind !== 'clip') { tr.kind = kind; tr.label = transferLabel(kind, tr.hops, p.seconds); }
     tr.last = ms;
     if (p.total > 0) tr.total = p.total;
-    if (p.parity && Number.isFinite(p.index)) { const b = Math.floor(p.index / 8); tr.parity[b] = (tr.parity[b] || 0) + 1; } else if (Number.isFinite(p.index)) tr.idx.add(p.index);
+    if (p.repair && Number.isFinite(p.index)) tr.repair.add(p.index);
+    else if (p.parity && Number.isFinite(p.index)) { const b = Math.floor(p.index / 8); tr.parity[b] = (tr.parity[b] || 0) + 1; } else if (Number.isFinite(p.index)) tr.idx.add(p.index);
     // the longest path it travelled names its ends
     if (p.hops.length > tr.maxHops) { tr.maxHops = p.hops.length; tr.hops = p.hops; tr.label = transferLabel(tr.kind, p.hops, p.seconds); }
     const day = dayOf(p.t || Date.now());
