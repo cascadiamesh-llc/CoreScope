@@ -5,6 +5,7 @@ The coverage map on the MediaMesh tab shows photos, video and voice crossing the
 ## What you see
 
 - **Comets.** Each photo, video or voice packet flies hop by hop along the repeaters it took, then on to the observer that heard it. Colour shows the kind: green for photos, white (slate on the light theme) for video, blue for voice, grey-blue when the kind isn't known yet. Its route lights up behind it. Every repeater it passes flashes a ring and a twinkle.
+- **Names light up.** While two or more repeaters are busy with MediaMesh, sending, relaying or hearing, their names fade in on glowing tags in the kind's colour. A tag flares each time a packet reaches its repeater, and fades out once that repeater has been quiet for six seconds. Tags never cover each other or the panel.
 - **Embers.** Other radio2 traffic glows faintly where it was heard.
 - **Arrivals.** Once a clip's last piece has passed, its destination shows how it went:
   - a burst when every piece was heard;

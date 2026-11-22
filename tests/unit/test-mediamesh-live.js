@@ -117,6 +117,45 @@ test('unannounced clips and names are escaped in the list', () => {
   assert.ok(h.includes('mmlive-dot--clip'));
 });
 
+test('names: none while one repeater is busy, all once two are, flaring on arrival', () => {
+  const act = new Map();
+  const A = { name: 'A 🌊', lat: 0, lon: 0 }, B = { name: 'B', lat: 0, lon: 1 }, C = { name: 'C', lat: 0, lon: 2 };
+  M.touchActive(act, { pts: [A], kind: 'photo', t0: 10 }, 10);
+  assert.strictEqual(M.namesAt(act, 10, false).length, 0, 'one busy: no names');
+  const c = { pts: [A, B, C], kind: 'voice', t0: 11 };
+  M.touchActive(act, c, 11.2); // the comet has left A, not yet reached B
+  assert.strictEqual(M.busyCount(act, 11.2), 1);
+  M.touchActive(act, c, 11.6); // reached B
+  assert.strictEqual(M.busyCount(act, 11.6), 2);
+  assert.strictEqual(M.namesAt(act, 11.6, false).length, 0, 'fading in from nothing');
+  let n = M.namesAt(act, 11.8, false);
+  assert.deepStrictEqual(n.map((x) => x.e.name).sort(), ['A 🌊', 'B']);
+  assert.ok(n.every((x) => x.alpha > 0 && x.alpha < 1 && x.rise > 0), 'fading in, rising');
+  n = M.namesAt(act, 12.4, false);
+  assert.ok(n.every((x) => x.alpha === 1), 'fully in');
+  M.touchActive(act, c, 12.2); // reached C
+  M.namesAt(act, 12.2, false); // joins the lit names
+  const cName = M.namesAt(act, 12.4, false).find((x) => x.e.name === 'C');
+  assert.ok(cName && cName.flash > 0.5 && cName.alpha < 1, 'fades in, flaring as the packet arrives');
+  assert.strictEqual(M.namesAt(act, 12.4, false).find((x) => x.e.name === 'B').flash, 0);
+  assert.strictEqual(act.get('C').kind, 'voice');
+});
+
+test('names: fade once quiet, then go; reduced motion shows them still', () => {
+  const act = new Map();
+  M.touchActive(act, { pts: [{ name: 'A', lat: 0, lon: 0 }, { name: 'B', lat: 0, lon: 1 }], kind: 'photo', t0: 0 }, 1);
+  M.namesAt(act, 1, false);
+  const at = (t) => M.namesAt(act, t, false).map((x) => +x.alpha.toFixed(2));
+  assert.deepStrictEqual(at(5), [1, 1]);
+  const mid = at(7.3);
+  assert.ok(mid[0] > 0 && mid[0] < 1, String(mid));
+  assert.deepStrictEqual(at(9), []);
+  assert.strictEqual(act.size, 0, 'forgotten once faded');
+  const r = new Map();
+  M.touchActive(r, { pts: [{ name: 'A', lat: 0, lon: 0 }, { name: 'B', lat: 0, lon: 1 }], kind: 'photo', t0: 0 }, 1);
+  assert.deepStrictEqual(M.namesAt(r, 1, true).map((x) => [x.alpha, x.flash]), [[1, 0], [1, 0]]);
+});
+
 test('clipFor uses live.js\'s parsing and learns the kind from announcements', () => {
   globalThis._liveMediaMesh = {
     clipOf: (t, p) => (t === 'RAW_CUSTOM' ? { sid: p.raw.slice(2, 10), talk: false, index: 3 } : null),

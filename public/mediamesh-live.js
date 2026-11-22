@@ -39,6 +39,11 @@
   const PLAY = icon('ph-play') + ' The last 24 hours in a minute';
   const STOP = icon('ph-square') + ' Stop the replay';
   const STORE_KEY = 'mmLivePackets';
+  // Names light up while two or more repeaters are busy with MediaMesh.
+  const NAME_HOLD_S = 6;         // a repeater counts as busy this long after a packet reached it
+  const NAME_IN_S = 0.6;         // fade in
+  const NAME_OUT_S = 1.5;        // fade out
+  const NAME_FLASH_S = 0.7;      // the flare each time a packet reaches it
 
   const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const kindOf = (k) => (KINDS[k] ? k : 'clip');
@@ -149,6 +154,51 @@
       if (miss <= par) rebuilt += miss; else missing += miss;
     }
     return { outcome: missing ? 'lost' : rebuilt ? 'parity' : 'whole', missing, rebuilt };
+  }
+
+  // ---- Busy repeaters' names --------------------------------------------------
+
+  /** Marks the places a comet has reached by t (seconds) in active: name ->
+   * { name, lat, lon, kind, hit (last reached), shownAt }. Sending,
+   * relaying and hearing all count. */
+  function touchActive(active, c, t) {
+    const reached = Math.min(c.pts.length - 1, Math.floor((t - c.t0) / HOP_S));
+    for (let h = 0; h <= reached; h++) {
+      const p = c.pts[h];
+      if (!p || !p.name) continue;
+      const at = c.t0 + h * HOP_S;
+      let e = active.get(p.name);
+      if (!e) { e = { name: p.name, lat: p.lat, lon: p.lon, kind: c.kind, hit: at, shownAt: null }; active.set(p.name, e); }
+      if (at > e.hit) { e.hit = at; e.kind = c.kind; }
+    }
+  }
+
+  /** How many are busy at t. */
+  function busyCount(active, t) {
+    let n = 0;
+    active.forEach((e) => { if (t - e.hit <= NAME_HOLD_S) n++; });
+    return n;
+  }
+
+  /** Updates which names show at t, and drops the faded: names light up
+   * once two or more are busy, and each fades once it has been quiet for
+   * NAME_HOLD_S. -> [{ e, alpha (0-1), flash (0-1), rise (px) }] */
+  function namesAt(active, t, reduced) {
+    const busy = busyCount(active, t);
+    const out = [];
+    active.forEach((e, k) => {
+      const quiet = t - e.hit;
+      if (quiet > NAME_HOLD_S + NAME_OUT_S) { active.delete(k); return; }
+      if (e.shownAt == null && busy >= 2 && quiet <= NAME_HOLD_S) e.shownAt = t;
+      if (e.shownAt == null) return;
+      if (reduced) { if (quiet <= NAME_HOLD_S) out.push({ e, alpha: 1, flash: 0, rise: 0 }); return; }
+      const fin = ease((t - e.shownAt) / NAME_IN_S);
+      const fout = Math.max(0, Math.min(1, 1 - (quiet - NAME_HOLD_S) / NAME_OUT_S));
+      const alpha = fin * fout;
+      if (alpha <= 0) return;
+      out.push({ e, alpha, flash: Math.max(0, 1 - quiet / NAME_FLASH_S), rise: (1 - fin) * 6 });
+    });
+    return out;
   }
 
   // ---- What happened: transfers, the day's moments --------------------------
@@ -320,6 +370,7 @@
     const $ = (sel) => panel.querySelector(sel);
 
     let destroyed = false;
+    const active = new Map();
     let comets = [], embers = [], fx = [], raf = 0, W = 0, H = 0, dpr = 1, replay = null, colours = null, bannerTimer = 0, lastJudge = 0;
     const lightTheme = () => {
       const bg = rgbOf(getComputedStyle(doc.documentElement).getPropertyValue('--card-bg'));
@@ -494,7 +545,7 @@
         if (done.length || replay) renderPanel();
       }
       draw(t);
-      const busy = comets.length || embers.length || fx.length || replay || tracker.list(LIST_MAX).some((tr) => !tr.judged);
+      const busy = comets.length || active.size || embers.length || fx.length || replay || tracker.list(LIST_MAX).some((tr) => !tr.judged);
       if (busy) raf = win.requestAnimationFrame(frame);
       else g.clearRect(0, 0, cv.width, cv.height);
     }
@@ -514,9 +565,50 @@
       // glow adds up on a dark map; on a light one it would wash out
       g.globalCompositeOperation = light ? 'source-over' : 'lighter';
       comets = comets.filter((c) => (t - c.t0) / HOP_S < c.pts.length - 1 + 3);
-      for (const c of comets) drawComet(c, t, light);
+      for (const c of comets) { drawComet(c, t, light); touchActive(active, c, t); }
       drawEffects(t);
       g.globalCompositeOperation = 'source-over';
+      drawNames(t, light);
+    }
+
+    /** Busy repeaters' names, fading in and flaring each time a packet arrives. */
+    function drawNames(t, light) {
+      const shown = namesAt(active, t, reduced);
+      if (!shown.length) return;
+      g.font = '600 12px Inter, system-ui, sans-serif';
+      g.textBaseline = 'middle';
+      const box = mapEl.getBoundingClientRect();
+      const keepOut = [panel, banner].filter((el) => !el.hidden).map((el) => {
+        const r = el.getBoundingClientRect();
+        return [r.left - box.left - 6, r.top - box.top - 6, r.right - box.left + 6, r.bottom - box.top + 6];
+      });
+      const byName = new Map(shown.map((s) => [s.e.name, s]));
+      const items = shown.map((s) => {
+        const [x, y] = P(s.e.lat, s.e.lon);
+        return { text: s.e.name, x, y, pri: s.e.hit, width: g.measureText(s.e.name).width + 10 };
+      });
+      const place = root.LiveNightSky && root.LiveNightSky.placeLabels;
+      const placed = place ? place(items, W, H, keepOut) : items.map((it) => Object.assign({}, it, { tx: it.x + 9, ty: it.y - 9, align: 'left' }));
+      placed.forEach((l) => {
+        const s = byName.get(l.text), rgb = colours[kindOf(s.e.kind)], a = s.alpha, f = s.flash;
+        const w = l.width, h = 18, y = l.ty - s.rise;
+        const x0 = l.align === 'left' ? l.tx - 5 : l.align === 'right' ? l.tx - w + 5 : l.tx - w / 2;
+        g.save();
+        // the glow, brighter as a packet arrives
+        g.shadowColor = `rgba(${rgb},${Math.min(1, 0.55 + f * 0.45) * a})`;
+        g.shadowBlur = 6 + f * 16;
+        g.fillStyle = light ? `rgba(255,255,255,${0.9 * a})` : `rgba(10,14,28,${0.78 * a})`;
+        g.beginPath();
+        if (g.roundRect) g.roundRect(x0, y - h / 2, w, h, 9); else g.rect(x0, y - h / 2, w, h);
+        g.fill();
+        g.shadowBlur = 0;
+        g.strokeStyle = `rgba(${rgb},${(0.6 + f * 0.4) * a})`; g.lineWidth = 1 + f;
+        g.stroke();
+        g.textAlign = 'center';
+        g.fillStyle = light ? `rgba(15,23,42,${a})` : `rgba(255,255,255,${a})`;
+        g.fillText(l.text, x0 + w / 2, y + 0.5);
+        g.restore();
+      });
     }
 
     function drawComet(c, t, light) {
@@ -615,5 +707,5 @@
     };
   }
 
-  root.MediaMeshLive = { KINDS, rgbOf, buildIndex, addObservers, placePath, routeKm, routeText, outcomeOf, createTracker, transferHtml, readPacket, clipFor, attach };
+  root.MediaMeshLive = { KINDS, rgbOf, buildIndex, addObservers, touchActive, busyCount, namesAt, placePath, routeKm, routeText, outcomeOf, createTracker, transferHtml, readPacket, clipFor, attach };
 })(typeof window !== 'undefined' ? window : globalThis);
