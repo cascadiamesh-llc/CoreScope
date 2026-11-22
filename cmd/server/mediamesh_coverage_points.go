@@ -38,7 +38,7 @@ const (
 	covPointsMaxBody     = 512 << 10
 	covPointsMaxPerBatch = 500
 	covPointsCellM       = 200.0
-	covPointsHexM        = 200.0 // the "Mapped by people" hexagons, flat side to flat side
+	covPointsHexM        = 500.0 // the "Mapped by people" hexagons, flat side to flat side: big enough that one says little about where anyone was
 	covPointsTripGap     = 30 * time.Minute
 	covPointsTrimM       = 300.0
 	covPointsCarMS       = 6.0 // faster than this (m/s, about 22 km/h): in a vehicle
