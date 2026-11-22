@@ -338,6 +338,13 @@
         predicted = M.predictedLinks(placed, elevAt).filter((p) => !heard.some(([a, b]) => a === p.a && b === p.b));
         $('mmlStatus').textContent = '';
         draw();
+        // #/mediamesh-lab?lat=…&lon=… (from Grow the mesh): start with a repeater there
+        const q = new URLSearchParams(String(location.hash.split('?')[1] || ''));
+        const lat = Number(q.get('lat')), lon = Number(q.get('lon'));
+        if (Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180 && q.get('lat') !== null) {
+          if (map) map.setView([lat, lon], 12);
+          placePlan(lat, lon);
+        }
       } catch (_) {
         $('mmlStatus').textContent = 'Terrain could not be loaded, so what is reached and the links the model predicts aren\'t shown.';
       }
