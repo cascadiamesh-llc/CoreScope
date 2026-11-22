@@ -1584,6 +1584,143 @@
     return cv;
   }
 
+  // ---- Learning from where people mapped, and how sure the map is --------
+
+  /** How far a measured cell's correction reaches (m), and how much it may
+   * move the estimate (dB). */
+  const LEARN = { radiusM: 600, maxDb: 20, linkM: 500, measuredM: 300 };
+
+  /**
+   * Local corrections from the cells people mapped (fieldPoints cells):
+   * each cell's best measured margin against the estimate there (outdoors;
+   * a vehicle's cells get the car's loss back; a cell where no MediaMesh
+   * repeater answered counts as CONFIG.field.unheardDb), spread to the
+   * estimate's cells within LEARN.radiusM, nearest counting most.
+   * Returns { delta (dB per cell), points: [{ lat, lon, res, n }] }.
+   */
+  function learnFromField(cov, cells, carLossDb) {
+    const n = cov.width * cov.height;
+    const sum = new Float32Array(n), wsum = new Float32Array(n), points = [];
+    const carDb = Number.isFinite(carLossDb) ? carLossDb : placeLossDb('car');
+    const b = cov.bounds, cellH = (b.north - b.south) / cov.height, cellW = (b.east - b.west) / cov.width;
+    (cells || []).forEach((c) => {
+      if (!c || !(c.n > 0) || !Number.isFinite(c.lat) || !Number.isFinite(c.lon)) return;
+      const at = cellAt(cov, c.lat, c.lon);
+      if (!at) return;
+      const heard = (c.reps || []).map((r) => r.margin).filter(Number.isFinite);
+      let meas = heard.length ? Math.max(...heard) : CONFIG.field.unheardDb;
+      if (c.car && heard.length) meas += carDb;
+      const model = at.margin > NO_DATA / 2 ? at.margin : CONFIG.field.unheardDb - 10;
+      // nobody answered where the estimate already says no: nothing to learn
+      if (!heard.length && model < CONFIG.field.unheardDb) return;
+      const res = Math.max(-LEARN.maxDb, Math.min(LEARN.maxDb, meas - model));
+      points.push({ lat: c.lat, lon: c.lon, res, n: c.n });
+      const w0 = Math.min(5, c.n);
+      const rRow = Math.ceil(LEARN.radiusM / M_PER_DEG_LAT / cellH);
+      const rCol = Math.ceil(LEARN.radiusM / (M_PER_DEG_LAT * Math.cos(c.lat * Math.PI / 180)) / cellW);
+      const row0 = Math.floor((b.north - c.lat) / cellH), col0 = Math.floor((c.lon - b.west) / cellW);
+      for (let row = Math.max(0, row0 - rRow); row <= Math.min(cov.height - 1, row0 + rRow); row++) {
+        for (let col = Math.max(0, col0 - rCol); col <= Math.min(cov.width - 1, col0 + rCol); col++) {
+          const ll = cellCenter(cov, col, row);
+          const d = distanceM(c.lat, c.lon, ll[0], ll[1]);
+          if (d > LEARN.radiusM) continue;
+          const w = w0 * Math.exp(-(d * d) / (2 * (LEARN.radiusM / 2) * (LEARN.radiusM / 2)));
+          const i = row * cov.width + col;
+          sum[i] += w * res; wsum[i] += w;
+        }
+      }
+    });
+    const delta = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      // a lone ping moves the estimate part way; several, nearly all of it
+      if (wsum[i] > 0) delta[i] = (sum[i] / wsum[i]) * Math.min(1, wsum[i] / 2);
+    }
+    return { delta, points };
+  }
+
+  /** The estimate with what was learned: cov.margins moved by delta where
+   * something reaches (in place). */
+  function applyLearned(cov, learned) {
+    if (!cov || !learned || !cov.margins) return cov;
+    const m = cov.margins, d = learned.delta;
+    for (let i = 0; i < m.length && i < d.length; i++) if (d[i] && m[i] > NO_DATA / 2) m[i] += d[i];
+    return cov;
+  }
+
+  /**
+   * How sure the estimate is, per cell it reaches (Uint8Array): 3 measured
+   * (within LEARN.measuredM of a mapped cell), 2 checked by a link heard
+   * (within LEARN.linkM of the line between its two ends), 1 model only,
+   * 0 not reached. links: [{ fromLat, fromLon, toLat, toLon }]. Also the
+   * share of what's reached that is measured or checked.
+   */
+  function confidenceCells(cov, fieldCells, links) {
+    const n = cov.width * cov.height, out = new Uint8Array(n);
+    const b = cov.bounds, cellH = (b.north - b.south) / cov.height, cellW = (b.east - b.west) / cov.width;
+    for (let i = 0; i < n; i++) if (cov.margins[i] >= 0) out[i] = 1;
+    // links: walk each line, marking cells near it
+    (links || []).forEach((l) => {
+      if (![l.fromLat, l.fromLon, l.toLat, l.toLon].every(Number.isFinite)) return;
+      const len = distanceM(l.fromLat, l.fromLon, l.toLat, l.toLon);
+      const steps = Math.max(1, Math.ceil(len / 100));
+      for (let k = 0; k <= steps; k++) {
+        const lat = l.fromLat + (l.toLat - l.fromLat) * k / steps, lon = l.fromLon + (l.toLon - l.fromLon) * k / steps;
+        markNear(lat, lon, LEARN.linkM, 2);
+      }
+    });
+    (fieldCells || []).forEach((c) => { if (c && Number.isFinite(c.lat) && Number.isFinite(c.lon)) markNear(c.lat, c.lon, LEARN.measuredM, 3); });
+    function markNear(lat, lon, radiusM, code) {
+      const rRow = Math.ceil(radiusM / M_PER_DEG_LAT / cellH), rCol = Math.ceil(radiusM / (M_PER_DEG_LAT * Math.cos(lat * Math.PI / 180)) / cellW);
+      const row0 = Math.floor((b.north - lat) / cellH), col0 = Math.floor((lon - b.west) / cellW);
+      for (let row = Math.max(0, row0 - rRow); row <= Math.min(cov.height - 1, row0 + rRow); row++) {
+        for (let col = Math.max(0, col0 - rCol); col <= Math.min(cov.width - 1, col0 + rCol); col++) {
+          const i = row * cov.width + col;
+          if (!out[i] || out[i] >= code) continue;
+          const ll = cellCenter(cov, col, row);
+          if (distanceM(lat, lon, ll[0], ll[1]) <= radiusM) out[i] = code;
+        }
+      }
+    }
+    let reached = 0, sure = 0;
+    for (let i = 0; i < n; i++) if (out[i]) { reached++; if (out[i] >= 2) sure++; }
+    return { cells: out, share: reached ? sure / reached : 0 };
+  }
+
+  const CONF_RGB = { 3: '#2563eb', 2: '#60a5fa', 1: '#94a3b8' };
+  function confidenceCanvas(cov, conf) {
+    const cv = document.createElement('canvas');
+    cv.width = cov.width; cv.height = cov.height;
+    const ctx = cv.getContext('2d');
+    const img = ctx.createImageData(cov.width, cov.height);
+    const pal = {};
+    [1, 2, 3].forEach((k) => { const h = cssColor('--mm-conf-' + k, CONF_RGB[k]).slice(1); pal[k] = [0, 2, 4].map((o) => parseInt(h.slice(o, o + 2), 16)); });
+    const alpha = { 1: 0.3, 2: 0.55, 3: 0.75 };
+    for (let i = 0; i < conf.cells.length; i++) {
+      const c = conf.cells[i];
+      if (!c) continue;
+      img.data[i * 4] = pal[c][0]; img.data[i * 4 + 1] = pal[c][1]; img.data[i * 4 + 2] = pal[c][2]; img.data[i * 4 + 3] = Math.round(alpha[c] * 255);
+    }
+    ctx.putImageData(img, 0, 0);
+    return cv;
+  }
+
+  /** The biggest corrections, for "What it learned": [{ lat, lon, res, n,
+   * near (the closest repeater's name) }]. */
+  function learnedTop(points, reps, k) {
+    return (points || []).slice().sort((a, b) => Math.abs(b.res) * Math.min(5, b.n) - Math.abs(a.res) * Math.min(5, a.n)).slice(0, k || 3).map((p) => {
+      let near = null, bd = Infinity;
+      (reps || []).forEach((r) => { const d = distanceM(p.lat, p.lon, r.lat, r.lon); if (d < bd) { bd = d; near = r; } });
+      return Object.assign({}, p, { near: near ? repName(near) : '', nearKm: bd / 1000 });
+    });
+  }
+
+  function learnedHtml(conf, top) {
+    const pct = Math.round((conf ? conf.share : 0) * 100);
+    const lines = (top || []).map((p) => `<li>${p.res < 0 ? 'Less' : 'More'} than estimated, ${fmtDb(Math.abs(p.res))} dB, ${p.nearKm < 1 ? 'near' : `${p.nearKm.toFixed(1)} km from`} ${esc(p.near)} (${p.n} ping${p.n === 1 ? '' : 's'})</li>`).join('');
+    return `<strong>${pct}%</strong> of what the estimate reaches is checked by people mapping or by a link heard; the rest is the model alone.`
+      + (lines ? ` Where mapping corrected it most: <ul class="mm-cov-learned">${lines}</ul>` : '');
+  }
+
   const MESH_NOTE = 'The mesh: the people-on-the-ground estimate, coloured by how many repeaters in the mesh reach each place, water included (water taxis and ferries). Repeaters are in the mesh when they have been heard reaching each other, or, as weaker evidence, when the model says they do.';
   const MESH_EVIDENCE = { often: 'heard often', weak: 'weaker evidence', none: 'no link heard or predicted' };
 
@@ -2689,11 +2826,40 @@
       applyEnabled();
     };
     if (panelEl) { panelEl.addEventListener('input', onSearch); panelEl.addEventListener('change', onPanelChange); }
+    // ---- Learning from people mapping; how sure the estimate is ----
+    const learnToggle = el.querySelector('#mmCovLearnToggle');
+    const confToggle = el.querySelector('#mmCovConfToggle');
+    const learnEl = el.querySelector('#mmCovLearn');
+    let conf = null, learned = null;
+    /** Merge the counted repeaters, then move the estimate by what people
+     * mapping found (people on the ground only), and work out how sure. */
+    function remerge() {
+      if (!shown) return;
+      merge(shown, counted());
+      learned = null; conf = null;
+      const onGround = CONFIG.modes[shown.modeKey] && CONFIG.modes[shown.modeKey].clutter;
+      const cells = session.fieldInfo && session.fieldInfo.cells;
+      if (onGround && cells && cells.length && (!learnToggle || learnToggle.checked)) {
+        learned = learnFromField(shown, cells, session.fieldFit && session.fieldFit.carLossDb);
+        applyLearned(shown, learned);
+      }
+      conf = confidenceCells(shown, onGround ? cells : null, linkRows(links, null));
+      if (learnEl) {
+        learnEl.hidden = !onGround;
+        if (onGround) learnEl.innerHTML = learnedHtml(conf, learned ? learnedTop(learned.points, placed, 3) : []);
+      }
+    }
+    const onLearnToggle = () => { if (shown) { remerge(); computeMesh(); drawOverlay(); drawMesh(); reportStats(); } };
+    const onConfToggle = () => drawOverlay();
+    if (learnToggle) learnToggle.addEventListener('change', onLearnToggle);
+    if (confToggle) confToggle.addEventListener('change', onConfToggle);
+
     function drawOverlay() {
       if (overlay) { map.removeLayer(overlay); overlay = null; }
       if (!shown) return;
       const b = shown.bounds;
-      const cv = meshView && mesh ? meshCanvas(shown, mesh.cells) : coverageCanvas(shown);
+      const cv = meshView && mesh ? meshCanvas(shown, mesh.cells)
+        : confToggle && confToggle.checked && conf ? confidenceCanvas(shown, conf) : coverageCanvas(shown);
       overlay = canvasOverlay(L, cv, [[b.south, b.west], [b.north, b.east]],
         { pane: 'mmCoverage', opacity, className: 'mm-cov-overlay' }).addTo(map);
     }
@@ -2704,7 +2870,7 @@
     function applyEnabled() {
       drawReps();
       if (!shown) return;
-      merge(shown, counted());
+      remerge();
       computeMesh();
       drawOverlay();
       drawMesh();
@@ -2927,7 +3093,8 @@
         drawCalibration();
         if (!res.adj) res.adj = {};
         if (!res.adj[session.place]) res.adj[session.place] = adjustCov(res.cov, session.place);
-        shown = merge(res.adj[session.place], counted());
+        shown = res.adj[session.place];
+        remerge();
         shownTerrain = res.elevAt;
         computeMesh();
         set3dReady();
@@ -3060,6 +3227,8 @@
       destroyed = true;
       el.removeEventListener('click', onClick);
       if (meshEl) meshEl.removeEventListener('change', onMeshChange);
+      if (learnToggle) learnToggle.removeEventListener('change', onLearnToggle);
+      if (confToggle) confToggle.removeEventListener('change', onConfToggle);
       if (slider) slider.removeEventListener('input', onSlide);
       if (panelEl) { panelEl.removeEventListener('input', onSearch); panelEl.removeEventListener('change', onPanelChange); }
       if (planEl) planEl.removeEventListener('change', onPlanChange);
@@ -3082,7 +3251,7 @@
     fitCalibration, calibrationText, setCalibration, getCalibration, CAL,
     clutterLossDb, setField, getField, fieldDbFor, placeLossDb, fitField, fieldSolve, fieldText, fieldBand, adjustCov, FIELD_RGB, loadFieldPoints, fieldPoints, hexCorners, hexBand, session,
     backboneWeight, backboneTip, areaHistory, footprint, coverageImage, legendGradient,
-    growthSteps, presentAt, antennaHeight, knownHeightM, KNOWN_HEIGHTS, coverageCanvas, canvasOverlay, whatIfBase, whatIfDefaults, whatIfJob, whatIfCoverage, whatIfCanvas, cellAreaKm2, coveredKm2, unionKm2, repAreasKm2, repOnlyKm2, predictedLinks, meshEvidence, meshCells, meshRows, meshCanvas, meshPalette, groundCoverage, meshStatsHtml, meshTableHtml, MESH_OFTEN, planGain, planLinks, planHtml, PLAN_RGB,
+    growthSteps, presentAt, antennaHeight, knownHeightM, KNOWN_HEIGHTS, coverageCanvas, canvasOverlay, whatIfBase, whatIfDefaults, whatIfJob, whatIfCoverage, whatIfCanvas, cellAreaKm2, coveredKm2, unionKm2, repAreasKm2, repOnlyKm2, predictedLinks, meshEvidence, meshCells, meshRows, meshCanvas, meshPalette, groundCoverage, learnFromField, applyLearned, confidenceCells, confidenceCanvas, learnedTop, learnedHtml, LEARN, meshStatsHtml, meshTableHtml, MESH_OFTEN, planGain, planLinks, planHtml, PLAN_RGB,
     repNotes, repArea, repGroups, repSummaryHtml, repPanelHtml, repAction, assumptionsHtml, linkRows, linksTableHtml, init,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

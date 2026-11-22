@@ -48,3 +48,21 @@ For each cell and each MediaMesh repeater within 6 km, the card compares the mea
 ## Config
 
 `mediameshCoverage` in `config.json`: on unless `enabled` is `false`. `dbPath` (default `mediamesh-coverage.db` next to the analyzer database: the server has to be able to write there), `retentionDays` (default 365), `requireKnownRadio` (default `true`).
+
+## Learning from mapping, and how sure the map is
+
+With **Learn from mapping** on (the default), the people-on-the-ground
+estimate is moved toward what people found, where they found it: each mapped
+cell's best measured margin (outdoors: a vehicle's cells get the car's loss
+back; a cell where no MediaMesh repeater answered counts as 6 dB short)
+against the estimate there, spread to the estimate's cells within 600 m,
+nearest counting most. One ping moves it part of the way, several nearly all
+of it. This is on top of the whole-estimate and per-repeater corrections
+above.
+
+**How sure** colours what the estimate reaches by how it is known: dark
+blue within 300 m of a mapped cell, light blue within 500 m of the line of a
+link heard on radio2, grey the model alone. The line under the map gives the
+share that is measured or checked, and where mapping corrected the estimate
+most. Code: `learnFromField`, `applyLearned`, `confidenceCells` in
+`public/mediamesh-coverage.js`.

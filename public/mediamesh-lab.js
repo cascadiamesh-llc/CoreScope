@@ -227,7 +227,7 @@
       const same = (a, b) => (a === b ? null : b > a);
       $('mmlTiles').innerHTML = tile('Mesh in one piece', piecesBefore <= 1 ? 'Yes' : `${piecesBefore} pieces`, piecesAfter <= 1 ? 'Yes' : `${piecesAfter} pieces`, piecesAfter === piecesBefore ? null : piecesAfter < piecesBefore)
         + tile('Routes between repeaters that connect', `${before.ok} of ${before.pairs}`, `${after.ok} of ${after.pairs}`, same(before.pairs ? before.ok / before.pairs : 0, after.pairs ? after.ok / after.pairs : 0))
-        + tile('Typical route', before.medianHops == null ? '—' : `${before.medianHops} hops`, after.medianHops == null ? '—' : `${after.medianHops} hops`, before.medianHops == null || after.medianHops == null ? null : same(after.medianHops, before.medianHops))
+        + tile('Typical route', before.medianHops == null ? '—' : `${before.medianHops} hop${before.medianHops === 1 ? '' : 's'}`, after.medianHops == null ? '—' : `${after.medianHops} hop${after.medianHops === 1 ? '' : 's'}`, before.medianHops == null || after.medianHops == null ? null : same(after.medianHops, before.medianHops))
         + tile('Reached, land and water', kmBefore == null ? '…' : `${fmtKm2(kmBefore)} km²`, kmAfter == null ? '…' : `${fmtKm2(kmAfter)} km²`, kmBefore == null ? null : same(Math.round(kmBefore), Math.round(kmAfter)))
         + tile('Repeaters whose loss alone would split it', String(S ? S.singlePoints(n + 1, adjPairs(adjReal), upAll).length : 0), String(spofAfter.length), null);
       // links and repeaters

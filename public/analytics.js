@@ -750,6 +750,8 @@
         <label class="mm-cov-links-key" id="mmCovBackboneKey" hidden title="The hops photos, video and voice actually took this week: thicker for busier"><input type="checkbox" id="mmCovBackboneToggle"> <span class="mm-cov-sw mm-cov-sw--backbone"></span>Backbone (this week)</label>
         <label class="mm-cov-links-key" id="mmCovLinksKey" hidden><input type="checkbox" id="mmCovLinksToggle" checked> <span class="mm-cov-sw mm-cov-sw--link"></span>Heard on radio2</label>
         <label class="mm-cov-links-key" id="mmCovFieldKey" hidden title="500 m hexagons where a MediaMesh repeater answered people mapping coverage with MeshCore Open TAK or Wadamesh TAK: green 5 dB or more to spare, amber 0 to 5, red answered but radio2 would fall short"><input type="checkbox" id="mmCovFieldToggle"> <span class="mm-cov-sw mm-cov-sw--field mm-cov-sw--hex"></span>Mapped by people</label>
+        <label class="mm-cov-links-key" title="Move the estimate toward what people mapping found, within 600 m of where they were"><input type="checkbox" id="mmCovLearnToggle" checked> Learn from mapping</label>
+        <label class="mm-cov-links-key" title="Dark blue: measured by people mapping. Light blue: checked by a link heard. Grey: the model alone"><input type="checkbox" id="mmCovConfToggle"> <span class="mm-cov-sw mm-cov-sw--conf"></span>How sure</label>
         <label class="mm-cov-opacity">Opacity <input type="range" id="mmCovOpacity" min="0" max="100" value="100" aria-label="Coverage opacity"></label>
       </div>
       <div class="mm-cov-time" id="mmCovTime" hidden>
@@ -766,6 +768,7 @@
       <p class="mm-cov-readout" id="mmCovReadout" aria-live="polite"></p>
       <p class="text-muted mm-cov-note" id="mmCovStatus" aria-live="polite"></p>
       <p class="mm-cov-note mm-cov-cal" id="mmCovCal"></p>
+      <div class="mm-cov-note mm-cov-learn" id="mmCovLearn" hidden></div>
       <div class="mm-cov-profile" id="mmCovProfile" hidden></div>
       <p class="text-muted mm-cov-note">Estimate, not a measurement: buildings and trees are allowed for on average, so one street can be better or worse than drawn.${missing} <span id="mmCovMode">People on the ground: a companion or standalone radio held in the hand at 1.5 m, among buildings.</span></p>
       <details class="mm-cov-details" id="mmCovLinksWrap" hidden>

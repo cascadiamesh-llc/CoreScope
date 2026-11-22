@@ -500,6 +500,41 @@ function cellAt(cov, lat, lon) {
     assert.ok(stats.includes('2 repeaters linked') && stats.includes('W') && stats.includes('only by repeaters with no link heard or predicted: N') && stats.includes('1 more repeater has no position'), stats);
   });
 
+  await test('learning from mapping: the estimate moves toward what people measured, nearby only', () => {
+    // 40 x 40 cells of about 50 m, all at 10 dB to spare
+    const cov = { width: 40, height: 40, bounds: { north: 47.61, south: 47.61 - 0.018, west: -122.33, east: -122.33 + 0.0266 }, margins: new Float32Array(1600).fill(10), best: new Int16Array(1600), modeKey: 'ground' };
+    const mid = { lat: 47.61 - 0.009, lon: -122.33 + 0.0133 };
+    // measured 2 dB to spare where the estimate says 10, five pings
+    const L1 = M.learnFromField(cov, [{ lat: mid.lat, lon: mid.lon, n: 5, reps: [{ key: 'aa', margin: 2, n: 5 }] }]);
+    const at = (lat, lon) => { const col = Math.floor((lon - cov.bounds.west) / (cov.bounds.east - cov.bounds.west) * 40), row = Math.floor((cov.bounds.north - lat) / (cov.bounds.north - cov.bounds.south) * 40); return row * 40 + col; };
+    const i = at(mid.lat, mid.lon);
+    assert.ok(Math.abs(L1.delta[i] + 8) < 0.5, String(L1.delta[i]));
+    assert.strictEqual(L1.delta[0], 0, 'far away: untouched');
+    assert.deepStrictEqual(L1.points.map((p) => p.res), [-8]);
+    // a car loses some on the way: its margin gets the car's loss back
+    const car = M.learnFromField(cov, [{ lat: mid.lat, lon: mid.lon, n: 5, car: true, reps: [{ key: 'aa', margin: 2, n: 5 }] }], 8);
+    assert.ok(Math.abs(car.delta[i]) < 0.5);
+    // nobody answered where the estimate said 10 dB: counts as unheardDb
+    const none = M.learnFromField(cov, [{ lat: mid.lat, lon: mid.lon, n: 5, reps: [] }]);
+    assert.ok(none.delta[i] < -15, String(none.delta[i]));
+    // a single ping moves it only part way
+    const one = M.learnFromField(cov, [{ lat: mid.lat, lon: mid.lon, n: 1, reps: [{ key: 'aa', margin: 2, n: 1 }] }]);
+    assert.ok(one.delta[i] > -8 && one.delta[i] < -2, String(one.delta[i]));
+    const copy = Object.assign({}, cov, { margins: Float32Array.from(cov.margins) });
+    M.applyLearned(copy, L1);
+    assert.ok(Math.abs(copy.margins[i] - 2) < 0.5 && copy.margins[0] === 10);
+    // how sure: measured near the ping, checked along a link, model elsewhere
+    const conf = M.confidenceCells(cov, [{ lat: mid.lat, lon: mid.lon }], [{ fromLat: 47.6095, fromLon: -122.3295, toLat: 47.6095, toLon: -122.3040 }]);
+    assert.strictEqual(conf.cells[i], 3);
+    assert.strictEqual(conf.cells[at(47.6095, -122.32)], 2);
+    assert.strictEqual(conf.cells[at(47.5935, -122.3045)], 1);
+    assert.ok(conf.share > 0.1 && conf.share < 0.9, String(conf.share));
+    const top = M.learnedTop(L1.points, [{ name: 'First <Hill>', lat: mid.lat + 0.001, lon: mid.lon }], 3);
+    assert.strictEqual(top[0].near, 'First <Hill>');
+    const html = M.learnedHtml(conf, top);
+    assert.ok(html.includes('Less than estimated, 8 dB, near First &lt;Hill&gt; (5 pings)') && /<strong>\d+%<\/strong>/.test(html), html);
+  });
+
   await test('the mesh: links the model predicts between repeaters, rooftops included', () => {
     const flat = () => 0;
     const ridge = (lat) => (Math.abs(lat - 47.62) < 0.002 ? 120 : 0);
