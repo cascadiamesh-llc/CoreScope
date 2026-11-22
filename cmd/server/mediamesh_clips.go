@@ -170,6 +170,7 @@ func analyseMediaClips(anns []mediaClipAnn, pieces []mediaClipPiece) []MediaMesh
 		first, last time.Time
 		bytes       int
 		pieces      []pieceAt
+		events      []clipEvent // every piece, for when it could be whole
 	}
 	per := map[uint32]map[string]*seen{}
 	for _, p := range pieces {
@@ -201,9 +202,12 @@ func analyseMediaClips(anns []mediaClipAnn, pieces []mediaClipPiece) []MediaMesh
 		}
 		if repair {
 			o.repair[p.info] = true
+			o.events = append(o.events, clipEvent{at: p.at, what: clipRepair, info: p.info})
 		} else if parity {
 			o.parity[p.info/8]++
+			o.events = append(o.events, clipEvent{at: p.at, what: clipParity, info: p.info})
 		} else if p.info < a.total {
+			o.events = append(o.events, clipEvent{at: p.at, what: clipData, info: p.info})
 			if !o.data[p.info] {
 				o.bytes += p.bytes
 			}
@@ -281,6 +285,20 @@ func analyseMediaClips(anns []mediaClipAnn, pieces []mediaClipPiece) []MediaMesh
 				}
 				sort.Ints(c.Missing)
 				sort.Ints(c.Rebuilt)
+			}
+			// Timed to when the far end could have it whole, not to the last
+			// repair piece: senders keep sending those for other listeners,
+			// often for many minutes after. The size is the whole clip's.
+			if c.Outcome == "whole" || c.Outcome == "parity" {
+				if first, done, ok := wholeAt(far.events, a.total); ok && done.After(first) {
+					size := medianPieceBytes(far.pieces)
+					c.FirstAt, c.LastAt = first.UTC().Format(time.RFC3339), done.UTC().Format(time.RFC3339)
+					c.DurationS = done.Sub(first).Seconds()
+					c.Bytes = far.bytes + len(c.Rebuilt)*size
+					c.BytesEstimated = len(c.Rebuilt) > 0
+					c.RateBytes = c.Bytes * (a.total - 1) / a.total
+					c.SendingS = sendingSecondsTimes(eventsUntil(far.events, done))
+				}
 			}
 		}
 		out = append(out, c)
@@ -435,6 +453,130 @@ func unannouncedClip(sid uint32, ps []mediaClipPieceP) (MediaMeshClip, bool) {
 		}
 	}
 	return c, true
+}
+
+// clipEvent is one piece an observer heard: data (info = index), parity
+// (block*8 + j) or repair (seed).
+type clipEvent struct {
+	at   time.Time
+	what int
+	info int
+}
+
+const (
+	clipData = iota
+	clipParity
+	clipRepair
+)
+
+// rebuildable: whether data pieces, per-block parity and repair pieces
+// together give all total pieces (a block's lost pieces from its parity,
+// what's left from repair pieces, one each).
+func rebuildable(data map[int]bool, parity map[int]int, repair int, total int) bool {
+	left := 0
+	for b := 0; b*mediaClipFecBlock < total; b++ {
+		miss := 0
+		for i := b * mediaClipFecBlock; i < total && i < (b+1)*mediaClipFecBlock; i++ {
+			if !data[i] {
+				miss++
+			}
+		}
+		if miss > parity[b] {
+			left += miss
+		}
+	}
+	return left <= repair
+}
+
+// wholeAt: when the first piece came, and when enough had for the clip to be
+// whole (each piece counted once, at the time it was first heard).
+func wholeAt(ev []clipEvent, total int) (first, done time.Time, ok bool) {
+	if len(ev) == 0 || total <= 0 {
+		return
+	}
+	sorted := append([]clipEvent(nil), ev...)
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].at.Before(sorted[j].at) })
+	first = sorted[0].at
+	data, parity, repair := map[int]bool{}, map[int]int{}, map[int]bool{}
+	parSeen := map[int]bool{}
+	for _, e := range sorted {
+		switch e.what {
+		case clipData:
+			data[e.info] = true
+		case clipParity:
+			if !parSeen[e.info] {
+				parSeen[e.info] = true
+				parity[e.info/8]++
+			}
+		case clipRepair:
+			repair[e.info] = true
+		}
+		if rebuildable(data, parity, len(repair), total) {
+			return first, e.at, true
+		}
+	}
+	return first, time.Time{}, false
+}
+
+// eventsUntil: the first-heard times of the pieces up to t, in order.
+func eventsUntil(ev []clipEvent, t time.Time) []time.Time {
+	seen := map[[2]int]bool{}
+	sorted := append([]clipEvent(nil), ev...)
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].at.Before(sorted[j].at) })
+	var out []time.Time
+	for _, e := range sorted {
+		if e.at.After(t) {
+			break
+		}
+		k := [2]int{e.what, e.info}
+		if !seen[k] {
+			seen[k] = true
+			out = append(out, e.at)
+		}
+	}
+	return out
+}
+
+// sendingSecondsTimes: the time from the first to the last, with each pause
+// (a gap of over sendingPauseS and over three times the usual gap, the mean
+// of those of sendingPauseS or less) cut to the usual gap.
+func sendingSecondsTimes(ts []time.Time) float64 {
+	if len(ts) < 2 {
+		return 0
+	}
+	var ss float64
+	var sn int
+	gaps := make([]float64, 0, len(ts)-1)
+	for i := 1; i < len(ts); i++ {
+		g := ts[i].Sub(ts[i-1]).Seconds()
+		gaps = append(gaps, g)
+		if g <= sendingPauseS {
+			ss += g
+			sn++
+		}
+	}
+	total := 0.0
+	for _, g := range gaps {
+		if sn > 0 && g > sendingPauseS && g > 3*ss/float64(sn) {
+			total += ss / float64(sn)
+		} else {
+			total += g
+		}
+	}
+	return total
+}
+
+// medianPieceBytes: the usual size of the pieces heard (163 when none).
+func medianPieceBytes(ps []pieceAt) int {
+	if len(ps) == 0 {
+		return 163
+	}
+	sizes := make([]int, len(ps))
+	for i, p := range ps {
+		sizes[i] = p.bytes
+	}
+	sort.Ints(sizes)
+	return sizes[len(sizes)/2]
 }
 
 // pieceAt is one data piece as an observer first heard it.

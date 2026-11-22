@@ -333,3 +333,37 @@ func TestRepairPiecesRebuild(t *testing.T) {
 		t.Fatalf("private: %+v", u)
 	}
 }
+
+// Repair pieces sent long after a clip was whole (for other listeners) don't
+// stretch its time: it's timed to when the far end could have it whole, and
+// sized as the whole clip, rebuilt pieces included.
+func TestClipTimedToWhole(t *testing.T) {
+	t0 := time.Date(2026, 11, 22, 21, 17, 0, 0, time.UTC)
+	anns := []mediaClipAnn{{sid: 5, kind: "voice", total: 3, at: t0}, {sid: 6, kind: "photo", total: 4, at: t0}}
+	var p []mediaClipPiece
+	add := func(sid uint32, info, sec int) {
+		p = append(p, mediaClipPiece{sid: sid, info: info, bytes: 150, observer: "far", obsName: "far", path: []string{"aa"}, at: t0.Add(time.Duration(sec) * time.Second)})
+	}
+	add(5, 0, 0)
+	add(5, 1, 1)
+	add(5, 2, 2)
+	for i := 0; i < 60; i++ {
+		add(5^mediaClipRepairXor, i, 10+i*40)
+	}
+	// 6: pieces 0 and 2 at 0 and 2 s, then repair pieces at 5 and 9 s make it whole, more at 600 s
+	add(6, 0, 0)
+	add(6, 2, 2)
+	add(6^mediaClipRepairXor, 1, 5)
+	add(6^mediaClipRepairXor, 2, 9)
+	add(6^mediaClipRepairXor, 3, 600)
+	by := map[string]MediaMeshClip{}
+	for _, c := range analyseMediaClips(anns, p) {
+		by[c.SID] = c
+	}
+	if c := by["00000005"]; c.Outcome != "whole" || c.DurationS != 2 || c.Bytes != 450 || c.RateBytes != 300 || c.BytesEstimated {
+		t.Fatalf("voice: %+v", c)
+	}
+	if c := by["00000006"]; c.Outcome != "parity" || c.DurationS != 9 || c.Bytes != 600 || !c.BytesEstimated || c.RateBytes != 450 || c.SendingS != 9 {
+		t.Fatalf("photo: %+v", c)
+	}
+}

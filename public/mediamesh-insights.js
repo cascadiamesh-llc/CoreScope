@@ -206,7 +206,7 @@
 
   function speedHtml(clips, nameOf, days, unannounced) {
     const s = speedSummary(clips, nameOf, unannounced);
-    const head = `<h3>How fast clips cross the mesh</h3><p class="text-muted mm-ins-sub">From the first piece the far end heard to the last: announced clips the far end heard whole, and clips sent privately (in a direct message or on a private channel), timed from the pieces heard, with the pieces in between that no observer heard counted from their numbers. While sending leaves out the pauses: gaps of over 15 s in which far fewer pieces went than usual, as when the sending app waits on the far end. Last ${days} days.</p>`;
+    const head = `<h3>How fast clips cross the mesh</h3><p class="text-muted mm-ins-sub">From the first piece the far end heard until it had enough to make the whole clip (its own pieces, and parity or repair pieces for those it missed; repair pieces sent later for other listeners don't count): announced clips the far end could make whole, and clips sent privately (in a direct message or on a private channel), timed from the pieces heard, with the pieces in between that no observer heard counted from their numbers. While sending leaves out the pauses: gaps of over 15 s in which far fewer pieces went than usual, as when the sending app waits on the far end. Last ${days} days.</p>`;
     if (!s.n) return head + '<p class="text-muted">No clips with more than one piece heard yet.</p>';
     const maxK = Math.max(...s.byHops.map((b) => b.kbps || 0), 0.1);
     const tiles = `<div class="mm-ins-tiles">
