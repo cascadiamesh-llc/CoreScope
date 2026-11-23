@@ -255,6 +255,7 @@ func (s *Server) withKeptMMClips(out *MediaMeshClips) {
 // keepMMClipsLoop keeps the last day's clips every mmClipKeepEvery, so
 // they're kept whether or not anyone asks before their packets leave memory.
 func (s *Server) keepMMClipsLoop(stop <-chan struct{}) {
+	s.useKeptMMHours()
 	t := time.NewTicker(mmClipKeepEvery)
 	defer t.Stop()
 	n := 0
@@ -275,8 +276,10 @@ func (s *Server) keepMMClipsLoop(stop <-chan struct{}) {
 		if err := keepMMClips(st.db, out); err != nil {
 			log.Printf("[mediamesh] keeping clips: %v", err)
 		}
+		s.keepMMHoursNow(st)
 		if n++; n%144 == 1 {
 			pruneMMClips(st.db, mmClipKeepDays)
+			pruneMMHours(st.db, mmClipKeepDays)
 		}
 	}
 }

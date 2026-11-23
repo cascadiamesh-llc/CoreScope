@@ -47,7 +47,7 @@ and 12 hours after. The MediaMesh tab's **Did it arrive?** shows how many delive
 and how, a **Recipient** column in its clip list, and the flight recorder adds what the receiving
 apps reported. Nothing is shown per radio.
 
-## Clips kept past memory
+## Kept past memory
 
 The clips, the hourly photo and voice traffic and how fast clips crossed are worked out from the
 packets in memory, which holds only as many packets as fit (`packetStore.maxMemoryMB`); with every
@@ -59,3 +59,11 @@ better account of it (whole before partial, then more pieces heard), since one w
 after its first pieces have left memory looks worse than it was; an hour keeps the most packets
 and clips it was seen with. Clips from before this was deployed, already gone from memory, can't
 be brought back.
+
+The rest of the MediaMesh tab that comes from packets in memory (the transmission counts and
+radio2 share, packet types, transmissions by hour, the observer table, the radio2 links and the
+photo and voice hop counts) is kept the same way, hour by hour: each hour's tally goes into
+`mm_hours` every 5 minutes, written over only by a fuller one, and an answer for the whole
+network (not one region) adds the kept hours that have lost packets from memory to the hours
+still in it, back a week when no window is asked for (`cmd/server/mediamesh_hours_keep.go`). The
+repeaters and the backbone already come from the ingestor's tables.

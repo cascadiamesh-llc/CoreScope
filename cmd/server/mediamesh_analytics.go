@@ -422,17 +422,134 @@ func (s *PacketStore) computeMediaMeshAnalytics(region string, window TimeWindow
 	if !window.IsZero() {
 		out.Window = window.Label
 	}
-
-	type obsAgg struct {
-		name, iata string
-		mm, total  int
-		last       string
+	tallies, oldest := s.mediaMeshTallies(regionObs, window)
+	// Hours whose packets have left memory, from those kept on disk
+	// (mediamesh_hours_keep.go); the whole network only.
+	if region == "" {
+		if f := mmKeptHours.Load(); f != nil && oldest != "" {
+			for h, t := range (*f)(window, mmHourAfter(oldest)) {
+				if _, ok := tallies[h]; !ok || t.Total > tallies[h].Total {
+					tallies[h] = t
+				}
+			}
+		}
 	}
-	types := map[string]*MediaMeshTypeCount{}
-	hours := map[string]int{}
-	observers := map[string]*obsAgg{}
-	links := map[string]*mediaMeshLinkAgg{}
-	var mediaHops []int
+	sum := newMMTally()
+	for _, t := range tallies {
+		sum.add(t)
+	}
+	s.mediaMeshFromTally(out, sum)
+	return out
+}
+
+// mmTally is the part of the MediaMesh analytics worked out from packets in
+// memory, for one hour's packets (by when they were first heard), so hours
+// can be kept on disk and added up.
+type mmTally struct {
+	Total int                     `json:"t"`
+	MM    int                     `json:"m"`
+	Types map[string][2]int       `json:"ty"` // name → [count, on radio2]
+	Hours map[string]int          `json:"h"`  // radio2 transmissions by hour first heard on radio2
+	Obs   map[string]*mmObsTally  `json:"o"`
+	Links map[string]*mmLinkTally `json:"l"`
+	Hops  map[int]int             `json:"hp"` // photo and voice packets by hops
+}
+
+type mmObsTally struct {
+	Name  string `json:"n,omitempty"`
+	IATA  string `json:"i,omitempty"`
+	MM    int    `json:"m"`
+	Total int    `json:"t"`
+	Last  string `json:"l,omitempty"`
+}
+
+type mmLinkTally struct {
+	From    string  `json:"f"`
+	Obs     string  `json:"o"`
+	ObsName string  `json:"on,omitempty"`
+	Count   int     `json:"c"`
+	SNRSum  float64 `json:"ss,omitempty"`
+	SNRN    int     `json:"sn,omitempty"`
+	RSSISum float64 `json:"rs,omitempty"`
+	RSSIN   int     `json:"rn,omitempty"`
+	Last    string  `json:"l,omitempty"`
+}
+
+func newMMTally() *mmTally {
+	return &mmTally{Types: map[string][2]int{}, Hours: map[string]int{}, Obs: map[string]*mmObsTally{},
+		Links: map[string]*mmLinkTally{}, Hops: map[int]int{}}
+}
+
+// add folds b into t.
+func (t *mmTally) add(b *mmTally) {
+	t.Total += b.Total
+	t.MM += b.MM
+	for k, v := range b.Types {
+		c := t.Types[k]
+		t.Types[k] = [2]int{c[0] + v[0], c[1] + v[1]}
+	}
+	for k, v := range b.Hours {
+		t.Hours[k] += v
+	}
+	for k, v := range b.Obs {
+		o := t.Obs[k]
+		if o == nil {
+			o = &mmObsTally{Name: v.Name, IATA: v.IATA}
+			t.Obs[k] = o
+		}
+		o.MM += v.MM
+		o.Total += v.Total
+		if v.Last > o.Last {
+			o.Last = v.Last
+		}
+		if o.Name == "" {
+			o.Name, o.IATA = v.Name, v.IATA
+		}
+	}
+	for k, v := range b.Links {
+		l := t.Links[k]
+		if l == nil {
+			l = &mmLinkTally{From: v.From, Obs: v.Obs, ObsName: v.ObsName}
+			t.Links[k] = l
+		}
+		l.Count += v.Count
+		l.SNRSum += v.SNRSum
+		l.SNRN += v.SNRN
+		l.RSSISum += v.RSSISum
+		l.RSSIN += v.RSSIN
+		if v.Last > l.Last {
+			l.Last = v.Last
+		}
+	}
+	for k, v := range b.Hops {
+		t.Hops[k] += v
+	}
+}
+
+// mmHourOf is the UTC hour ("2006-01-02T15") of a timestamp, "" if none.
+func mmHourOf(ts string) string {
+	t := parseTimestamp(ts)
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format("2006-01-02T15")
+}
+
+// mmHourAfter: the first hour wholly after ts (the oldest packet in memory):
+// hours before it have lost packets from memory.
+func mmHourAfter(ts string) string {
+	t := parseTimestamp(ts)
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Truncate(time.Hour).Add(time.Hour).Format("2006-01-02T15")
+}
+
+// mediaMeshTallies passes once over the packets in memory in the window:
+// a tally for each hour, and the oldest packet's first-heard time.
+func (s *PacketStore) mediaMeshTallies(regionObs map[string]bool, window TimeWindow) (map[string]*mmTally, string) {
+	tallies := map[string]*mmTally{}
+	oldest := ""
 	_, pm := s.getCachedNodesAndPM()
 
 	s.mu.RLock()
@@ -441,7 +558,13 @@ func (s *PacketStore) computeMediaMeshAnalytics(region string, window TimeWindow
 	seen := make(map[string]bool, len(s.packets))
 	bursts := s.mediaMeshBurstsLocked("")
 	for _, tx := range s.packets {
-		if tx == nil || !window.Includes(tx.FirstSeen) {
+		if tx == nil {
+			continue
+		}
+		if tx.FirstSeen != "" && (oldest == "" || tx.FirstSeen < oldest) {
+			oldest = tx.FirstSeen
+		}
+		if !window.Includes(tx.FirstSeen) {
 			continue
 		}
 		if tx.Hash != "" {
@@ -449,6 +572,12 @@ func (s *PacketStore) computeMediaMeshAnalytics(region string, window TimeWindow
 				continue
 			}
 			seen[tx.Hash] = true
+		}
+		hk := mmHourOf(tx.FirstSeen)
+		tl := tallies[hk]
+		if tl == nil {
+			tl = newMMTally()
+			tallies[hk] = tl
 		}
 		inScope := regionObs == nil
 		mm := false
@@ -463,14 +592,14 @@ func (s *PacketStore) computeMediaMeshAnalytics(region string, window TimeWindow
 			// observer's own transmission still makes the packet MediaMesh,
 			// but is not something it heard.
 			heard := !o.isOwnTransmission()
-			var a *obsAgg
+			var a *mmObsTally
 			if heard {
-				a = observers[o.ObserverID]
+				a = tl.Obs[o.ObserverID]
 				if a == nil {
-					a = &obsAgg{name: o.ObserverName, iata: o.ObserverIATA}
-					observers[o.ObserverID] = a
+					a = &mmObsTally{Name: o.ObserverName, IATA: o.ObserverIATA}
+					tl.Obs[o.ObserverID] = a
 				}
-				a.total++
+				a.Total++
 			}
 			if !anyMM {
 				continue
@@ -483,21 +612,32 @@ func (s *PacketStore) computeMediaMeshAnalytics(region string, window TimeWindow
 				mmHops = n
 			}
 			if heard {
-				a.mm++
-				if o.Timestamp > a.last {
-					a.last = o.Timestamp
+				a.MM++
+				if o.Timestamp > a.Last {
+					a.Last = o.Timestamp
 				}
 				// A row the observer heard on both radios carries one SNR
 				// and RSSI, of whichever copy: not a radio2 measurement.
 				if _, both := mediaMeshMainObs[o.ID]; !both && o.ObserverID != "" {
 					if from := directHeardNode(tx, o, pm); from != "" && from != strings.ToLower(o.ObserverID) {
 						key := from + "|" + o.ObserverID
-						l := links[key]
+						l := tl.Links[key]
 						if l == nil {
-							l = &mediaMeshLinkAgg{from: from, observerID: o.ObserverID, observerName: o.ObserverName}
-							links[key] = l
+							l = &mmLinkTally{From: from, Obs: o.ObserverID, ObsName: o.ObserverName}
+							tl.Links[key] = l
 						}
-						l.add(o)
+						l.Count++
+						if o.SNR != nil {
+							l.SNRSum += *o.SNR
+							l.SNRN++
+						}
+						if o.RSSI != nil {
+							l.RSSISum += *o.RSSI
+							l.RSSIN++
+						}
+						if o.Timestamp > l.Last {
+							l.Last = o.Timestamp
+						}
 					}
 				}
 			}
@@ -514,35 +654,39 @@ func (s *PacketStore) computeMediaMeshAnalytics(region string, window TimeWindow
 				name = n
 			}
 		}
-		t := types[name]
-		if t == nil {
-			t = &MediaMeshTypeCount{Name: name}
-			types[name] = t
-		}
-		t.Count++
-		out.TotalTransmissions++
+		c := tl.Types[name]
+		c[0]++
+		tl.Total++
 		if mm {
-			t.MediaMesh++
-			out.MediaMeshTransmissions++
+			c[1]++
+			tl.MM++
 			if firstMM == "" {
 				firstMM = tx.FirstSeen
 			}
 			if len(firstMM) >= 13 {
-				hours[firstMM[:13]]++
+				tl.Hours[firstMM[:13]]++
 			}
 			if mediaMeshIsMedia(tx, bursts) && mmHops >= 0 {
-				mediaHops = append(mediaHops, mmHops)
+				tl.Hops[mmHops]++
 			}
 		}
+		tl.Types[name] = c
 	}
 	mediaMeshMu.RUnlock()
 	s.mu.RUnlock()
+	return tallies, oldest
+}
 
+// mediaMeshFromTally fills out's counts, types, hours, observers, links and
+// media stats from the tally, and its repeaters and backbone.
+func (s *PacketStore) mediaMeshFromTally(out *MediaMeshAnalytics, t *mmTally) {
+	out.TotalTransmissions = t.Total
+	out.MediaMeshTransmissions = t.MM
 	if out.TotalTransmissions > 0 {
 		out.SharePct = float64(out.MediaMeshTransmissions) / float64(out.TotalTransmissions) * 100
 	}
-	for _, t := range types {
-		out.ByType = append(out.ByType, *t)
+	for name, c := range t.Types {
+		out.ByType = append(out.ByType, MediaMeshTypeCount{Name: name, Count: c[0], MediaMesh: c[1]})
 	}
 	sort.Slice(out.ByType, func(i, j int) bool {
 		if out.ByType[i].Count != out.ByType[j].Count {
@@ -550,21 +694,21 @@ func (s *PacketStore) computeMediaMeshAnalytics(region string, window TimeWindow
 		}
 		return out.ByType[i].Name < out.ByType[j].Name
 	})
-	for h, c := range hours {
+	for h, c := range t.Hours {
 		out.PerHour = append(out.PerHour, MediaMeshHour{Hour: strings.Replace(h, " ", "T", 1), Count: c})
 	}
 	sort.Slice(out.PerHour, func(i, j int) bool { return out.PerHour[i].Hour < out.PerHour[j].Hour })
 	now := time.Now()
 	nodes := s.mediaMeshNodeInfo()
-	for id, a := range observers {
+	for id, a := range t.Obs {
 		runs := observerRunsMediaMesh(id, now)
-		if a.mm == 0 && !runs {
+		if a.MM == 0 && !runs {
 			continue
 		}
-		o := MediaMeshObserver{ID: id, Name: a.name, IATA: a.iata, MediaMeshObs: a.mm, TotalObs: a.total,
-			LastHeard: a.last, RunsMediaMesh: runs, Near: nodeNear(nodes, id)}
-		if a.total > 0 {
-			o.SharePct = float64(a.mm) / float64(a.total) * 100
+		o := MediaMeshObserver{ID: id, Name: a.Name, IATA: a.IATA, MediaMeshObs: a.MM, TotalObs: a.Total,
+			LastHeard: a.Last, RunsMediaMesh: runs, Near: nodeNear(nodes, id)}
+		if a.Total > 0 {
+			o.SharePct = float64(a.MM) / float64(a.Total) * 100
 		}
 		out.Observers = append(out.Observers, o)
 	}
@@ -574,12 +718,22 @@ func (s *PacketStore) computeMediaMeshAnalytics(region string, window TimeWindow
 		}
 		return out.Observers[i].ID < out.Observers[j].ID
 	})
+	links := make(map[string]*mediaMeshLinkAgg, len(t.Links))
+	for k, l := range t.Links {
+		links[k] = &mediaMeshLinkAgg{from: l.From, observerID: l.Obs, observerName: l.ObsName, count: l.Count,
+			snrN: l.SNRN, rssiN: l.RSSIN, snrSum: l.SNRSum, rssiSum: l.RSSISum, last: l.Last}
+	}
+	var hops []int
+	for h, n := range t.Hops {
+		for i := 0; i < n; i++ {
+			hops = append(hops, h)
+		}
+	}
 	out.Repeaters = s.mediaMeshRepeaters(now, nodes)
 	out.UnknownRepeaters = withNeighbourNames(mediaMeshUnknownAt(now), nodes)
 	out.Links = mediaMeshLinks(links, nodes, now)
-	out.Media = mediaMeshMediaStatsOf(mediaHops)
+	out.Media = mediaMeshMediaStatsOf(hops)
 	out.Backbone = mediaMeshBackbone(nodes, nil)
-	return out
 }
 
 // mediaMeshNodeInfo is the node list by lower-case public key.
