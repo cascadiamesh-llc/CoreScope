@@ -73,6 +73,12 @@ type covPointRep struct {
 	SNR       float64 `json:"snr"`        // ours of its reply, dB
 	RemoteSNR float64 `json:"remote_snr"` // its of our ask, dB
 	Margin    float64 `json:"margin"`     // radio2's estimated margin over what it decodes, dB
+	// RSSI of its reply as the recording radio heard it, dBm (a discovery
+	// answer; apps from before don't send it). SNR readings top out around
+	// +12 dB; RSSI keeps rising, so near a repeater it tells strong from fair.
+	RSSI *float64 `json:"rssi,omitempty"`
+	// Via: "trace" when it answered being asked by name, not the discovery.
+	Via string `json:"via,omitempty"`
 }
 
 type covPoint struct {
@@ -82,6 +88,9 @@ type covPoint struct {
 	Acc   float64       `json:"acc,omitempty"`   // GPS accuracy, m
 	Speed float64       `json:"speed,omitempty"` // m/s
 	Reps  []covPointRep `json:"reps"`
+	// Silent: MediaMesh repeaters asked by name (a one-hop trace) that
+	// didn't answer, first 8 hex digits each.
+	Silent []string `json:"silent,omitempty"`
 }
 
 type covRadio2 struct {
@@ -126,6 +135,8 @@ func openCovPointsStore(path string) (*covPointsStore, error) {
 		db.Close()
 		return nil, err
 	}
+	// added later: repeaters asked by name that didn't answer (JSON list)
+	db.Exec(`ALTER TABLE points ADD COLUMN silent TEXT`)
 	// delivery receipts (mediamesh_receipts.go)
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS receipts (
 		radio TEXT NOT NULL, sid TEXT NOT NULL, at INTEGER NOT NULL, kind TEXT NOT NULL,
@@ -150,8 +161,8 @@ func (st *covPointsStore) add(b *covPointsBatch) (int, error) {
 		return 0, err
 	}
 	defer tx.Rollback()
-	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO points (radio, t, lat, lon, acc, speed, reps, r2_bw, r2_sf, main_bw, app, received)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO points (radio, t, lat, lon, acc, speed, reps, r2_bw, r2_sf, main_bw, app, received, silent)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return 0, err
 	}
@@ -160,7 +171,12 @@ func (st *covPointsStore) add(b *covPointsBatch) (int, error) {
 	now := st.now().Unix()
 	for _, p := range b.Points {
 		reps, _ := json.Marshal(p.Reps)
-		res, err := stmt.Exec(b.Radio, p.T, p.Lat, p.Lon, p.Acc, p.Speed, string(reps), b.Radio2.BwHz, b.Radio2.SF, b.MainBwHz, b.App, now)
+		var silent interface{}
+		if len(p.Silent) > 0 {
+			sb, _ := json.Marshal(p.Silent)
+			silent = string(sb)
+		}
+		res, err := stmt.Exec(b.Radio, p.T, p.Lat, p.Lon, p.Acc, p.Speed, string(reps), b.Radio2.BwHz, b.Radio2.SF, b.MainBwHz, b.App, now, silent)
 		if err != nil {
 			return 0, err
 		}
@@ -203,14 +219,16 @@ func (st *covPointsStore) invalidate() {
 	st.mu.Unlock()
 }
 
-// storedPoint is a point as read back, with its radio.
+// storedPoint is a point as read back, with its radio and the radio2
+// setting its batch said (0: not said).
 type storedPoint struct {
-	radio string
+	radio      string
+	r2bw, r2sf int
 	covPoint
 }
 
 func (st *covPointsStore) all() ([]storedPoint, error) {
-	rows, err := st.db.Query(`SELECT radio, t, lat, lon, COALESCE(speed, 0), reps FROM points ORDER BY radio, t`)
+	rows, err := st.db.Query(`SELECT radio, t, lat, lon, COALESCE(speed, 0), reps, COALESCE(r2_bw, 0), COALESCE(r2_sf, 0), COALESCE(silent, '') FROM points ORDER BY radio, t`)
 	if err != nil {
 		return nil, err
 	}
@@ -218,14 +236,35 @@ func (st *covPointsStore) all() ([]storedPoint, error) {
 	var out []storedPoint
 	for rows.Next() {
 		var p storedPoint
-		var reps string
-		if err := rows.Scan(&p.radio, &p.T, &p.Lat, &p.Lon, &p.Speed, &reps); err != nil {
+		var reps, silent string
+		if err := rows.Scan(&p.radio, &p.T, &p.Lat, &p.Lon, &p.Speed, &reps, &p.r2bw, &p.r2sf, &silent); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(reps), &p.Reps)
+		if silent != "" {
+			_ = json.Unmarshal([]byte(silent), &p.Silent)
+		}
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+// covRSSIMargin: radio2's margin over what it decodes, from the RSSI of a
+// reply on the main mesh: the RSSI less radio2's sensitivity (thermal noise
+// in its bandwidth, a 6.5 dB noise figure, the SNR its spreading factor
+// needs; as public/mediamesh-coverage.js sensitivityDbm). 250 kHz SF7 when
+// the batch didn't say.
+func covRSSIMargin(rssi float64, bwHz, sf int) float64 {
+	if bwHz <= 0 {
+		bwHz = 250000
+	}
+	floors := map[int]float64{5: -2.5, 6: -5, 7: -7.5, 8: -10, 9: -12.5, 10: -15, 11: -17.5, 12: -20}
+	floor, ok := floors[sf]
+	if !ok {
+		floor = -7.5
+	}
+	sens := -174 + 10*math.Log10(float64(bwHz)) + 6.5 + floor
+	return rssi - sens
 }
 
 // cells: the public answer, worked out at most once a minute.
@@ -293,6 +332,7 @@ func checkCovBatch(b *covPointsBatch, now time.Time, keepDays int) error {
 			p.Speed = 0
 		}
 		reps := make([]covPointRep, 0, len(p.Reps))
+		answered := map[string]bool{}
 		for _, r := range p.Reps {
 			key := strings.ToLower(strings.TrimSpace(r.Key))
 			if len(key) > 8 {
@@ -302,12 +342,35 @@ func checkCovBatch(b *covPointsBatch, now time.Time, keepDays int) error {
 				continue
 			}
 			r.Key = key
+			if r.RSSI != nil && !(*r.RSSI >= -150 && *r.RSSI < 0) {
+				r.RSSI = nil
+			}
+			if r.Via != "trace" {
+				r.Via = ""
+			}
+			answered[key] = true
 			reps = append(reps, r)
 			if len(reps) == 12 {
 				break
 			}
 		}
 		p.Reps = reps
+		silent := make([]string, 0, len(p.Silent))
+		for _, k := range p.Silent {
+			k = strings.ToLower(strings.TrimSpace(k))
+			if len(k) > 8 {
+				k = k[:8]
+			}
+			if len(k) != 8 || !isHex(k) || answered[k] {
+				continue
+			}
+			answered[k] = true
+			silent = append(silent, k)
+			if len(silent) == 12 {
+				break
+			}
+		}
+		p.Silent = silent
 		kept = append(kept, p)
 	}
 	if len(kept) == 0 {
@@ -350,6 +413,15 @@ type covCellRep struct {
 	Key    string  `json:"key"`
 	N      int     `json:"n"`      // samples it answered in
 	Margin float64 `json:"margin"` // median estimated radio2 margin, dB
+	// RSSIMargin: the median margin from its replies' RSSI (covRSSIMargin),
+	// where the apps sent RSSI.
+	RSSIMargin *float64 `json:"rssi_margin,omitempty"`
+}
+
+// covCellSilent: a repeater asked by name in a cell that didn't answer.
+type covCellSilent struct {
+	Key string `json:"key"`
+	N   int    `json:"n"` // samples it was asked in and stayed silent
 }
 
 type covCell struct {
@@ -359,6 +431,8 @@ type covCell struct {
 	N    int          `json:"n"`   // samples
 	None int          `json:"none"`
 	Reps []covCellRep `json:"reps"`
+	// Silent: repeaters asked by name there that didn't answer.
+	Silent []covCellSilent `json:"silent,omitempty"`
 }
 
 // covHex: one "Mapped by people" hexagon, where at least one MediaMesh
@@ -401,6 +475,8 @@ func covCells(pts []storedPoint) *covCellsResponse {
 		car      bool
 		n, none  int
 		margins  map[string][]float64
+		rssi     map[string][]float64
+		silent   map[string]int
 	}
 	cells := map[string]*acc{}
 	type hacc struct {
@@ -429,7 +505,7 @@ func covCells(pts []storedPoint) *covCellsResponse {
 		key := fmt.Sprintf("%.5f,%.5f,%t", lat, lon, car)
 		c := cells[key]
 		if c == nil {
-			c = &acc{lat: lat, lon: lon, car: car, margins: map[string][]float64{}}
+			c = &acc{lat: lat, lon: lon, car: car, margins: map[string][]float64{}, rssi: map[string][]float64{}, silent: map[string]int{}}
 			cells[key] = c
 		}
 		c.n++
@@ -443,6 +519,15 @@ func covCells(pts []storedPoint) *covCellsResponse {
 			}
 			seen[r.Key] = true
 			c.margins[r.Key] = append(c.margins[r.Key], r.Margin)
+			if r.RSSI != nil {
+				c.rssi[r.Key] = append(c.rssi[r.Key], covRSSIMargin(*r.RSSI, p.r2bw, p.r2sf))
+			}
+		}
+		for _, k := range p.Silent {
+			if !seen[k] {
+				seen[k] = true
+				c.silent[k]++
+			}
 		}
 		if len(p.Reps) > 0 {
 			hk, hLat, hLon, hR := hexOf(p.Lat, p.Lon)
@@ -497,9 +582,18 @@ func covCells(pts []storedPoint) *covCellsResponse {
 	for _, c := range cells {
 		cc := covCell{Lat: c.lat, Lon: c.lon, Car: c.car, N: c.n, None: c.none, Reps: []covCellRep{}}
 		for k, ms := range c.margins {
-			cc.Reps = append(cc.Reps, covCellRep{Key: k, N: len(ms), Margin: math.Round(medianF(ms)*10) / 10})
+			cr := covCellRep{Key: k, N: len(ms), Margin: math.Round(medianF(ms)*10) / 10}
+			if rs := c.rssi[k]; len(rs) > 0 {
+				v := math.Round(medianF(rs)*10) / 10
+				cr.RSSIMargin = &v
+			}
+			cc.Reps = append(cc.Reps, cr)
 		}
 		sort.Slice(cc.Reps, func(i, j int) bool { return cc.Reps[i].Margin > cc.Reps[j].Margin })
+		for k, n := range c.silent {
+			cc.Silent = append(cc.Silent, covCellSilent{Key: k, N: n})
+		}
+		sort.Slice(cc.Silent, func(i, j int) bool { return cc.Silent[i].Key < cc.Silent[j].Key })
 		out.Cells = append(out.Cells, cc)
 	}
 	sort.Slice(out.Cells, func(i, j int) bool {

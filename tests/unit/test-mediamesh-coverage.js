@@ -358,6 +358,47 @@ function cellAt(cov, lat, lon) {
     assert.strictEqual(M.pathProfile(rep[0], lat, -122.33, () => NaN, 'ground'), null);
   });
 
+  await test('signal strength and repeaters asked by name: real evidence both ways', () => {
+    M.setCalibration(0); M.setField(null);
+    const land = (lat, lon) => 10 + 0.3 * Math.sin(lat * 3000) + 0.3 * Math.cos(lon * 3000);
+    const reps = [{ name: 'A', public_key: 'aaaaaaaa11', lat: 47.6, lon: -122.33 }, { name: 'B', public_key: 'bbbbbbbb22', lat: 47.6, lon: -122.322 }];
+    const raw = (r, lat, lon) => { const p = M.pathProfile(r, lat, lon, land, 'ground', null, { noField: true }); return p.rxDbm - p.sensitivityDbm; };
+    // the model 8 dB too hopeful; RSSI tells it (SNR stuck at its ceiling)
+    const cells = [];
+    for (let k = 1; k <= 30; k++) {
+      const lat = 47.6 + kmLat(0.1 * k), lon = -122.33 + (k % 3) * 0.002;
+      const m = raw(reps[0], lat, lon) - 8;
+      if (m > -6) cells.push({ lat, lon, car: false, n: 2, none: 0, reps: [{ key: 'aaaaaaaa', n: 2, margin: Math.min(12, m), rssi_margin: Math.round(m * 10) / 10 }] });
+    }
+    const f = M.fitField(cells, reps, land);
+    assert.ok(f.used && f.exactN === f.n, JSON.stringify(f));
+    assert.ok(Math.abs(f.fitDb + 8) < 1, `fit ${f.fitDb}`);
+    assert.ok(f.offsetDb < -2 && Math.abs(f.offsetDb - f.fitDb * f.n / (f.n + 40)) < 0.2, `offset ${f.offsetDb}`);
+    assert.ok(/with the reply's signal strength\): lowered by [\d.]+ dB, weighed lightly\./.test(M.fieldText(f)), M.fieldText(f));
+    // the same spots with SNR only: floors, so nothing lowers it
+    const snrOnly = M.fitField(cells.map((c) => Object.assign({}, c, { reps: c.reps.map((r) => ({ key: r.key, n: r.n, margin: r.margin })) })), reps, land);
+    assert.ok(snrOnly.offsetDb >= 0, String(snrOnly.offsetDb));
+    // B asked by name near A's spots, and silent where the model said +20:
+    // a ceiling, pulling it down, for half
+    const near = cells.slice(0, 15).map((c) => Object.assign({}, c, { reps: c.reps.map((r) => ({ key: r.key, n: r.n, margin: r.margin })), silent: [{ key: 'bbbbbbbb', n: 2 }] }));
+    const asked = M.fitField(near.concat(cells.slice(15).map((c) => Object.assign({}, c, { reps: c.reps.map((r) => ({ key: r.key, n: r.n, margin: r.margin })) }))), reps, land);
+    assert.ok(asked.silentN > 0 && asked.offsetDb < snrOnly.offsetDb, `${asked.offsetDb} vs ${snrOnly.offsetDb}`);
+    assert.ok(/where one asked by name didn't/.test(M.fieldText(asked)));
+
+    // learning: RSSI lowers where it reads less; a silent ask lowers a little
+    const cov = { width: 40, height: 40, bounds: { north: 47.61, south: 47.61 - 0.018, west: -122.33, east: -122.33 + 0.0266 }, margins: new Float32Array(1600).fill(10), best: new Int16Array(1600), modeKey: 'ground' };
+    const mid = { lat: 47.61 - 0.009, lon: -122.33 + 0.0133 };
+    const i = (() => { const col = 20, row = 20; return row * 40 + col; })();
+    const L = M.learnFromField(cov, [{ lat: mid.lat, lon: mid.lon, n: 5, reps: [{ key: 'aa', margin: 12, rssi_margin: 2, n: 5 }] }]);
+    assert.deepStrictEqual(L.points.map((p) => p.res), [-8]);
+    assert.ok(L.delta[i] < -2.5 && L.delta[i] > -4.5, String(L.delta[i]));
+    const S = M.learnFromField(cov, [{ lat: mid.lat, lon: mid.lon, n: 5, reps: [], silent: [{ key: 'aa', n: 5 }] }]);
+    assert.deepStrictEqual(S.points.map((p) => p.res), [-5]);
+    assert.ok(S.delta[i] < 0 && S.delta[i] > L.delta[i], String(S.delta[i]));
+    const quiet = M.learnFromField(cov, [{ lat: mid.lat, lon: mid.lon, n: 5, reps: [] }]);
+    assert.strictEqual(quiet.points.length, 0, 'a discovery nobody answered: nothing');
+  });
+
   await test('buildings and trees count only along the stretch among them', () => {
     const at = (terrain) => M.pathProfile(rep[0], 47.6 + kmLat(6), -122.33, terrain, 'ground');
     // all land, flat: the whole 6 km

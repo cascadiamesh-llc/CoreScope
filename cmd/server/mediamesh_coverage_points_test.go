@@ -223,3 +223,72 @@ func TestCovHexes(t *testing.T) {
 		t.Fatalf("%d pings in hexagons of %d kept", n, c.Points)
 	}
 }
+
+func TestCovRSSIAndAskedByName(t *testing.T) {
+	now := time.Unix(1795000000, 0)
+	key := hex.EncodeToString(make([]byte, 32))
+	f := func(v float64) *float64 { return &v }
+	b := covTestBatch(key, now.Unix()-7200)
+	// a strong spot: the SNR reading at its ceiling, the RSSI well above it;
+	// one repeater answering by name, two asked that didn't
+	b.Points[10].Reps = []covPointRep{
+		{Key: "1ea5e195", SNR: 11.5, RemoteSNR: 12, Margin: 13, RSSI: f(-60)},
+		{Key: "5491c13d", SNR: 2, RemoteSNR: 1, Margin: 2.5, Via: "trace"},
+		{Key: "aaaaaaaa", SNR: 1, RemoteSNR: 1, Margin: 1, RSSI: f(20), Via: "carrier pigeon"},
+	}
+	b.Points[10].Silent = []string{"FBA9FE12", "5491c13d", "nothex!!", "fba9fe12"}
+	if err := checkCovBatch(&b, now, 0); err != nil {
+		t.Fatal(err)
+	}
+	p := b.Points[10]
+	if p.Reps[0].RSSI == nil || *p.Reps[0].RSSI != -60 || p.Reps[1].Via != "trace" {
+		t.Fatalf("lost: %+v", p.Reps)
+	}
+	if p.Reps[2].RSSI != nil || p.Reps[2].Via != "" {
+		t.Fatalf("not tidied: %+v", p.Reps[2])
+	}
+	// lower-cased, once each, never one that answered
+	if len(p.Silent) != 1 || p.Silent[0] != "fba9fe12" {
+		t.Fatalf("silent %v", p.Silent)
+	}
+	st, err := openCovPointsStore(filepath.Join(t.TempDir(), "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.close()
+	if _, err := st.add(&b); err != nil {
+		t.Fatal(err)
+	}
+	pts, err := st.all()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back storedPoint
+	for _, q := range pts {
+		if q.T == p.T {
+			back = q
+		}
+	}
+	if len(back.Silent) != 1 || back.Reps[0].RSSI == nil || back.r2bw != 250000 || back.r2sf != 7 {
+		t.Fatalf("not kept: %+v", back)
+	}
+	// -60 dBm against radio2's -121.0 dBm at 250 kHz SF7: about 61 dB
+	if m := covRSSIMargin(-60, 250000, 7); math.Abs(m-61) > 0.1 {
+		t.Fatalf("rssi margin %v", m)
+	}
+	cells := covCells(pts)
+	found := false
+	for _, c := range cells.Cells {
+		for _, r := range c.Reps {
+			if r.Key == "1ea5e195" && r.RSSIMargin != nil && math.Abs(*r.RSSIMargin-61) < 0.2 {
+				found = true
+				if len(c.Silent) != 1 || c.Silent[0].Key != "fba9fe12" || c.Silent[0].N != 1 {
+					t.Fatalf("silent in the cell: %+v", c.Silent)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no cell with the RSSI margin")
+	}
+}
