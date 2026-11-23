@@ -724,7 +724,7 @@ func spanEnds(ps []pieceAt) (time.Time, time.Time) {
 
 func (s *Server) handleMediaMeshClips(w http.ResponseWriter, r *http.Request) {
 	days := 7
-	if v, err := strconv.Atoi(r.URL.Query().Get("days")); err == nil && v >= 1 && v <= 28 {
+	if v, err := strconv.Atoi(r.URL.Query().Get("days")); err == nil && v >= 1 && v <= 31 {
 		days = v
 	}
 	build := func() interface{} {
@@ -734,6 +734,7 @@ func (s *Server) handleMediaMeshClips(w http.ResponseWriter, r *http.Request) {
 		if s.store != nil {
 			s.store.mediaMeshClips(out.From, out)
 		}
+		s.withKeptMMClips(out)
 		s.addDeliveries(out)
 		return out
 	}

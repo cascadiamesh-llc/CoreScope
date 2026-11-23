@@ -46,3 +46,16 @@ receipt for that clip), from receipts finished between 10 minutes before the cli
 and 12 hours after. The MediaMesh tab's **Did it arrive?** shows how many deliveries arrived whole
 and how, a **Recipient** column in its clip list, and the flight recorder adds what the receiving
 apps reported. Nothing is shown per radio.
+
+## Clips kept past memory
+
+The clips, the hourly photo and voice traffic and how fast clips crossed are worked out from the
+packets in memory, which holds only as many packets as fit (`packetStore.maxMemoryMB`); with every
+packet heard by dozens of observers that can be hours, not the week asked for. So every 5 minutes,
+and whenever the clips are asked for, the clips worked out are kept in the coverage points file
+(`mm_clips`, `mm_clip_hours`, 35 days; `cmd/server/mediamesh_clip_keep.go`), and the answer is
+what was kept for the period with what's in memory laid over it. A clip is only written over by a
+better account of it (whole before partial, then more pieces heard), since one worked out again
+after its first pieces have left memory looks worse than it was; an hour keeps the most packets
+and clips it was seen with. Clips from before this was deployed, already gone from memory, can't
+be brought back.

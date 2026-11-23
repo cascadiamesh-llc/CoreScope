@@ -368,6 +368,7 @@ func main() {
 	srv := NewServer(database, cfg, hub)
 	srv.configDir = configDir
 	srv.store = store
+	go srv.keepMMClipsLoop(nil) // clips kept past the packets in memory (mediamesh_clip_keep.go)
 	// Optional user management (off by default). Fails startup on a bad
 	// config rather than running with registration that cannot work.
 	if err := srv.initUserManagement(resolvedDB); err != nil {
