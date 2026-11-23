@@ -381,7 +381,15 @@ function cellAt(cov, lat, lon) {
     // B asked on radio2 near A's spots, and silent where the model said +20:
     // a ceiling, pulling it down, for half
     const near = cells.slice(0, 15).map((c) => Object.assign({}, c, { reps: c.reps.map((r) => ({ key: r.key, n: r.n, margin: r.margin })), silent: [{ key: 'bbbbbbbb', n: 2 }] }));
-    const asked = M.fitField(near.concat(cells.slice(15).map((c) => Object.assign({}, c, { reps: c.reps.map((r) => ({ key: r.key, n: r.n, margin: r.margin })) }))), reps, land);
+    const rest = cells.slice(15).map((c) => Object.assign({}, c, { reps: c.reps.map((r) => ({ key: r.key, n: r.n, margin: r.margin })) }));
+    // B has never answered a ping on radio2 (its firmware may not send one
+    // back): its silences say nothing
+    const unproven = M.fitField(near.concat(rest), reps, land);
+    assert.strictEqual(unproven.silentN, 0);
+    assert.strictEqual(unproven.offsetDb, snrOnly.offsetDb);
+    // once it has answered one somewhere, they count
+    const answeredOnce = { lat: 47.6, lon: -122.322 + 0.004, car: false, n: 1, none: 0, reps: [{ key: 'bbbbbbbb', n: 1, margin: 20, r2_margin: 20 }] };
+    const asked = M.fitField(near.concat(rest, [answeredOnce]), reps, land);
     assert.ok(asked.silentN > 0 && asked.offsetDb < snrOnly.offsetDb, `${asked.offsetDb} vs ${snrOnly.offsetDb}`);
     assert.ok(/where one asked on radio2 didn't/.test(M.fieldText(asked)));
     // measured on radio2 itself: a measurement, and said so; near the SNR
@@ -401,8 +409,11 @@ function cellAt(cov, lat, lon) {
     const L = M.learnFromField(cov, [{ lat: mid.lat, lon: mid.lon, n: 5, reps: [{ key: 'aa', margin: 12, rssi_margin: 2, n: 5 }] }]);
     assert.deepStrictEqual(L.points.map((p) => p.res), [-8]);
     assert.ok(L.delta[i] < -2.5 && L.delta[i] > -4.5, String(L.delta[i]));
-    const S = M.learnFromField(cov, [{ lat: mid.lat, lon: mid.lon, n: 5, reps: [], silent: [{ key: 'aa', n: 5 }] }]);
-    assert.deepStrictEqual(S.points.map((p) => p.res), [-5]);
+    const silentOnly = [{ lat: mid.lat, lon: mid.lon, n: 5, reps: [], silent: [{ key: 'aa', n: 5 }] }];
+    assert.strictEqual(M.learnFromField(cov, silentOnly).points.length, 0, 'never answered on radio2: nothing');
+    const proven = { lat: 47.61 - 0.001, lon: -122.33 + 0.001, n: 1, reps: [{ key: 'aa', margin: 12, r2_margin: 10, n: 1 }] };
+    const S = M.learnFromField(cov, silentOnly.concat([proven]));
+    assert.deepStrictEqual(S.points.map((p) => p.res).filter((r) => r < 0), [-5]);
     assert.ok(S.delta[i] < 0 && S.delta[i] > L.delta[i], String(S.delta[i]));
     const quiet = M.learnFromField(cov, [{ lat: mid.lat, lon: mid.lon, n: 5, reps: [] }]);
     assert.strictEqual(quiet.points.length, 0, 'a discovery nobody answered: nothing');

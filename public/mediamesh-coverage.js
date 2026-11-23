@@ -1640,6 +1640,7 @@
     const sum = new Float32Array(n), wsum = new Float32Array(n), points = [];
     const carDb = Number.isFinite(carLossDb) ? carLossDb : placeLossDb('car');
     const b = cov.bounds, cellH = (b.north - b.south) / cov.height, cellW = (b.east - b.west) / cov.width;
+    const answersR2 = radio2Answerers(cells);
     (cells || []).forEach((c) => {
       if (!c || !(c.n > 0) || !Number.isFinite(c.lat) || !Number.isFinite(c.lon)) return;
       const at = cellAt(cov, c.lat, c.lon);
@@ -1654,7 +1655,7 @@
         const meas = best.meas + (c.car ? carDb : 0);
         res = best.exact ? Math.max(-LEARN.maxDb, Math.min(LEARN.maxDb, meas - model)) : Math.min(LEARN.maxDb, meas - model);
         if (!best.exact && !(res > 0)) return;
-      } else if ((c.silent || []).length) {
+      } else if ((c.silent || []).some((h) => answersR2.has(String(h.key || '').toLowerCase()))) {
         // only repeaters asked on radio2, and none answered: a ceiling, for half
         if (!(model > CONFIG.field.silentDb)) return;
         res = Math.max(-LEARN.silentDb, CONFIG.field.silentDb - model);
@@ -2345,6 +2346,16 @@
     return { meas: r.margin, exact: false };
   }
 
+  /** The repeaters that have answered a ping on radio2 somewhere (r2_margin
+   * in any cell): only their silences count. A repeater whose firmware
+   * doesn't send a radio2 trace back never answers, which says nothing about
+   * where radio2 reaches, and nothing on it has to change. */
+  function radio2Answerers(cells) {
+    const out = new Set();
+    (cells || []).forEach((c) => (c && c.reps || []).forEach((r) => { if (Number.isFinite(r.r2_margin)) out.add(String(r.key || '').toLowerCase()); }));
+    return out;
+  }
+
   /**
    * Fits the estimate for people on the ground to measured coverage points:
    * cells is GET /api/mediamesh/coverage-points' cells, reps the placed
@@ -2372,6 +2383,7 @@
     };
     const pairs = [];
     const sorted = cells.filter((c) => c && c.n > 0 && !c.car && Number.isFinite(c.lat) && Number.isFinite(c.lon)).sort((a, b) => b.n - a.n);
+    const answersR2 = radio2Answerers(cells);
     for (const c of sorted) {
       if (pairs.length >= F.maxPairs) break;
       (c.reps || []).forEach((h) => {
@@ -2384,7 +2396,9 @@
       });
       (c.silent || []).forEach((h) => {
         const k = String(h.key || '').toLowerCase(), rep = byKey.get(k);
-        if (!rep) return;
+        // only a repeater known to answer a ping on radio2: one that never
+        // does (its firmware doesn't send a radio2 trace back) says nothing
+        if (!rep || !answersR2.has(k)) return;
         const m = raw(rep, c);
         if (m !== null) pairs.push({ key: k, raw: m, limit: F.silentDb, w: 0.5 * Math.min(5, h.n || 1) });
       });
