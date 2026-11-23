@@ -27,4 +27,24 @@ because one of those two is down or there is no way round. A hop the
 analyzer can't name (a path hash matching no repeater, or more than one)
 is shown as "can't tell".
 
-Logic and tests: `public/mediamesh-lab.js`, `tests/unit/test-mediamesh-lab.js`.
+**Wind tunnel:** the same announced clips sent again 200 times each, through
+the mesh as changed and with a radio2 preset (250 kHz SF7 now, SF8, 125 kHz,
+62.5 kHz), a repair setting (Fast MediaMesh with a tenth, nothing or a
+quarter up front, or plain resends) and a number of asks for what's
+missing. Tiles compare now with changed: share arriving whole, typical time
+to whole, radio2 airtime for the clips, and clips with no way through.
+
+A rough model, best for comparing:
+
+- a piece crosses a hop with one chance, the upper quartile over the clips
+  of (pieces heard / pieces)^(1/hops) at their far-end observer;
+- a preset's extra margin (about 2.5 dB a spreading factor, 3 dB a halving
+  of bandwidth) moves that chance along a logistic curve (0.3 per dB);
+- repair pieces each make up for any one lost piece; plain resends ask for
+  the missing pieces themselves; an ask costs a second a hop;
+- airtime is LoRa time on air (explicit header, CRC, 4/5) per piece, once
+  for the sender and once per repeater on the way;
+- both sides use the same seeded dice, so a difference is the change's.
+
+Logic and tests: `public/mediamesh-lab.js`, `public/mediamesh-windtunnel.js`,
+`tests/unit/test-mediamesh-lab.js`, `tests/unit/test-mediamesh-windtunnel.js`.

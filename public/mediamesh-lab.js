@@ -139,6 +139,9 @@
           <p class="text-muted mml-note" id="mmlStatus"></p>
           <h2>The last 30 days' clips, replayed</h2>
           <div id="mmlClips"></div>
+          <h2>Wind tunnel</h2>
+          <p class="text-muted mml-note">The same clips sent again 200 times each, through the mesh as changed above and with the radio2 preset and repair below: how many arrive whole, how long they take and the airtime they use, now and as changed. A rough model, best for comparing.</p>
+          <div id="mmlWind"></div>
         </div>
       </div>
     </div>`;
@@ -169,6 +172,9 @@
       .filter((c) => Array.isArray(c.path) && c.path.length)
       .sort((a, b) => (a.at < b.at ? 1 : -1));
     const down = new Array(n).fill(false);
+    const W = root.MediaMeshWindTunnel;
+    if (W) $('mmlWind').innerHTML = W.controlsHtml();
+    const hopP = W ? W.hopChance(clips) : 0.85;
     let planned = null, plannedLinks = [], plannedCov = null, predicted = null, cov = null, elevAt = null, placing = false;
     let token = 0;
 
@@ -245,11 +251,33 @@
       }
       // clips
       const rows = clips.slice(0, 60).map((c) => ({ c, r: replayClip(c, placed, adj, upNow) }));
+      if (W) wind(adj, upNow);
       const lost = rows.filter((x) => x.r.ok === false).length, rerouted = rows.filter((x) => x.r.reason === 'rerouted').length;
       $('mmlClips').innerHTML = !rows.length
         ? '<p class="text-muted">No clips heard in the last 30 days whose path the analyzer knows.</p>'
         : `<p class="mml-sum">${rows.length - lost} of ${rows.length} would still arrive${rerouted ? `, ${rerouted} by another way` : ''}${lost ? `; ${lost} would be lost` : ''}.</p>
           <ul class="mml-clips">${rows.map(({ c, r }) => `<li class="mml-clip mml-clip--${r.ok === false ? 'lost' : r.ok ? 'ok' : 'unknown'}"><span class="mml-dot" aria-hidden="true"></span><span><strong>${esc(new Date(c.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}</strong> · ${esc(c.kind && c.kind !== 'unknown' ? c.kind : 'clip')}, heard at ${esc(c.observerName || '')}<br><span class="text-muted">${reasonText(r, placed, c)}</span></span></li>`).join('')}</ul>`;
+    }
+
+    // The wind tunnel: the clips as they went, against the mesh as changed
+    // with the preset and repair picked.
+    function wind(adj, upNow) {
+      const pick = (list, id) => list.find((o) => o.id === $(id).value) || list[0];
+      const now = { preset: W.PRESETS[0], repair: W.REPAIRS[0], rounds: 3 };
+      const changed = { preset: pick(W.PRESETS, 'mmwPreset'), repair: pick(W.REPAIRS, 'mmwRepair'), rounds: Number($('mmwRounds').value) || 3 };
+      const asWent = W.itemsFrom(clips, (c) => c.path.length);
+      const asChanged = W.itemsFrom(clips, (c) => {
+        const r = replayClip(c, placed, adj, upNow);
+        return r.ok === false ? null : r.ok ? r.hops : c.path.length;
+      });
+      if (!asWent.length) {
+        $('mmwTiles').innerHTML = '<p class="text-muted">No announced clips in the last 30 days whose path the analyzer knows.</p>';
+        $('mmwNote').textContent = '';
+        return;
+      }
+      const a = W.runAll(asWent, hopP, now), b = W.runAll(asChanged, hopP, changed);
+      $('mmwTiles').innerHTML = W.tilesHtml(a, b);
+      $('mmwNote').textContent = `${asWent.length} clip${asWent.length === 1 ? '' : 's'}. A piece crosses a hop ${Math.round(a.hopChance * 100)}% of the time now, by what the observers heard${b.hopChance !== a.hopChance ? `, and ${Math.round(b.hopChance * 100)}% with the preset picked` : ''}.`;
     }
 
     function adjPairs(adj) {
@@ -293,6 +321,7 @@
     const onChange = (e) => {
       const t = e.target;
       if (t.matches('[data-mml-down]')) { down[Number(t.dataset.mmlDown)] = t.checked; draw(); }
+      else if (t.id === 'mmwPreset' || t.id === 'mmwRepair' || t.id === 'mmwRounds') draw();
       else if (t.id === 'mmlModel') draw();
       else if (t.id === 'mmlHeight' && planned) placePlan(planned.lat, planned.lon);
     };

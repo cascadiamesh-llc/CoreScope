@@ -643,6 +643,7 @@ func (s *Server) coveragePoints() (*covPointsStore, error) {
 				case <-t.C:
 					st.prune(days)
 					s.recordLinkHistory(st, true)
+					s.recordMMDayNow(st, true)
 				case <-s.covPoints.stop:
 					return
 				}
