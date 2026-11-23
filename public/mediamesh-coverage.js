@@ -85,12 +85,15 @@
     ],
     // Fitting the estimate for people on the ground to measured coverage
     // points (GET /api/mediamesh/coverage-points): at least minCells cells
-    // where a repeater answered, a correction within +maxUpDb / -maxDownDb;
+    // where a repeater answered, a correction within +maxUpDb / -maxDownDb,
+    // weighed lightly: it counts n / (n + shrink) of what the n spots say,
+    // so mapping nudges the estimate rather than overriding it;
     // each repeater with repMinCells of its own gets its own, pulled towards
     // the overall one (repShrink cells' worth). A repeater within nearKm of
-    // a cell that didn't answer there counts as below unheardDb (it would
-    // have answered on the main mesh, 6 dB more sensitive, above that).
-    field: { minCells: 15, maxUpDb: 10, maxDownDb: 25, repMinCells: 5, repShrink: 10, nearKm: 6, unheardDb: -6, maxPairs: 800, carMinCells: 10 },
+    // a cell that didn't answer there, while another did, counts as below
+    // unheardDb (it would have answered on the main mesh, 6 dB more
+    // sensitive, above that); cells where nothing answered are left out.
+    field: { minCells: 15, maxUpDb: 10, maxDownDb: 10, shrink: 40, repMinCells: 5, repShrink: 30, nearKm: 6, unheardDb: -6, maxPairs: 800, carMinCells: 10 },
     // A quicker, coarser version of `ground`, for screening many spots or
     // drawing hundreds of main-mesh repeaters.
     quick: { rays: 360, radiusKm: 20, stepM: 100, cellM: 200 },
@@ -128,8 +131,12 @@
 
   // Correction from measured coverage points (fitField), for people on the
   // ground: { used, offsetDb, reps: { key8: dB }, carLossDb }. null: none.
-  let field = null;
-  function setField(f) { field = f && f.used ? f : null; }
+  // The fit is kept, but only applied while Mapped by people is ticked
+  // (setFieldOn): with it off the map is the model alone.
+  let field = null, fieldFit = null, fieldOn = false;
+  function setField(f) { fieldFit = f && f.used ? f : null; field = fieldOn ? fieldFit : null; }
+  function setFieldOn(on) { fieldOn = !!on; field = fieldOn ? fieldFit : null; }
+  function isFieldOn() { return fieldOn; }
   function getField() { return field; }
   const key8 = (rep) => String((rep && rep.public_key) || '').slice(0, 8).toLowerCase();
   /** What the measured points add to a path from rep in one mode (0 for
@@ -1588,7 +1595,7 @@
 
   /** How far a measured cell's correction reaches (m), and how much it may
    * move the estimate (dB). */
-  const LEARN = { radiusM: 600, maxDb: 20, unheardDb: 10, linkM: 500, measuredM: 300 };
+  const LEARN = { radiusM: 600, maxDb: 10, unheardDb: 5, shrinkW: 6, linkM: 500, measuredM: 300 };
 
   /**
    * Local corrections from the cells people mapped (fieldPoints cells):
@@ -1635,7 +1642,7 @@
     const delta = new Float32Array(n);
     for (let i = 0; i < n; i++) {
       // a lone ping moves the estimate part way; several, nearly all of it
-      if (wsum[i] > 0) delta[i] = (sum[i] / wsum[i]) * Math.min(1, wsum[i] / 2);
+      if (wsum[i] > 0) delta[i] = (sum[i] / wsum[i]) * (wsum[i] / (wsum[i] + LEARN.shrinkW));
     }
     return { delta, points };
   }
@@ -2303,9 +2310,13 @@
     for (const c of sorted) {
       if (pairs.length >= F.maxPairs) break;
       const heard = new Map((c.reps || []).map((r) => [String(r.key || '').toLowerCase(), r]));
+      // A spot where nothing answered at all says more about the phone (in
+      // a pocket, indoors, on a train) than about any one repeater: only
+      // where the radio was plainly working does a repeater's silence count.
+      const anyAnswered = heard.size > 0;
       byKey.forEach((rep, k) => {
         const h = heard.get(k);
-        if (!h && distanceM(rep.lat, rep.lon, c.lat, c.lon) > F.nearKm * 1000) return;
+        if (!h && (!anyAnswered || distanceM(rep.lat, rep.lon, c.lat, c.lon) > F.nearKm * 1000)) return;
         const m = raw(rep, c);
         if (m === null) return;
         if (h) pairs.push({ key: k, car: !!c.car, raw: m, meas: h.margin, w: Math.min(5, h.n || 1) });
@@ -2317,7 +2328,8 @@
     const out = Object.assign({}, none, { n: heardWalk.length, cells: sorted.length });
     if (heardWalk.length < F.minCells) return out;
     const fitDb = fieldSolve(walk);
-    const offsetDb = Math.round(Math.max(-F.maxDownDb, Math.min(F.maxUpDb, fitDb)) * 10) / 10;
+    const share = heardWalk.length / (heardWalk.length + F.shrink);
+    const offsetDb = Math.round(Math.max(-F.maxDownDb, Math.min(F.maxUpDb, fitDb * share)) * 10) / 10;
     const spreadDb = Math.round(median(heardWalk.map((q) => Math.abs(q.meas - q.raw - offsetDb))) * 10) / 10;
     const repAdj = {};
     byKey.forEach((_, k) => {
@@ -2346,7 +2358,7 @@
         : 'Not yet checked against coverage measured on the ground. Switch on Share coverage points in MeshCore Open TAK or a Wadamesh TAK standalone, then map MediaMesh coverage on a walk.';
     }
     const adj = f.offsetDb === 0 ? 'no correction needed' : `${f.offsetDb > 0 ? 'raised' : 'lowered'} by ${fmtDb(Math.abs(f.offsetDb))} dB to match`;
-    const capped = f.fitDb !== null && Math.abs(f.fitDb - f.offsetDb) > 0.05 ? ` (they suggest ${f.fitDb > 0 ? '+' : '−'}${fmtDb(Math.abs(f.fitDb))} dB; capped)` : '';
+    const capped = f.fitDb !== null && Math.abs(f.fitDb - f.offsetDb) > 0.05 ? ` (they suggest ${f.fitDb > 0 ? '+' : '−'}${fmtDb(Math.abs(f.fitDb))} dB; mapping is weighed lightly)` : '';
     const nr = Object.keys(f.reps).length;
     const who = info && info.radios ? ` from ${info.radios} radio${info.radios === 1 ? '' : 's'}` : '';
     return `Checked against ${f.n} spots measured on the ground${who}: ${adj}${capped}, typically within ±${fmtDb(f.spreadDb)} dB.`
@@ -2493,8 +2505,9 @@
     }
     setField(session.fieldFit);
     if (!res.adj) res.adj = {};
-    if (!res.adj.outdoors) res.adj.outdoors = adjustCov(res.cov, 'outdoors');
-    return { cov: res.adj.outdoors, elevAt: res.elevAt, failed: res.failed };
+    const ak = 'outdoors' + (fieldOn ? '|mapped' : '');
+    if (!res.adj[ak]) res.adj[ak] = adjustCov(res.cov, 'outdoors');
+    return { cov: res.adj[ak], elevAt: res.elevAt, failed: res.failed };
   }
 
   /**
@@ -2647,7 +2660,11 @@
     const calEl = el.querySelector('#mmCovCal');
     function drawCalibration() {
       const onGround = current && CONFIG.modes[current].clutter;
-      if (calEl) calEl.textContent = onGround && session.fieldInfo ? fieldText(session.fieldFit, session.fieldInfo) : session.cal ? calibrationText(session.cal) : '';
+      if (calEl) {
+        calEl.textContent = onGround && session.fieldInfo
+          ? fieldText(session.fieldFit, session.fieldInfo) + (session.fieldFit && session.fieldFit.used && !fieldOn ? ' Applied only with Mapped by people ticked.' : '')
+          : session.cal ? calibrationText(session.cal) : '';
+      }
       if (howEl && current) howEl.innerHTML = assumptionsHtml(current, placed.map(radioFor), session.cal, session.fieldFit, session.fieldInfo);
     }
     if (session.cal) { setCalibration(session.cal.offsetDb); drawCalibration(); }
@@ -2830,7 +2847,10 @@
     };
     if (panelEl) { panelEl.addEventListener('input', onSearch); panelEl.addEventListener('change', onPanelChange); }
     // ---- Learning from people mapping; how sure the estimate is ----
-    const learnToggle = el.querySelector('#mmCovLearnToggle');
+    // Mapped by people is the one switch for mapping: its hexagons, the
+    // correction it fits and the local corrections all show only while ticked.
+    const learnToggle = el.querySelector('#mmCovFieldToggle');
+    setFieldOn(!!(learnToggle && learnToggle.checked));
     const confToggle = el.querySelector('#mmCovConfToggle');
     const learnEl = el.querySelector('#mmCovLearn');
     let conf = null, learned = null;
@@ -2842,7 +2862,7 @@
       learned = null; conf = null;
       const onGround = CONFIG.modes[shown.modeKey] && CONFIG.modes[shown.modeKey].clutter;
       const cells = session.fieldInfo && session.fieldInfo.cells;
-      if (onGround && cells && cells.length && (!learnToggle || learnToggle.checked)) {
+      if (onGround && cells && cells.length && learnToggle && learnToggle.checked) {
         learned = learnFromField(shown, cells, session.fieldFit && session.fieldFit.carLossDb);
         applyLearned(shown, learned);
       }
@@ -2852,7 +2872,11 @@
         if (onGround) learnEl.innerHTML = learnedHtml(conf, learned ? learnedTop(learned.points, placed, 3) : []);
       }
     }
-    const onLearnToggle = () => { if (shown) { remerge(); computeMesh(); drawOverlay(); drawMesh(); reportStats(); } };
+    const onLearnToggle = () => {
+      setFieldOn(learnToggle.checked);
+      drawCalibration();
+      if (current) show(current);
+    };
     const onConfToggle = () => drawOverlay();
     if (learnToggle) learnToggle.addEventListener('change', onLearnToggle);
     if (confToggle) confToggle.addEventListener('change', onConfToggle);
@@ -3095,8 +3119,9 @@
         // (the tab re-renders): show the fit here too.
         drawCalibration();
         if (!res.adj) res.adj = {};
-        if (!res.adj[session.place]) res.adj[session.place] = adjustCov(res.cov, session.place);
-        shown = res.adj[session.place];
+        const ak = session.place + (fieldOn ? '|mapped' : '');
+        if (!res.adj[ak]) res.adj[ak] = adjustCov(res.cov, session.place);
+        shown = res.adj[ak];
         remerge();
         shownTerrain = res.elevAt;
         computeMesh();
@@ -3260,7 +3285,7 @@
     computeCoverage, workerPool, pathProfile, profileVerdict, budgetRows, profileSvg, profileHtml,
     terrainPlan, loadTerrainLevels, loadTerrain, rampColor, edgeFade, cellAt, cellCenter, readout,
     fitCalibration, calibrationText, setCalibration, getCalibration, CAL,
-    clutterLossDb, setField, getField, fieldDbFor, placeLossDb, fitField, fieldSolve, fieldText, fieldBand, adjustCov, FIELD_RGB, loadFieldPoints, fieldPoints, hexCorners, hexBand, session,
+    clutterLossDb, setField, setFieldOn, isFieldOn, getField, fieldDbFor, placeLossDb, fitField, fieldSolve, fieldText, fieldBand, adjustCov, FIELD_RGB, loadFieldPoints, fieldPoints, hexCorners, hexBand, session,
     backboneWeight, backboneTip, areaHistory, footprint, coverageImage, legendGradient,
     growthSteps, presentAt, antennaHeight, knownHeightM, KNOWN_HEIGHTS, coverageCanvas, canvasOverlay, whatIfBase, whatIfDefaults, whatIfJob, whatIfCoverage, whatIfCanvas, cellAreaKm2, coveredKm2, unionKm2, repAreasKm2, repOnlyKm2, predictedLinks, meshEvidence, meshCells, meshRows, meshCanvas, meshPalette, groundCoverage, learnFromField, applyLearned, confidenceCells, confidenceCanvas, learnedTop, learnedHtml, LEARN, meshStatsHtml, meshTableHtml, MESH_OFTEN, planGain, planLinks, planHtml, PLAN_RGB,
     repNotes, repArea, repGroups, repSummaryHtml, repPanelHtml, repAction, assumptionsHtml, linkRows, linksTableHtml, init,
