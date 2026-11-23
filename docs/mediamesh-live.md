@@ -21,6 +21,12 @@ The coverage map on the MediaMesh tab shows photos, video and voice crossing the
 
 The map is never moved or zoomed for you. With reduced motion turned on, routes appear still and fade, with no comets or bursts.
 
+## Traces on radio2
+
+A trace carried on MediaMesh shows as sonar instead of a route. At each repeater it reached, in hop order, three fuchsia rings ripple out. A label beside them gives the SNR that repeater heard the trace at, for example "+4.5 dB on radio2". Repeaters after the point where the trace stopped stay quiet.
+
+The Live page shows the same sonar, and its legend has an entry for it. Both pages take the rings, timing and label from `window._liveMediaMesh`. That code is in `public/live.js`, and its tests are in `tests/unit/test-live-mediamesh.js`.
+
 ## How packets are placed
 
 Packets come over the page's shared WebSocket. A packet counts when an observer heard it on radio2. Clip parsing is the Live page's own (`window._liveMediaMesh`), so the two pages agree on what is a photo, a video or a voice clip.

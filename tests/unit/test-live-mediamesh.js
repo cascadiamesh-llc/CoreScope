@@ -23,8 +23,45 @@ assert.ok(start > 0 && end > start, 'MediaMesh helper block not found in live.js
 const ctx = {};
 vm.createContext(ctx);
 vm.runInContext(src.slice(start, end).replace(/^\s*let mediaMesh\w+ = null;.*$/gm, '') +
-  '\nthis.api = { mediaMeshRingCap, mediaMeshRingFractions, pathHopStyle, MEDIAMESH_RING_SPACING_PX };', ctx);
-const { mediaMeshRingCap, mediaMeshRingFractions, pathHopStyle, MEDIAMESH_RING_SPACING_PX } = ctx.api;
+  '\nthis.api = { mediaMeshRingCap, mediaMeshRingFractions, pathHopStyle, MEDIAMESH_RING_SPACING_PX, sonarRing, sonarLabel, sonarLabelAlpha, isRadio2Trace, SONAR, SONAR_MS };', ctx);
+const { mediaMeshRingCap, mediaMeshRingFractions, pathHopStyle, MEDIAMESH_RING_SPACING_PX, sonarRing, sonarLabel, sonarLabelAlpha, isRadio2Trace, SONAR, SONAR_MS } = ctx.api;
+
+console.log('\n=== Radio2 sonar ===');
+
+test('a trace on MediaMesh ripples; one on the main mesh, or another packet, doesn\'t', () => {
+  assert.strictEqual(isRadio2Trace('TRACE', true), true);
+  assert.strictEqual(isRadio2Trace('TRACE', false), false);
+  assert.strictEqual(isRadio2Trace('GRP_DATA', true), false);
+});
+
+test('three rings, a beat apart, growing and fading', () => {
+  assert.strictEqual(SONAR.rings, 3);
+  assert.strictEqual(sonarRing(0, 0), null, 'nothing before it starts');
+  const a = sonarRing(100, 0), b = sonarRing(900, 0);
+  assert.ok(a && b && b.r > a.r && b.a < a.a, 'grows and fades');
+  assert.strictEqual(sonarRing(100, 1), null, 'the second waits its turn');
+  assert.ok(sonarRing(SONAR.stagger + 1, 1));
+  assert.strictEqual(sonarRing(SONAR.grow + 1, 0), null, 'gone once grown');
+  assert.ok(sonarRing(SONAR.grow - 1, 0).r <= SONAR.r1 + 1e-9);
+});
+
+test('the label: the SNR on radio2, in, held, out', () => {
+  assert.strictEqual(sonarLabel(4.5), '+4.5 dB on radio2');
+  assert.strictEqual(sonarLabel(-3.25), '\u22123.3 dB on radio2');
+  assert.strictEqual(sonarLabel(null), null);
+  assert.strictEqual(sonarLabelAlpha(0), 0);
+  assert.ok(sonarLabelAlpha(100) > 0 && sonarLabelAlpha(100) < 1);
+  assert.strictEqual(sonarLabelAlpha(1000), 1);
+  assert.strictEqual(sonarLabelAlpha(SONAR_MS), 0);
+});
+
+test('wired in: drawn, triggered for radio2 traces, in the legend, colours from variables', () => {
+  assert.ok(src.includes('if (activeSonars.length) drawSonars(now, isPaused);'));
+  assert.ok(src.includes('if (isRadio2Trace(typeName, allPaths[ai].mediamesh))'));
+  assert.ok(src.includes('Ripples with a dB label'));
+  const rule = (liveCss.match(/\.live-path-swatch--sonar \{[^}]*\}/) || [''])[0];
+  assert.ok(rule.includes('var(--mediamesh-path-color)') && !/#[0-9a-f]{3,6}/i.test(rule), rule);
+});
 
 console.log('\n=== Ring layout ===');
 

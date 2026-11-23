@@ -30,6 +30,16 @@ test('colours: hex and rgb() both read', () => {
   assert.strictEqual(M.rgbOf('nope'), null);
 });
 
+test('a radio2 trace\'s sonar: each hop it reached, on its repeater, with its SNR', () => {
+  // three hops, two reached; the first by its resolved key, the second by prefix
+  const e = M.traceEchoes(['zz', 'bb', 'aa11'], ['aa22cc', null, null], [4.5, -2.25], 2, idx);
+  assert.deepStrictEqual(e.map((x) => [x.name, x.snr, x.i]), [['First Hill 🏙️', 4.5, 0], ['Kremwerk', -2.25, 1]]);
+  // no hopsCompleted: as many as it has SNRs; a hop on no known repeater is skipped
+  const f = M.traceEchoes(['qq', 'bb'], null, [1, 2], null, idx);
+  assert.deepStrictEqual(f.map((x) => [x.name, x.snr]), [['Kremwerk', 2]]);
+  assert.deepStrictEqual(M.traceEchoes([], null, [], 0, idx), []);
+});
+
 test('index: placed repeaters by key, observers from the links', () => {
   assert.strictEqual(idx.reps.length, 3);
   assert.ok(idx.byKey.has('aa11bb'));

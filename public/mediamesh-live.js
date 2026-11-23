@@ -7,6 +7,9 @@
  *   the repeaters it took and on to the observer that heard it, lighting
  *   its route as it goes, with a ring at every repeater that passed it on;
  * - other radio2 traffic glows faintly where it was heard (embers);
+ * - a trace on radio2 (the path-trace ping; coverage mapping asks repeaters
+ *   on radio2 with one) ripples at each repeater it reached, with the SNR
+ *   that repeater heard it at (sonar, live.js's timing);
  * - when a clip's last piece has passed: a burst where it arrived when every
  *   piece was heard, and a shimmer when parity pieces made up for some;
  * - moments: the first photo, video and voice of the day, the longest route
@@ -28,6 +31,19 @@
     clip: { label: 'Media', v: '--mmlive-clip', fb: [180, 205, 235] },
   };
   const HOP_S = 0.55;            // seconds a comet takes per hop
+  const SONAR_S = 2.8;           // a radio2 trace's sonar at a repeater, all told
+  // the sonar's rings and label: live.js's, so the two maps agree
+  const sonarTiming = () => {
+    const H = root._liveMediaMesh;
+    if (H && H.sonarRing) return { rings: H.SONAR.rings, ring: H.sonarRing, labelAlpha: H.sonarLabelAlpha };
+    const ring = (ms, k) => { const v = ms - k * 220; if (v <= 0 || v > 1100) return null; const p = v / 1100; return { r: 6 + p * 30, a: 0.95 * Math.pow(1 - p, 1.4) }; };
+    return { rings: 3, ring, labelAlpha: (ms) => (ms <= 0 ? 0 : ms < 200 ? ms / 200 : ms < 2200 ? 1 : Math.max(0, 1 - (ms - 2200) / 600)) };
+  };
+  const sonarText = (snr) => {
+    const H = root._liveMediaMesh;
+    if (H && H.sonarLabel) return H.sonarLabel(snr);
+    return Number.isFinite(snr) ? (snr >= 0 ? '+' : '\u2212') + Math.abs(snr).toFixed(1) + ' dB on radio2' : null;
+  };
   const TRAIL = 14;              // trail samples behind a comet's head
   const IDLE_MS = 8000;          // a transfer is over once quiet this long
   const REPLAY_IDLE_MS = 1500;
@@ -120,6 +136,19 @@
     const ob = observerId ? idx.byKey.get(String(observerId).toLowerCase()) : null;
     if (ob && !out.includes(ob)) out.push(ob);
     return out.map((p) => ({ lat: p.lat, lon: p.lon, name: p.name }));
+  }
+
+  /** Where a radio2 trace's sonar goes: each hop it reached (its
+   * hopsCompleted, else as many as it has SNRs) placed on a repeater, with
+   * the SNR that hop heard it at: [{ lat, lon, name, snr, i }]. */
+  function traceEchoes(hops, resolved, snrs, reached, idx) {
+    const out = [];
+    const n = Math.min((hops || []).length, Number.isFinite(reached) ? reached : (snrs || []).length);
+    for (let i = 0; i < n; i++) {
+      const p = placePath([hops[i]], resolved && resolved[i] ? [resolved[i]] : null, null, idx)[0];
+      if (p) out.push(Object.assign({}, p, { snr: snrs && Number.isFinite(snrs[i]) ? snrs[i] : null, i }));
+    }
+    return out;
   }
 
   /** Kilometres along [{ lat, lon }]. */
@@ -310,6 +339,7 @@
     return {
       typeName: (dec.header && dec.header.payloadTypeName) || pkt.payload_type_name || '',
       payload, hops, resolved, observer: pkt.observer_id || '', hash: pkt.hash || '', mediamesh: pkt.mediamesh === true, text: payload.text || '',
+      reached: dec.path && Number.isFinite(dec.path.hopsCompleted) ? dec.path.hopsCompleted : null,
     };
   }
 
@@ -387,6 +417,9 @@
       Object.keys(KINDS).forEach((k) => { colours[k] = (rgbOf(cs.getPropertyValue(KINDS[k].v)) || KINDS[k].fb).join(','); });
       colours.ember = (rgbOf(cs.getPropertyValue('--mmlive-ember')) || [159, 180, 216]).join(',');
       colours.parity = (rgbOf(cs.getPropertyValue('--mmlive-parity')) || [253, 230, 138]).join(',');
+      colours.sonar = (rgbOf(cs.getPropertyValue('--mediamesh-path-color')) || [217, 70, 239]).join(',');
+      colours.bg = cs.getPropertyValue('--card-bg').trim() || '#fff';
+      colours.ink = cs.getPropertyValue('--text').trim() || '#111';
     }
     readColours();
 
@@ -443,6 +476,17 @@
       kick();
     }
 
+    /** A trace on radio2: sonar at each repeater it reached, a hop apart. */
+    function addSonar(r) {
+      if (!on || doc.hidden) return;
+      const t = win.performance.now() / 1000;
+      traceEchoes(r.hops, r.resolved, r.payload && r.payload.snrValues, r.reached, idx).forEach((e, k) => {
+        fx.push({ type: 'sonar', lat: e.lat, lon: e.lon, t0: t + k * HOP_S, dur: SONAR_S, label: sonarText(e.snr) });
+      });
+      if (fx.length > 200) fx.splice(0, fx.length - 200);
+      kick();
+    }
+
     function onPacket(pkt) {
       if (!pkt) return;
       const r = readPacket(pkt);
@@ -452,6 +496,7 @@
         if (a) { announced.set(a.sid, a); if (announced.size > 200) announced.delete(announced.keys().next().value); }
       }
       if (!r.mediamesh) return;
+      if (r.typeName === 'TRACE') { addSonar(r); return; }
       const pts = placePath(r.hops, r.resolved, r.observer, idx);
       const now = Date.now();
       const clip = clipFor(r.typeName, r.payload, r.hops, r.hash, now, announced, true);
@@ -663,10 +708,29 @@
     }
 
     function drawEffects(t) {
-      fx = fx.filter((f) => t - f.t0 < 2.4);
+      fx = fx.filter((f) => t - f.t0 < (f.dur || 2.4));
       for (const f of fx) {
         const [x, y] = P(f.lat, f.lon), u = t - f.t0;
-        if (f.type === 'burst') {
+        if (u < 0) continue;   // a later hop's, not yet
+        if (f.type === 'sonar') {
+          const S = sonarTiming();
+          for (let k = 0; k < S.rings; k++) {
+            const ring = S.ring(u * 1000, k);
+            if (!ring) continue;
+            g.strokeStyle = `rgba(${colours.sonar},${ring.a})`; g.lineWidth = 2.4 - k * 0.5;
+            g.beginPath(); g.arc(x, y, ring.r, 0, 7); g.stroke();
+          }
+          const la = f.label ? S.labelAlpha(u * 1000) : 0;
+          if (la > 0) {
+            g.font = '600 11px system-ui, sans-serif';
+            const tw = g.measureText(f.label).width, bx = x + 10, by = y - 26, bw = tw + 12, bh = 18;
+            g.globalAlpha = la * 0.9; g.fillStyle = colours.bg;
+            g.beginPath(); if (g.roundRect) g.roundRect(bx, by, bw, bh, 9); else g.rect(bx, by, bw, bh); g.fill();
+            g.globalAlpha = la; g.lineWidth = 1.2; g.strokeStyle = `rgb(${colours.sonar})`; g.stroke();
+            g.fillStyle = colours.ink; g.textBaseline = 'middle'; g.fillText(f.label, bx + 6, by + bh / 2 + 0.5);
+            g.globalAlpha = 1;
+          }
+        } else if (f.type === 'burst') {
           const rgb = colours[f.kind];
           for (let r = 0; r < 3; r++) {
             const v = u - r * 0.18;
@@ -712,5 +776,5 @@
     };
   }
 
-  root.MediaMeshLive = { KINDS, rgbOf, buildIndex, addObservers, touchActive, busyCount, namesAt, placePath, routeKm, routeText, outcomeOf, createTracker, transferHtml, readPacket, clipFor, attach };
+  root.MediaMeshLive = { KINDS, rgbOf, buildIndex, addObservers, touchActive, busyCount, namesAt, placePath, traceEchoes, routeKm, routeText, outcomeOf, createTracker, transferHtml, readPacket, clipFor, attach };
 })(typeof window !== 'undefined' ? window : globalThis);

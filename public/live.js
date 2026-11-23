@@ -24,6 +24,8 @@
   let _dprChangeHandler = null;
   let activeAnimations = [];
   let activePulses = [];
+  // Radio2 sonar: a trace carried on MediaMesh pings each repeater it reaches
+  let activeSonars = [];
   let activeGhosts = [];
   let isAnimating = false;
   let activeFades = [];
@@ -73,11 +75,40 @@
     return isMediaMesh ? 'rings' : 'line';
   }
 
+  // ---- Radio2 sonar: a trace (the path-trace ping) heard on MediaMesh ----
+  // Each repeater it reached ripples three rings, with the SNR it heard the
+  // trace at on radio2: the coverage recorders' radio2 pings, and any other
+  // trace sent on radio2. Times in ms of simulation (VCR-aware).
+  const SONAR = { rings: 3, stagger: 220, grow: 1100, r0: 6, r1: 36, labelIn: 200, labelHold: 2200, labelOut: 600 };
+  const SONAR_MS = SONAR.labelHold + SONAR.labelOut;
+  /** A ring's radius and opacity `ms` after the burst began, or null when
+   * it isn't showing. */
+  function sonarRing(ms, k) {
+    const v = ms - k * SONAR.stagger;
+    if (v <= 0 || v > SONAR.grow) return null;
+    const p = v / SONAR.grow;
+    return { r: SONAR.r0 + p * (SONAR.r1 - SONAR.r0), a: 0.95 * Math.pow(1 - p, 1.4) };
+  }
+  /** The SNR label: '+4.5 dB on radio2' (null without one). */
+  function sonarLabel(snr) {
+    if (!Number.isFinite(snr)) return null;
+    return (snr >= 0 ? '+' : '\u2212') + Math.abs(snr).toFixed(1) + ' dB on radio2';
+  }
+  /** The label's opacity `ms` after the burst began. */
+  function sonarLabelAlpha(ms) {
+    if (ms <= 0) return 0;
+    if (ms < SONAR.labelIn) return ms / SONAR.labelIn;
+    if (ms < SONAR.labelHold) return 1;
+    return Math.max(0, 1 - (ms - SONAR.labelHold) / SONAR.labelOut);
+  }
+  /** Whether a packet is a trace carried on MediaMesh. */
+  function isRadio2Trace(typeName, mediamesh) { return typeName === 'TRACE' && !!mediamesh; }
+
   function mediaMeshPathColor() {
     return getComputedStyle(document.documentElement).getPropertyValue('--mediamesh-path-color').trim() || 'currentColor';
   }
   if (typeof window !== 'undefined') {
-    window._liveMediaMesh = { ringCap: mediaMeshRingCap, ringFractions: mediaMeshRingFractions, hopStyle: pathHopStyle,
+    window._liveMediaMesh = { sonarRing, sonarLabel, sonarLabelAlpha, isRadio2Trace, SONAR, ringCap: mediaMeshRingCap, ringFractions: mediaMeshRingFractions, hopStyle: pathHopStyle,
       clipOf: mediaMeshClipOf, parseAnnouncement: mediaMeshParseAnnouncement, transferKey: mediaMeshTransferKey,
       liveClip: function (typeName, payload, hash, at) { return mediaMeshLiveClip(typeName, payload, hash, at); },
       paritySid: function (sid) { return mediaMeshParitySid(sid); },
@@ -1568,6 +1599,7 @@
           <h3 class="legend-title" style="margin-top:8px">PATH STYLES</h3>
           <ul class="legend-list">
             <li><span class="live-path-swatch live-path-swatch--mediamesh" aria-hidden="true"></span> Hollow rings — MediaMesh (radio2)</li>
+            <li><span class="live-path-swatch live-path-swatch--sonar" aria-hidden="true"></span> Ripples with a dB label — a trace on MediaMesh, at each repeater it reached</li>
           </ul>
           </div>
         </div>
@@ -3809,6 +3841,17 @@
         }
       }
       firstPathDone = true;
+      // A trace on MediaMesh: sonar at each repeater it reached, with the SNR
+      // that repeater heard it at (snrValues, in path order)
+      if (isRadio2Trace(typeName, allPaths[ai].mediamesh)) {
+        const snrs = Array.isArray(payload.snrValues) ? payload.snrValues : [];
+        const reached = decoded.path && decoded.path.hopsCompleted != null ? decoded.path.hopsCompleted : snrs.length;
+        const inner = onHop;
+        onHop = function (i, n, hp) {
+          if (hp && !hp.ghost && i < reached) addSonar(hp.pos, snrs[i]);
+          if (inner) inner(i, n, hp);
+        };
+      }
       // For TRACE packets, split at hopsCompleted: solid for completed, dashed for remaining
       var hopsCompleted = decoded.path && decoded.path.hopsCompleted;
       if (typeName === 'TRACE' && hopsCompleted != null && hopsCompleted < allPaths[ai].hopPositions.length) {
@@ -4001,6 +4044,62 @@
       }
     }
     nextHop();
+  }
+
+  /** A radio2 sonar burst at a repeater the trace reached, with its SNR. */
+  function addSonar(pos, snr) {
+    if (!animLayer || !pos) return;
+    if (activeSonars.length >= 40) activeSonars.shift();
+    activeSonars.push({ pos, label: sonarLabel(snr), elapsed: 0, lastTick: null });
+    if (!isAnimating) {
+      isAnimating = true;
+      requestAnimationFrame(renderAnimations);
+    }
+  }
+
+  function drawSonars(now, isPaused) {
+    const color = mediaMeshPathColor();
+    const cs = getComputedStyle(document.documentElement);
+    const bg = cs.getPropertyValue('--card-bg').trim() || '#fff';
+    const ink = cs.getPropertyValue('--text').trim() || '#111';
+    const W = animCanvas.clientWidth, H = animCanvas.clientHeight;
+    for (let i = activeSonars.length - 1; i >= 0; i--) {
+      const s = activeSonars[i];
+      const dt = tickDt(s, 'lastTick', now);
+      if (!isPaused) s.elapsed += dt;
+      if (s.elapsed > SONAR_MS) { activeSonars.splice(i, 1); continue; }
+      const lp = map.latLngToLayerPoint(s.pos);
+      const x = lp.x - canvasTopLeft.x, y = lp.y - canvasTopLeft.y;
+      if (x < -60 || y < -60 || x > W + 60 || y > H + 60) continue;
+      for (let k = 0; k < SONAR.rings; k++) {
+        const ring = sonarRing(s.elapsed, k);
+        if (!ring) continue;
+        animCtx.beginPath();
+        animCtx.arc(x, y, ring.r, 0, Math.PI * 2);
+        animCtx.lineWidth = 2.4 - k * 0.5;
+        animCtx.strokeStyle = color;
+        animCtx.globalAlpha = ring.a;
+        animCtx.stroke();
+      }
+      const la = s.label ? sonarLabelAlpha(s.elapsed) : 0;
+      if (la > 0) {
+        animCtx.font = '600 11px system-ui, sans-serif';
+        const tw = animCtx.measureText(s.label).width, bx = x + 10, by = y - 26, bw = tw + 12, bh = 18;
+        animCtx.globalAlpha = la * 0.9;
+        animCtx.fillStyle = bg;
+        animCtx.beginPath();
+        if (animCtx.roundRect) animCtx.roundRect(bx, by, bw, bh, 9); else animCtx.rect(bx, by, bw, bh);
+        animCtx.fill();
+        animCtx.globalAlpha = la;
+        animCtx.lineWidth = 1.2;
+        animCtx.strokeStyle = color;
+        animCtx.stroke();
+        animCtx.fillStyle = ink;
+        animCtx.textBaseline = 'middle';
+        animCtx.fillText(s.label, bx + 6, by + bh / 2 + 0.5);
+      }
+    }
+    animCtx.globalAlpha = 1.0;
   }
 
   function pulseNode(key, pos, typeName) {
@@ -4350,7 +4449,7 @@
   function renderAnimations(now) {
     if (!animCtx) return;
 
-    if (activeAnimations.length === 0 && activePulses.length === 0 && activeGhosts.length === 0) {
+    if (activeAnimations.length === 0 && activePulses.length === 0 && activeGhosts.length === 0 && activeSonars.length === 0) {
       isAnimating = false;
       animCtx.clearRect(0, 0, animCanvas.clientWidth, animCanvas.clientHeight);
       return;
@@ -4432,6 +4531,9 @@
       }
     }
     animCtx.globalAlpha = 1.0;
+
+    // Radio2 sonar
+    if (activeSonars.length) drawSonars(now, isPaused);
 
     for (let i = activeAnimations.length - 1; i >= 0; i--) {
       const anim = activeAnimations[i];
