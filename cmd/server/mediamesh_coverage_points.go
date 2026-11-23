@@ -77,7 +77,9 @@ type covPointRep struct {
 	// answer; apps from before don't send it). SNR readings top out around
 	// +12 dB; RSSI keeps rising, so near a repeater it tells strong from fair.
 	RSSI *float64 `json:"rssi,omitempty"`
-	// Via: "trace" when it answered being asked by name, not the discovery.
+	// Via: "radio2" when it answered being asked by name on radio2 (a one-hop
+	// trace sent on radio2 only, answered on radio2): its SNR and margin are
+	// radio2's own, measured, not estimated from the main mesh.
 	Via string `json:"via,omitempty"`
 }
 
@@ -88,8 +90,8 @@ type covPoint struct {
 	Acc   float64       `json:"acc,omitempty"`   // GPS accuracy, m
 	Speed float64       `json:"speed,omitempty"` // m/s
 	Reps  []covPointRep `json:"reps"`
-	// Silent: MediaMesh repeaters asked by name (a one-hop trace) that
-	// didn't answer, first 8 hex digits each.
+	// Silent: MediaMesh repeaters asked by name on radio2 that didn't
+	// answer, first 8 hex digits each.
 	Silent []string `json:"silent,omitempty"`
 }
 
@@ -345,7 +347,7 @@ func checkCovBatch(b *covPointsBatch, now time.Time, keepDays int) error {
 			if r.RSSI != nil && !(*r.RSSI >= -150 && *r.RSSI < 0) {
 				r.RSSI = nil
 			}
-			if r.Via != "trace" {
+			if r.Via != "radio2" {
 				r.Via = ""
 			}
 			answered[key] = true
@@ -416,9 +418,13 @@ type covCellRep struct {
 	// RSSIMargin: the median margin from its replies' RSSI (covRSSIMargin),
 	// where the apps sent RSSI.
 	RSSIMargin *float64 `json:"rssi_margin,omitempty"`
+	// R2Margin: the median margin from its answers on radio2 (via radio2),
+	// measured on radio2 itself.
+	R2Margin *float64 `json:"r2_margin,omitempty"`
 }
 
-// covCellSilent: a repeater asked by name in a cell that didn't answer.
+// covCellSilent: a repeater asked by name on radio2 in a cell that didn't
+// answer.
 type covCellSilent struct {
 	Key string `json:"key"`
 	N   int    `json:"n"` // samples it was asked in and stayed silent
@@ -431,7 +437,7 @@ type covCell struct {
 	N    int          `json:"n"`   // samples
 	None int          `json:"none"`
 	Reps []covCellRep `json:"reps"`
-	// Silent: repeaters asked by name there that didn't answer.
+	// Silent: repeaters asked by name on radio2 there that didn't answer.
 	Silent []covCellSilent `json:"silent,omitempty"`
 }
 
@@ -476,6 +482,7 @@ func covCells(pts []storedPoint) *covCellsResponse {
 		n, none  int
 		margins  map[string][]float64
 		rssi     map[string][]float64
+		r2       map[string][]float64
 		silent   map[string]int
 	}
 	cells := map[string]*acc{}
@@ -505,7 +512,7 @@ func covCells(pts []storedPoint) *covCellsResponse {
 		key := fmt.Sprintf("%.5f,%.5f,%t", lat, lon, car)
 		c := cells[key]
 		if c == nil {
-			c = &acc{lat: lat, lon: lon, car: car, margins: map[string][]float64{}, rssi: map[string][]float64{}, silent: map[string]int{}}
+			c = &acc{lat: lat, lon: lon, car: car, margins: map[string][]float64{}, rssi: map[string][]float64{}, r2: map[string][]float64{}, silent: map[string]int{}}
 			cells[key] = c
 		}
 		c.n++
@@ -521,6 +528,9 @@ func covCells(pts []storedPoint) *covCellsResponse {
 			c.margins[r.Key] = append(c.margins[r.Key], r.Margin)
 			if r.RSSI != nil {
 				c.rssi[r.Key] = append(c.rssi[r.Key], covRSSIMargin(*r.RSSI, p.r2bw, p.r2sf))
+			}
+			if r.Via == "radio2" {
+				c.r2[r.Key] = append(c.r2[r.Key], r.Margin)
 			}
 		}
 		for _, k := range p.Silent {
@@ -586,6 +596,10 @@ func covCells(pts []storedPoint) *covCellsResponse {
 			if rs := c.rssi[k]; len(rs) > 0 {
 				v := math.Round(medianF(rs)*10) / 10
 				cr.RSSIMargin = &v
+			}
+			if rs := c.r2[k]; len(rs) > 0 {
+				v := math.Round(medianF(rs)*10) / 10
+				cr.R2Margin = &v
 			}
 			cc.Reps = append(cc.Reps, cr)
 		}

@@ -21,7 +21,7 @@ Switch on **Share coverage points** next to the coverage recorder. **Analyzer** 
   "points": [
     { "t": 1795099000, "lat": 47.6101, "lon": -122.3249, "acc": 6, "speed": 1.3,
       "reps": [ { "key": "1ea5e195", "snr": 4.25, "remote_snr": 2.5, "margin": 4.0, "rssi": -96 },
-                { "key": "5491c13d", "snr": 1.0, "remote_snr": 2.0, "margin": 2.5, "via": "trace" } ],
+                { "key": "5491c13d", "snr": 1.0, "remote_snr": 2.0, "margin": 9.0, "via": "radio2" } ],
       "silent": [ "fba9fe12" ] }
   ]
 }
@@ -30,8 +30,8 @@ Switch on **Share coverage points** next to the coverage recorder. **Analyzer** 
 `reps` is every MediaMesh repeater that answered there (empty: none did). `margin` is the recorder's estimate of radio2's margin over what it decodes, from the weaker direction's SNR on the main mesh (see MeshCore Open TAK's `documentation/media-mesh.md`, "Coverage map"). Optional, from newer recorders:
 
 - `rssi`: the RSSI (dBm) of a discovery answer as the recording radio heard it. SNR readings top out around +12 dB however strong the signal; RSSI keeps rising.
-- `via: "trace"`: the repeater answered being asked by name (a one-hop trace) after not answering the discovery. Such answers carry SNR only.
-- `silent`: repeaters asked by name there that didn't answer (first 8 hex digits each, up to 12).
+- `via: "radio2"`: the repeater answered being asked by name **on radio2**, after not answering the discovery: a one-hop trace sent on radio2 only, which a MediaMesh repeater forwards back on radio2. Its `snr`, `remote_snr` and `margin` are then radio2's own, measured both ways, not estimated from the main mesh. Recorders do this only when the radio's firmware can send a trace on radio2 (`get radio2.trace` on).
+- `silent`: repeaters asked by name on radio2 there that didn't answer (first 8 hex digits each, up to 12).
 
 Older recorders send none of these, and their points count as before.
 
@@ -51,9 +51,10 @@ The MediaMesh tab shows `mapped_km2` as **km² mapped by people**, and the cover
 
 ## How the estimate uses them
 
-For each spot and each MediaMesh repeater that answered there, the card compares the measured margin with the model's (before its safety margin). Where the recorder sent the reply's RSSI, the margin is worked out from it (the RSSI less radio2's sensitivity, as the model works it out): that is a measurement, comparable to what the model predicts, and it moves the estimate either way. A margin from SNR only is a floor, not a measurement: LoRa's SNR readings top out around +12 dB, so a repeater 100 m away reads no better than one at the edge of range, and SNR also takes in local noise the model doesn't predict; so it can only raise the estimate. A repeater asked by name that stayed silent is a ceiling: below −6 dB there (it would have answered on the main mesh, 6 dB more sensitive), counted for half since a ping can also be lost to a collision. A repeater merely not heard in a discovery isn't counted: discovery answers are rate-limited and random. With at least 15 spots where a repeater answered, the correction that fits them best (with floors and ceilings counting only where the model breaks them; with floors alone, the 90th percentile of how far they sit above it) moves the whole ground estimate, weighed lightly: n pairs count for n / (n + 40) of it, within ±10 dB. A repeater with 5 spots of its own gets its own correction too, pulled strongly towards the overall one (30 pairs' worth). A car's loss can't be measured from floors, so **In a car** stays 8 dB. The correction replaces the one from links between repeaters for people on the ground, and shows in each terrain profile's budget.
+For each spot and each MediaMesh repeater that answered there, the card compares the measured margin with the model's (before its safety margin). Best is a margin measured on radio2 itself (`via: "radio2"`): a measurement of radio2, which moves the estimate either way, unless its SNR was near the ceiling readings top out at (then it says only "at least"). Next, where the recorder sent the reply's RSSI, the margin is worked out from it (the RSSI less radio2's sensitivity): the main mesh and radio2 are two profiles of the same radio and antenna a fraction of a MHz apart, so that is a measurement of the path, comparable to what the model predicts, and it moves the estimate either way too. A margin from the main mesh's SNR only is a floor, not a measurement: LoRa's SNR readings top out around +12 dB, so a repeater 100 m away reads no better than one at the edge of range, and the main mesh's noise isn't radio2's; so it can only raise the estimate. A repeater asked by name on radio2 that stayed silent is a ceiling: radio2 didn't get through there (below 0 dB), counted for half since a ping can also be lost to a collision. A repeater merely not heard in a discovery isn't counted: discovery answers are rate-limited and random, and on the main mesh. With at least 15 spots where a repeater answered, the correction that fits them best (with floors and ceilings counting only where the model breaks them; with floors alone, the 90th percentile of how far they sit above it) moves the whole ground estimate, weighed lightly: n pairs count for n / (n + 40) of it, within ±10 dB. A repeater with 5 spots of its own gets its own correction too, pulled strongly towards the overall one (30 pairs' worth). A car's loss can't be measured from floors, so **In a car** stays 8 dB. The correction replaces the one from links between repeaters for people on the ground, and shows in each terrain profile's budget.
 
-Each cell in `GET /api/mediamesh/coverage-points` gives, per repeater, its median `margin` and, where recorders sent RSSI, its median `rssi_margin`; and `silent`, the repeaters asked by name there that didn't answer, with how many times.
+Each cell in `GET /api/mediamesh/coverage-points` gives, per repeater, its median `margin`, where recorders sent RSSI its median `rssi_margin`, and where it answered on radio2 its median `r2_margin`; and `silent`, the repeaters asked by name on radio2 there that didn't answer, with how many times.
+
 
 ## Config
 
@@ -66,9 +67,10 @@ default): unticked, the map is the model alone. Ticked, the hexagons show,
 the whole-estimate and per-repeater corrections above apply, and the
 people-on-the-ground estimate leans toward what people found, where they
 found it: the best repeater's measured margin in each mapped cell (a
-vehicle's cells get the car's loss back) against the estimate there, from
-RSSI either way, from SNR only up; where only repeaters asked by name were
-there and none answered, a ceiling at −6 dB, for half and at most 5 dB down.
+vehicle's cells get the car's loss back) against the estimate there, measured
+on radio2 or from RSSI either way, from the main mesh's SNR only up; where
+only repeaters asked on radio2 were there and none answered, a ceiling at
+0 dB, for half and at most 5 dB down.
 Within ±10 dB, spread to the estimate's cells within 600 m, nearest counting
 most, and weighed lightly: a spot's pings count w / (w + 6) of what they say
 (five pings, a little under half). Cells where nobody answered a discovery

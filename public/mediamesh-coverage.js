@@ -89,15 +89,18 @@
     ],
     // Fitting the estimate for people on the ground to measured coverage
     // points (GET /api/mediamesh/coverage-points), from at least minCells
-    // spots where a repeater answered: a margin from its reply's RSSI is a
-    // measurement, one from SNR a floor (SNR readings top out around
-    // +12 dB), and a repeater asked by name that stayed silent a ceiling at
-    // unheardDb (it would have answered on the main mesh, 6 dB more
-    // sensitive, above that). Within +maxUpDb / -maxDownDb, weighed lightly:
-    // n pairs count for n / (n + shrink) of what they say; a repeater with
+    // spots where a repeater answered (measuredOf): a margin measured on
+    // radio2 itself (it answered a ping sent on radio2) is a measurement,
+    // unless near the SNR ceiling (r2CeilingDb: radio2's SNR floor plus the
+    // ~+12 dB readings top out at), then a floor; one from the main mesh's
+    // RSSI is a measurement; one from the main mesh's SNR a floor. A repeater
+    // asked on radio2 that stayed silent is a ceiling at silentDb (radio2
+    // didn't decode). Within +maxUpDb / -maxDownDb, weighed lightly: n pairs
+    // count for n / (n + shrink) of what they say; a repeater with
     // repMinCells of its own gets its own, pulled towards the overall one
-    // (repShrink pairs' worth).
-    field: { minCells: 15, maxUpDb: 10, maxDownDb: 10, shrink: 40, repMinCells: 5, repShrink: 30, unheardDb: -6, maxPairs: 800 },
+    // (repShrink pairs' worth). unheardDb: where the model is too low to
+    // learn from.
+    field: { minCells: 15, maxUpDb: 10, maxDownDb: 10, shrink: 40, repMinCells: 5, repShrink: 30, unheardDb: -6, silentDb: 0, r2CeilingDb: 18, maxPairs: 800 },
     // A quicker, coarser version of `ground`, for screening many spots or
     // drawing hundreds of main-mesh repeaters.
     quick: { rays: 360, radiusKm: 20, stepM: 100, cellM: 200 },
@@ -1624,8 +1627,9 @@
    * where a repeater answered, the best one's measured margin (a vehicle's
    * cells get the car's loss back) against the estimate there: from RSSI it
    * moves the estimate either way, from SNR (a floor) it only raises it;
-   * where only repeaters asked by name answered and none did, a ceiling at
-   * CONFIG.field.unheardDb, for half and at most LEARN.silentDb down. Within
+   * where only repeaters asked on radio2 were there and none answered, a
+   * ceiling at CONFIG.field.silentDb, for half and at most LEARN.silentDb
+   * down. Within
    * LEARN.maxDb, spread to the estimate's cells within LEARN.radiusM,
    * nearest counting most, weighed lightly. Cells where nobody answered a
    * discovery add nothing.
@@ -1644,16 +1648,16 @@
       const model = at.margin > NO_DATA / 2 ? at.margin : CONFIG.field.unheardDb - 10;
       let res, w0 = Math.min(5, c.n);
       if (heard.length) {
-        // the best repeater there: from RSSI a measurement either way, from
-        // SNR a floor (only raises where the estimate said less)
+        // the best repeater there: measured on radio2 or from RSSI, either
+        // way; from the main mesh's SNR a floor (only raises)
         const best = heard.reduce((m, h) => (h.meas > m.meas ? h : m));
         const meas = best.meas + (c.car ? carDb : 0);
         res = best.exact ? Math.max(-LEARN.maxDb, Math.min(LEARN.maxDb, meas - model)) : Math.min(LEARN.maxDb, meas - model);
         if (!best.exact && !(res > 0)) return;
       } else if ((c.silent || []).length) {
-        // only repeaters asked by name, and none answered: a ceiling, for half
-        if (!(model > CONFIG.field.unheardDb)) return;
-        res = Math.max(-LEARN.silentDb, CONFIG.field.unheardDb - model);
+        // only repeaters asked on radio2, and none answered: a ceiling, for half
+        if (!(model > CONFIG.field.silentDb)) return;
+        res = Math.max(-LEARN.silentDb, CONFIG.field.silentDb - model);
         w0 *= 0.5;
       } else {
         // nobody answered a discovery: its answers are rate-limited, nothing to learn
@@ -2329,21 +2333,26 @@
     return (lo + hi) / 2;
   }
 
-  /** A cell repeater's measured margin: { meas, exact }. From its replies'
-   * RSSI when the app sent it (comparable to the model, which predicts
-   * signal level, not local noise), else from SNR, a floor. */
+  /** A cell repeater's measured margin: { meas, exact }. Best, measured on
+   * radio2 itself (r2_margin: it answered a ping sent on radio2, on radio2),
+   * unless its SNR was near the ceiling readings top out at (then a floor);
+   * else from its replies' RSSI on the main mesh (the same radio and
+   * antenna: comparable to the model, which predicts signal level); else
+   * from the main mesh's SNR, a floor. */
   function measuredOf(r) {
-    return Number.isFinite(r.rssi_margin) ? { meas: r.rssi_margin, exact: true } : { meas: r.margin, exact: false };
+    if (Number.isFinite(r.r2_margin)) return { meas: r.r2_margin, exact: r.r2_margin < CONFIG.field.r2CeilingDb, radio2: true };
+    if (Number.isFinite(r.rssi_margin)) return { meas: r.rssi_margin, exact: true };
+    return { meas: r.margin, exact: false };
   }
 
   /**
    * Fits the estimate for people on the ground to measured coverage points:
    * cells is GET /api/mediamesh/coverage-points' cells, reps the placed
    * repeaters, elevAt the terrain. Each cell and repeater that answered
-   * there is a pair, its margin measured (measuredOf: from RSSI a
-   * measurement, from SNR a floor) against the model's margin with no
-   * safety margin taken off; each repeater asked there by name that didn't
-   * answer (the apps' one-hop trace) a ceiling at CONFIG.field.unheardDb,
+   * there is a pair, its margin measured (measuredOf: on radio2 or from
+   * RSSI a measurement, from the main mesh's SNR a floor) against the
+   * model's margin with no safety margin taken off; each repeater asked
+   * there on radio2 that didn't answer a ceiling at CONFIG.field.silentDb,
    * for half. Repeaters merely not heard in a discovery aren't counted: its
    * answers are rate-limited and random. Walks only; a car's loss stays the
    * default. Weighed lightly (CONFIG.field.shrink). Returns { used, n,
@@ -2370,19 +2379,19 @@
         if (!rep || !Number.isFinite(h.margin)) return;
         const m = raw(rep, c);
         if (m === null) return;
-        const { meas, exact } = measuredOf(h);
-        pairs.push({ key: k, raw: m, meas, exact, w: Math.min(5, h.n || 1) });
+        const { meas, exact, radio2 } = measuredOf(h);
+        pairs.push({ key: k, raw: m, meas, exact, radio2: !!radio2, w: Math.min(5, h.n || 1) });
       });
       (c.silent || []).forEach((h) => {
         const k = String(h.key || '').toLowerCase(), rep = byKey.get(k);
         if (!rep) return;
         const m = raw(rep, c);
-        if (m !== null) pairs.push({ key: k, raw: m, limit: F.unheardDb, w: 0.5 * Math.min(5, h.n || 1) });
+        if (m !== null) pairs.push({ key: k, raw: m, limit: F.silentDb, w: 0.5 * Math.min(5, h.n || 1) });
       });
     }
     const answered = pairs.filter((q) => Number.isFinite(q.meas));
     const out = Object.assign({}, none, {
-      n: answered.length, exactN: answered.filter((q) => q.exact).length,
+      n: answered.length, exactN: answered.filter((q) => q.exact).length, r2N: answered.filter((q) => q.radio2).length,
       silentN: pairs.length - answered.length, cells: sorted.length,
     });
     if (answered.length < F.minCells) return out;
@@ -2415,8 +2424,8 @@
     const nr = Object.keys(f.reps).length;
     const floors = f.n - (f.exactN || 0);
     return `Checked against ${f.n} spots where a repeater answered${who}`
-      + (f.exactN ? ` (${f.exactN} with the reply's signal strength)` : '')
-      + (f.silentN ? ` and ${f.silentN} where one asked by name didn't` : '')
+      + (f.r2N ? ` (${f.r2N} measured on radio2 itself)` : f.exactN ? ` (${f.exactN} with the reply's signal strength)` : '')
+      + (f.silentN ? ` and ${f.silentN} where one asked on radio2 didn't` : '')
       + `: ${adj}.`
       + (f.short ? ` The estimate still falls short of what was read at ${f.short} of them.` : '')
       + (nr ? ` ${nr} repeater${nr === 1 ? ' has' : 's have'} a correction of ${nr === 1 ? 'its' : 'their'} own.` : '')

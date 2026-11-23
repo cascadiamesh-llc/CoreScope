@@ -358,7 +358,7 @@ function cellAt(cov, lat, lon) {
     assert.strictEqual(M.pathProfile(rep[0], lat, -122.33, () => NaN, 'ground'), null);
   });
 
-  await test('signal strength and repeaters asked by name: real evidence both ways', () => {
+  await test('measured on radio2, signal strength, and repeaters asked on radio2: real evidence both ways', () => {
     M.setCalibration(0); M.setField(null);
     const land = (lat, lon) => 10 + 0.3 * Math.sin(lat * 3000) + 0.3 * Math.cos(lon * 3000);
     const reps = [{ name: 'A', public_key: 'aaaaaaaa11', lat: 47.6, lon: -122.33 }, { name: 'B', public_key: 'bbbbbbbb22', lat: 47.6, lon: -122.322 }];
@@ -378,12 +378,21 @@ function cellAt(cov, lat, lon) {
     // the same spots with SNR only: floors, so nothing lowers it
     const snrOnly = M.fitField(cells.map((c) => Object.assign({}, c, { reps: c.reps.map((r) => ({ key: r.key, n: r.n, margin: r.margin })) })), reps, land);
     assert.ok(snrOnly.offsetDb >= 0, String(snrOnly.offsetDb));
-    // B asked by name near A's spots, and silent where the model said +20:
+    // B asked on radio2 near A's spots, and silent where the model said +20:
     // a ceiling, pulling it down, for half
     const near = cells.slice(0, 15).map((c) => Object.assign({}, c, { reps: c.reps.map((r) => ({ key: r.key, n: r.n, margin: r.margin })), silent: [{ key: 'bbbbbbbb', n: 2 }] }));
     const asked = M.fitField(near.concat(cells.slice(15).map((c) => Object.assign({}, c, { reps: c.reps.map((r) => ({ key: r.key, n: r.n, margin: r.margin })) }))), reps, land);
     assert.ok(asked.silentN > 0 && asked.offsetDb < snrOnly.offsetDb, `${asked.offsetDb} vs ${snrOnly.offsetDb}`);
-    assert.ok(/where one asked by name didn't/.test(M.fieldText(asked)));
+    assert.ok(/where one asked on radio2 didn't/.test(M.fieldText(asked)));
+    // measured on radio2 itself: a measurement, and said so; near the SNR
+    // ceiling only a floor
+    const r2 = M.fitField(cells.map((c) => Object.assign({}, c, { reps: c.reps.map((r) => ({ key: r.key, n: r.n, margin: r.margin, r2_margin: r.rssi_margin })) })), reps, land);
+    assert.ok(r2.r2N === r2.n && r2.offsetDb < 0, JSON.stringify(r2));
+    assert.ok(/measured on radio2 itself/.test(M.fieldText(r2)), M.fieldText(r2));
+    assert.deepStrictEqual(M.measuredOf({ margin: 12, r2_margin: 25 }), { meas: 25, exact: false, radio2: true });
+    assert.deepStrictEqual(M.measuredOf({ margin: 12, r2_margin: 4, rssi_margin: 30 }), { meas: 4, exact: true, radio2: true });
+    assert.deepStrictEqual(M.measuredOf({ margin: 12, rssi_margin: 30 }), { meas: 30, exact: true });
+    assert.deepStrictEqual(M.measuredOf({ margin: 12 }), { meas: 12, exact: false });
 
     // learning: RSSI lowers where it reads less; a silent ask lowers a little
     const cov = { width: 40, height: 40, bounds: { north: 47.61, south: 47.61 - 0.018, west: -122.33, east: -122.33 + 0.0266 }, margins: new Float32Array(1600).fill(10), best: new Int16Array(1600), modeKey: 'ground' };

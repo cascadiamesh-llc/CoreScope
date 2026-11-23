@@ -233,15 +233,15 @@ func TestCovRSSIAndAskedByName(t *testing.T) {
 	// one repeater answering by name, two asked that didn't
 	b.Points[10].Reps = []covPointRep{
 		{Key: "1ea5e195", SNR: 11.5, RemoteSNR: 12, Margin: 13, RSSI: f(-60)},
-		{Key: "5491c13d", SNR: 2, RemoteSNR: 1, Margin: 2.5, Via: "trace"},
-		{Key: "aaaaaaaa", SNR: 1, RemoteSNR: 1, Margin: 1, RSSI: f(20), Via: "carrier pigeon"},
+		{Key: "5491c13d", SNR: 2, RemoteSNR: 1, Margin: 2.5, Via: "radio2"},
+		{Key: "aaaaaaaa", SNR: 1, RemoteSNR: 1, Margin: 1, RSSI: f(20), Via: "trace"},
 	}
 	b.Points[10].Silent = []string{"FBA9FE12", "5491c13d", "nothex!!", "fba9fe12"}
 	if err := checkCovBatch(&b, now, 0); err != nil {
 		t.Fatal(err)
 	}
 	p := b.Points[10]
-	if p.Reps[0].RSSI == nil || *p.Reps[0].RSSI != -60 || p.Reps[1].Via != "trace" {
+	if p.Reps[0].RSSI == nil || *p.Reps[0].RSSI != -60 || p.Reps[1].Via != "radio2" {
 		t.Fatalf("lost: %+v", p.Reps)
 	}
 	if p.Reps[2].RSSI != nil || p.Reps[2].Via != "" {
@@ -290,5 +290,17 @@ func TestCovRSSIAndAskedByName(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("no cell with the RSSI margin")
+	}
+	// the answer on radio2 is kept apart: measured on radio2 itself
+	r2 := false
+	for _, c := range cells.Cells {
+		for _, r := range c.Reps {
+			if r.Key == "5491c13d" && r.R2Margin != nil && *r.R2Margin == 2.5 && r.RSSIMargin == nil {
+				r2 = true
+			}
+		}
+	}
+	if !r2 {
+		t.Fatal("no cell with the radio2 margin")
 	}
 }
