@@ -60,16 +60,16 @@ function cellAt(cov, lat, lon) {
     assert.ok(slow.sensitivityDbm < -130);
   });
 
-  await test('margin uses the conservative budget (22 dBm, 10 dB fade, a handheld\'s antenna)', () => {
+  await test('margin uses the conservative budget (22 dBm, 6 dB fade, a handheld\'s antenna)', () => {
     const g = M.CONFIG.modes.ground, r = M.CONFIG.modes.repeater;
-    // 22 + 2 - 1 - 4 + 121 - 10 = 130 dB of path loss at 0 margin on the
-    // ground, before the clutter (by distance, in the rays)
-    assert.strictEqual(M.marginFor(130, g), 0);
-    assert.strictEqual(M.marginFor(130, r), 6);
-    assert.strictEqual(M.budgetDb(g), 130);
+    // 22 + 2 - 1 - 4 + 121 - 6 = 134 dB of path loss at 0 margin on the
+    // ground, before the clutter (along the way, in the rays)
+    assert.strictEqual(M.marginFor(134, g), 0);
+    assert.strictEqual(M.marginFor(134, r), 6);
+    assert.strictEqual(M.budgetDb(g), 134);
     // a more sensitive setting has that much more to spend
     const slow = M.radioFor({ radio: '911.15,125,9,5' });
-    assert.ok(Math.abs(M.marginFor(130, g, slow) - (-121 - slow.sensitivityDbm)) < 1e-9);
+    assert.ok(Math.abs(M.marginFor(134, g, slow) - (-121 - slow.sensitivityDbm)) < 1e-9);
   });
 
   await test('city clutter: ITU-R P.2108 by distance, 18 dB close in, 23 dB from 500 m', () => {
@@ -160,7 +160,11 @@ function cellAt(cov, lat, lon) {
         const D = job.dist[j];
         const hr = job.elev[off + j] - D * D / (2 * effR) + mode.rxHeightM;
         const ref = M.cascadedKnifeEdge(job.dist, h, j, job.txGround + M.CONFIG.txHeightM, D, hr, radio.lambdaM);
-        const clutter = job.elev[off + j] > 0.5 ? M.clutterLossDb(D / 1000, radio.freqMHz) : 0;
+        // buildings and trees only along the stretch among them
+        const ht = job.txGround + M.CONFIG.txHeightM, seg = (i) => (i ? job.dist[i] - job.dist[i - 1] : job.dist[0]);
+        let clutM = job.elev[off + j] > 0.5 ? seg(j) : 0;
+        if (clutM) for (let i = 0; i < j; i++) if (job.elev[off + i] > 0.5 && ht + (hr - ht) / D * job.dist[i] - (job.elev[off + i] - job.dist[i] * job.dist[i] / (2 * effR)) < M.CONFIG.clutterHeightM) clutM += seg(i);
+        const clutter = clutM ? M.clutterLossDb(clutM / 1000, radio.freqMHz) : 0;
         const want = M.budgetDb(mode, radio) - M.fspl(D / 1000, radio.freqMHz) - ref.loss - clutter;
         assert.ok(Math.abs(polar[off + j] - want) < 1e-3, `ray ${a} sample ${j}: ${polar[off + j]} vs ${want}`);
         checked++;
@@ -337,7 +341,7 @@ function cellAt(cov, lat, lon) {
     // the ridge stands in the sea (0 m): no clutter at the far end
     assert.strictEqual(p.clutterDb, 0);
     assert.ok(Math.abs(p.rxDbm - (23 - 4 - p.fsplDb - p.diff.loss)) < 1e-9);
-    assert.ok(Math.abs(p.marginDb - (p.rxDbm + 121 - 10)) < 1e-9);
+    assert.ok(Math.abs(p.marginDb - (p.rxDbm + 121 - 6)) < 1e-9);
     assert.ok(Math.abs(p.marginDb - cellAt(cov, lat, -122.33)) < 3, `profile ${p.marginDb} vs map ${cellAt(cov, lat, -122.33)}`);
     assert.ok(/^No line of sight/.test(M.profileVerdict(p)));
     // the other way there is no ridge: line of sight, but the ground is close
@@ -354,13 +358,33 @@ function cellAt(cov, lat, lon) {
     assert.strictEqual(M.pathProfile(rep[0], lat, -122.33, () => NaN, 'ground'), null);
   });
 
+  await test('buildings and trees count only along the stretch among them', () => {
+    const at = (terrain) => M.pathProfile(rep[0], 47.6 + kmLat(6), -122.33, terrain, 'ground');
+    // all land, flat: the whole 6 km
+    const land = at(() => 10);
+    assert.ok(Math.abs(land.clutterM - 6000) < 30, String(land.clutterM));
+    // across 5 km of water to the far shore: only the last kilometre
+    const shoreLat = 47.6 + kmLat(5);
+    const across = at((lat) => (lat > 47.6 + kmLat(0.5) && lat < shoreLat ? 0 : 10));
+    assert.ok(across.clutterM > 900 && across.clutterM < 1600, String(across.clutterM));
+    assert.ok(across.clutterDb < land.clutterDb, `${across.clutterDb} vs ${land.clutterDb}`);
+    // from a hill 200 m up across a valley floor at 10 m: the line is high
+    // above the ground most of the way, so only the far end counts
+    const hill = at((lat) => (lat < 47.6 + kmLat(0.3) ? 210 : 10));
+    assert.ok(hill.clutterM < land.clutterM / 2, String(hill.clutterM));
+    // and the map agrees
+    const g = M.gridFor(rep, M.CONFIG.modes.ground);
+    const job = M.buildJob(rep[0], M.radioFor(rep[0]), (lat) => (lat > 47.6 + kmLat(0.5) && lat < shoreLat ? 0 : 10), M.CONFIG.modes.ground, g);
+    assert.ok(job.n > 0);
+  });
+
   await test('path profile: budget rows read top to bottom and end in the margin', () => {
     const onLand = (lat) => ridgeAt3(lat) + 10;
     const p = M.pathProfile(rep[0], 47.6 + kmLat(6), -122.33, onLand, 'ground');
     const rows = M.budgetRows(p);
     assert.deepStrictEqual(rows[0], ['Sent: 22 dBm, 2 dBi antenna, 1 dB cable', '23 dBm', 'gain']);
     assert.ok(/^Free space over 6\.0 km$/.test(rows[1][0]) && /^−107\.\d dB$/.test(rows[1][1]), rows[1].join('|'));
-    assert.ok(rows.some((r) => r[0] === 'Buildings and trees (ITU-R P.2108, 6.0 km away)' && r[1] === '−23.1 dB'), JSON.stringify(rows));
+    assert.ok(rows.some((r) => r[0] === 'Buildings and trees (ITU-R P.2108, 6.0 km of the way among them)' && r[1] === '−23.1 dB'), JSON.stringify(rows));
     assert.ok(rows.some((r) => r[0] === 'Receiving antenna (handheld, next to the body)' && r[1] === '−4 dB'));
     const sea = M.budgetRows(M.pathProfile(rep[0], 47.6 + kmLat(6), -122.33, ridgeAt3, 'ground'));
     assert.ok(sea.some((r) => r[0] === 'Buildings and trees (none on open water)' && r[1] === '0 dB'));
@@ -684,7 +708,7 @@ function cellAt(cov, lat, lon) {
     assert.ok(g.includes('<strong>Measured on the ground:</strong> Not yet checked against coverage measured on the ground.'));
     assert.ok(r.includes('another repeater') && !r.includes('held in') && !r.includes('Measured on the ground'));
     assert.ok(g.includes('2 of 3 here, 1 not on the default preset'));
-    assert.ok(g.includes('911.15 MHz, 250 kHz, SF7') && g.includes('−121 dBm') && g.includes('10 dB more as a safety margin'));
+    assert.ok(g.includes('911.15 MHz, 250 kHz, SF7') && g.includes('−121 dBm') && g.includes('6 dB more as a safety margin'));
     assert.ok(g.includes('ITU-R P.526-11') && g.includes('k = 4/3') && g.includes('Fresnel'));
     assert.ok(g.includes('30 km from each repeater') && r.includes('60 km from each repeater'));
     assert.ok(/Not modelled:<\/strong> the actual buildings and trees/.test(g) && g.includes('interference'));

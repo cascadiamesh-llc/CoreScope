@@ -21,7 +21,7 @@
  *  - Receiver sensitivity from the repeater's reported radio2 setting
  *    (bandwidth and spreading factor), the default preset when unknown.
  * Buildings and trees are not in the terrain data; ground mode adds the
- * city clutter loss of ITU-R P.2108 (by distance, not over open water) for
+ * city clutter loss of ITU-R P.2108 (along the stretch among them, not over open water or high above it) for
  * a radio held among them, with a handheld's antenna. Where you are (out of
  * doors, in a car, indoors) takes a little more off, and measured coverage
  * points (the apps' coverage recorders, sent to the analyzer) correct the
@@ -49,7 +49,11 @@
     // datasheet (DS.SX1261-2, Rx boosted gain) at SF7: -124 dBm at 125 kHz and
     // -121 dBm at 250 kHz, and stay within 1.5 dB of its other rows.
     noiseFigureDb: 6.5,
-    fadeMarginDb: 10,    // safety margin
+    fadeMarginDb: 6,     // safety margin against fading
+    // Buildings and trees (ITU-R P.2108) count only for the stretch of a
+    // path that runs among them: over land, with the direct line within
+    // clutterHeightM of the ground (not over open water, nor high above it).
+    clutterHeightM: 15,
     kFactor: 4 / 3,      // effective earth radius for radio
     earthRadiusM: 6371000,
     bands: { strong: 15, fair: 5, marginal: 0 }, // dB to spare
@@ -455,11 +459,11 @@
     const out = new Float32Array(rays * n).fill(NaN);
     if (!Number.isFinite(job.txGround)) return out;
     const ht = job.txGround + job.txHeightM;
-    const drop = new Float64Array(n), fs = new Float64Array(n), cl = new Float64Array(n);
+    const drop = new Float64Array(n), fs = new Float64Array(n);
+    const p2108 = job.clutter === 'p2108', cH = CONFIG.clutterHeightM;
     for (let i = 0; i < n; i++) {
       drop[i] = dist[i] * dist[i] / (2 * effR);
       fs[i] = fspl(dist[i] / 1000, job.freqMHz);
-      cl[i] = job.clutter === 'p2108' ? clutterLossDb(dist[i] / 1000, job.freqMHz) : 0;
     }
     const pc = new Float64Array(n); // peaks, lowered by the earth's curve
     const gsum = new Float64Array(n + 1); // ground x length, running, for the mean ground
@@ -482,6 +486,15 @@
         const hT = Math.max(job.txHeightM, ht - meanG), hR = Math.max(job.rxHeightM, elev[off + j] + job.rxHeightM - meanG);
         const pe = planeEarthLoss(D, hT, hR);
         let loss = 0;
+        // the stretch among buildings and trees: land under a direct line
+        // within cH of the ground, and the receiver's own stretch
+        let clutM = elev[off + j] > 0.5 ? seg[j] : 0;
+        if (p2108 && clutM && j > 0) {
+          const sl = (hr - ht) / D;
+          for (let i = 0; i < j; i++) {
+            if (elev[off + i] > 0.5 && ht + sl * dist[i] - (elev[off + i] - drop[i]) < cH) clutM += seg[i];
+          }
+        }
         if (j > 0) {
           // principal edge
           const slope = (hr - ht) / D;
@@ -524,7 +537,7 @@
         }
         const total = fs[j] + loss;
         // no buildings on open water (the sea, at 0.5 m or lower)
-        out[off + j] = job.budgetDb - (pe > total ? pe : total) - (elev[off + j] > 0.5 ? cl[j] : 0);
+        out[off + j] = job.budgetDb - (pe > total ? pe : total) - (p2108 && clutM > 0 ? clutterLossDb(clutM / 1000, job.freqMHz) : 0);
       }
     }
     return out;
@@ -868,7 +881,16 @@
     const pathLossDb = fsplDb + diff.loss + groundDb;
     const eirpDbm = c.txDbm + c.txGainDbi - c.cableDb;
     const cal = modeCalibration(mode);
-    const clutterDb = mode.clutter === 'p2108' ? (rxGround > 0.5 ? clutterLossDb(D / 1000, r.freqMHz) : 0) : mode.clutterDb;
+    // buildings and trees along the stretch among them (CONFIG.clutterHeightM)
+    let clutterM = 0;
+    if (mode.clutter === 'p2108' && rxGround > 0.5) {
+      const step = D / (n + 1);
+      clutterM = step;
+      for (let i = 0; i < n; i++) {
+        if (terrain[i] > 0.5 && ht + (hr - ht) * d[i] / D - curved[i] < c.clutterHeightM) clutterM += step;
+      }
+    }
+    const clutterDb = mode.clutter === 'p2108' ? (clutterM > 0 ? clutterLossDb(clutterM / 1000, r.freqMHz) : 0) : mode.clutterDb;
     // the measured points' correction (replacing cal's), and where you are
     const fieldUsed = !!(field && mode.clutter && !(popts && popts.noField));
     const fieldDb = fieldUsed ? fieldDbFor(modeKey, rep) : 0;
@@ -878,7 +900,7 @@
       distM: D, d, terrain, txGround, rxGround, txHeightM: antennaHeight(rep), rxHeightM: mode.rxHeightM,
       lambdaM: r.lambdaM, effR, radio: r, fsplDb, diff, edges, groundDb, planeEarthDb,
       lineOfSight: !(diff.vp > 0), fresnelClear: !(diff.vp > -0.78),
-      clutterDb, clutterModel: mode.clutter || '', calibrationDb: cal, fieldDb, fieldUsed, placeLossDb: placeDb, place: (popts && popts.place) || '', pathLossDb, eirpDbm, rxDbm,
+      clutterDb, clutterM, clutterModel: mode.clutter || '', calibrationDb: cal, fieldDb, fieldUsed, placeLossDb: placeDb, place: (popts && popts.place) || '', pathLossDb, eirpDbm, rxDbm,
       sensitivityDbm: r.sensitivityDbm, fadeMarginDb: c.fadeMarginDb,
       marginDb: rxDbm - r.sensitivityDbm - c.fadeMarginDb, modeKey,
     };
@@ -917,7 +939,7 @@
       ['Terrain (diffraction)', fmtLoss(p.diff.loss), 'loss'],
     ];
     if (p.groundDb > 0.05) rows.push(['Reflection off the ground', fmtLoss(p.groundDb), 'loss']);
-    if (p.clutterModel === 'p2108') rows.push([p.clutterDb ? 'Buildings and trees (ITU-R P.2108, ' + fmtKm(p.distM) + ' away)' : 'Buildings and trees (none on open water)', fmtLoss(p.clutterDb), 'loss']);
+    if (p.clutterModel === 'p2108') rows.push([p.clutterDb ? 'Buildings and trees (ITU-R P.2108, ' + fmtKm(p.clutterM) + ' of the way among them)' : 'Buildings and trees (none on open water)', fmtLoss(p.clutterDb), 'loss']);
     else if (p.clutterDb) rows.push(['Buildings and trees (flat allowance)', fmtLoss(p.clutterDb), 'loss']);
     if (mode.rxGainDbi) rows.push([mode.rxGainDbi < 0 ? 'Receiving antenna (handheld, next to the body)' : 'Receiving antenna', (mode.rxGainDbi > 0 ? '+' : '−') + fmtDb(Math.abs(mode.rxGainDbi)) + ' dB', mode.rxGainDbi > 0 ? 'gain' : 'loss']);
     if (p.placeLossDb) {
@@ -2157,7 +2179,7 @@
     const items = [
       `<strong>Sending:</strong> ${c.txDbm} dBm into a ${c.txGainDbi} dBi antenna through ${c.cableDb} dB of cable, ${c.txHeightM} m above the ground at every repeater${KNOWN_HEIGHTS.length ? `, except where the owner gave its height: ${KNOWN_HEIGHTS.map((h) => `${h.name} ${Math.round(h.ft * FT)} m`).join(', ')}` : ''}.`,
       mode.clutter
-        ? `<strong>Receiving:</strong> a companion or standalone radio held in the hand at ${mode.rxHeightM} m: ${fmtDb(mode.rxGainDbi)} dBi for a short antenna next to the body, and buildings and trees by distance from the repeater (ITU-R P.2108, the median: ${fmtDb(clutterLossDb(0.25))} dB at 250 m, ${fmtDb(clutterLossDb(1))} dB from about 500 m on), none over open water.`
+        ? `<strong>Receiving:</strong> a companion or standalone radio held in the hand at ${mode.rxHeightM} m: ${fmtDb(mode.rxGainDbi)} dBi for a short antenna next to the body, and buildings and trees by how far of the way runs among them (ITU-R P.2108, the median: ${fmtDb(clutterLossDb(0.25))} dB at 250 m, ${fmtDb(clutterLossDb(1))} dB from about 500 m on): land where the direct line is within ${CONFIG.clutterHeightM} m of the ground, not open water or high above it.`
           + ` <strong>Where you are:</strong> ${CONFIG.places.map((pl) => pl.lossDb ? `${pl.label.toLowerCase()}, ${fmtDb(placeLossDb(pl.key))} dB more${pl.key === 'car' && f && Number.isFinite(f.carLossDb) ? ' (measured on drives)' : pl.key === 'indoors' ? ' (ITU-R P.2109, a typical building)' : ''}` : pl.label.toLowerCase() + ' as drawn').join('; ')}.`
         : `<strong>Receiving:</strong> another repeater's ${mode.rxGainDbi} dBi antenna, ${mode.rxHeightM} m above the ground.`,
       `<strong>Radio:</strong> each repeater's reported radio2 setting where it has sent one (${reported} of ${(radios || []).length} here${other ? `, ${other} not on the default preset` : ''}), otherwise ${def.freqMHz} MHz, ${def.bwKHz} kHz, SF${def.sf}. That preset needs ${fmtDb(def.sensitivityDbm)} dBm at the receiver (SX1262 datasheet); the estimate asks for ${c.fadeMarginDb} dB more as a safety margin against fading.`,

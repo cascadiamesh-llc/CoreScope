@@ -703,7 +703,7 @@
       <div class="mm-cov-head">
         <div>
           <h3 class="mm-cov-title"><span>MediaMesh coverage estimate</span> <strong>based on data from MediaMesh observers</strong> <small class="mm-cov-observer-note">(some areas with MediaMesh may not appear if there is no observer to hear it)</small></h3>
-          <p class="text-muted mm-cov-intro">Where photos, video and voice on 911.150 MHz should get through, from each MediaMesh repeater's position and the terrain. Conservative: 22 dBm, antennas 10 m up unless the owner gave the height, a 10 dB safety margin. Click the map for the terrain profile to any point.</p>
+          <p class="text-muted mm-cov-intro">Where photos, video and voice on 911.150 MHz should get through, from each MediaMesh repeater's position and the terrain. Conservative: 22 dBm, antennas 10 m up unless the owner gave the height, a 6 dB safety margin. Click the map for the terrain profile to any point.</p>
         </div>
         <div class="mm-cov-toggle">
           <button type="button" class="tab-btn active" data-mm-cov="ground">People on the ground</button>
