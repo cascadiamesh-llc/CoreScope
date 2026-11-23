@@ -504,27 +504,30 @@ function cellAt(cov, lat, lon) {
     // 40 x 40 cells of about 50 m, all at 10 dB to spare
     const cov = { width: 40, height: 40, bounds: { north: 47.61, south: 47.61 - 0.018, west: -122.33, east: -122.33 + 0.0266 }, margins: new Float32Array(1600).fill(10), best: new Int16Array(1600), modeKey: 'ground' };
     const mid = { lat: 47.61 - 0.009, lon: -122.33 + 0.0133 };
-    // measured 2 dB to spare where the estimate says 10, five pings
-    const L1 = M.learnFromField(cov, [{ lat: mid.lat, lon: mid.lon, n: 5, reps: [{ key: 'aa', margin: 2, n: 5 }] }]);
+    // measured 16 dB to spare where the estimate says 10, five pings: raised
+    const L1 = M.learnFromField(cov, [{ lat: mid.lat, lon: mid.lon, n: 5, reps: [{ key: 'aa', margin: 16, n: 5 }] }]);
     const at = (lat, lon) => { const col = Math.floor((lon - cov.bounds.west) / (cov.bounds.east - cov.bounds.west) * 40), row = Math.floor((cov.bounds.north - lat) / (cov.bounds.north - cov.bounds.south) * 40); return row * 40 + col; };
     const i = at(mid.lat, mid.lon);
-    // weighed lightly: five pings nudge it part of the way (5 of 11), not all 8 dB
-    assert.ok(L1.delta[i] < -2.5 && L1.delta[i] > -4.5, String(L1.delta[i]));
+    // weighed lightly: five pings nudge it part of the way (5 of 11), not all 6 dB
+    assert.ok(L1.delta[i] > 2 && L1.delta[i] < 3.5, String(L1.delta[i]));
     assert.strictEqual(L1.delta[0], 0, 'far away: untouched');
-    assert.deepStrictEqual(L1.points.map((p) => p.res), [-8]);
-    // a car loses some on the way: its margin gets the car's loss back
-    const car = M.learnFromField(cov, [{ lat: mid.lat, lon: mid.lon, n: 5, car: true, reps: [{ key: 'aa', margin: 2, n: 5 }] }], 8);
-    assert.ok(Math.abs(car.delta[i]) < 0.5);
-    // nobody answered where the estimate said 10 dB: counts as unheardDb
-    // (a phone indoors hears nothing too: it counts for less, and at most 5 dB)
+    assert.deepStrictEqual(L1.points.map((p) => p.res), [6]);
+    // a reading is a floor: 2 dB read where the estimate says 10 lowers nothing
+    const low = M.learnFromField(cov, [{ lat: mid.lat, lon: mid.lon, n: 5, reps: [{ key: 'aa', margin: 2, n: 5 }] }]);
+    assert.strictEqual(low.delta[i], 0);
+    assert.strictEqual(low.points.length, 0);
+    // a car's reading gets the car's loss back: 9 + 8 = 17, 7 dB over
+    const car = M.learnFromField(cov, [{ lat: mid.lat, lon: mid.lon, n: 5, car: true, reps: [{ key: 'aa', margin: 9, n: 5 }] }], 8);
+    assert.deepStrictEqual(car.points.map((p) => p.res), [7]);
+    // nobody answered: nothing (the apps' pings don't ask every repeater)
     const none = M.learnFromField(cov, [{ lat: mid.lat, lon: mid.lon, n: 5, reps: [] }]);
-    assert.ok(none.delta[i] < -0.5 && none.delta[i] > Math.min(-0.5, L1.delta[i] / 2) - 5 && none.delta[i] > L1.delta[i], String(none.delta[i]));
-    // a single ping moves it only part way
-    const one = M.learnFromField(cov, [{ lat: mid.lat, lon: mid.lon, n: 1, reps: [{ key: 'aa', margin: 2, n: 1 }] }]);
-    assert.ok(one.delta[i] > L1.delta[i] && one.delta[i] < -0.5, String(one.delta[i]));
+    assert.strictEqual(none.delta[i], 0);
+    // a single ping moves it less
+    const one = M.learnFromField(cov, [{ lat: mid.lat, lon: mid.lon, n: 1, reps: [{ key: 'aa', margin: 16, n: 1 }] }]);
+    assert.ok(one.delta[i] > 0.3 && one.delta[i] < L1.delta[i], String(one.delta[i]));
     const copy = Object.assign({}, cov, { margins: Float32Array.from(cov.margins) });
     M.applyLearned(copy, L1);
-    assert.ok(copy.margins[i] > 5.5 && copy.margins[i] < 7.5 && copy.margins[0] === 10, String(copy.margins[i]));
+    assert.ok(copy.margins[i] > 12 && copy.margins[i] < 13.5 && copy.margins[0] === 10, String(copy.margins[i]));
     // how sure: measured near the ping, checked along a link, model elsewhere
     const conf = M.confidenceCells(cov, [{ lat: mid.lat, lon: mid.lon }], [{ fromLat: 47.6095, fromLon: -122.3295, toLat: 47.6095, toLon: -122.3040 }]);
     assert.strictEqual(conf.cells[i], 3);
@@ -534,7 +537,7 @@ function cellAt(cov, lat, lon) {
     const top = M.learnedTop(L1.points, [{ name: 'First <Hill>', lat: mid.lat + 0.001, lon: mid.lon }], 3);
     assert.strictEqual(top[0].near, 'First <Hill>');
     const html = M.learnedHtml(conf, top);
-    assert.ok(html.includes('Less than estimated, 8 dB, near First &lt;Hill&gt; (5 pings)') && /<strong>\d+%<\/strong>/.test(html), html);
+    assert.ok(html.includes('More than estimated, 6 dB, near First &lt;Hill&gt; (5 pings)') && /<strong>\d+%<\/strong>/.test(html), html);
   });
 
   await test('the mesh: links the model predicts between repeaters, rooftops included', () => {
@@ -713,38 +716,41 @@ function cellAt(cov, lat, lon) {
     const land = (lat, lon) => 10 + 0.3 * Math.sin(lat * 3000) + 0.3 * Math.cos(lon * 3000);
     const reps = [{ name: 'A', public_key: 'aaaaaaaa11', lat: 47.6, lon: -122.33 }, { name: 'B', public_key: 'bbbbbbbb22', lat: 47.6, lon: -122.322 }];
     const raw = (r, lat, lon) => { const p = M.pathProfile(r, lat, lon, land, 'ground', null, { noField: true }); return p.rxDbm - p.sensitivityDbm; };
-    // walks north of A, the model 6 dB too hopeful; A answers out to where
-    // that leaves it above the main mesh's floor; B 3 dB worse than that again
-    const cells = [];
-    for (let k = 1; k <= 30; k++) {
-      const lat = 47.6 + kmLat(0.1 * k), lon = -122.33 + (k % 3) * 0.002;
-      const mA = raw(reps[0], lat, lon) - 6, mB = raw(reps[1], lat, lon) - 9;
-      const answered = [];
-      if (mA > -6) answered.push({ key: 'aaaaaaaa', n: 2, margin: Math.round(mA * 10) / 10 });
-      if (mB > -6) answered.push({ key: 'bbbbbbbb', n: 2, margin: Math.round(mB * 10) / 10 });
-      cells.push({ lat, lon, car: false, n: 2, none: answered.length ? 0 : 2, reps: answered });
-      // the same street driven: 10 dB worse again
-      const inCar = [[mA, 'aaaaaaaa'], [mB, 'bbbbbbbb']].filter(([m]) => m - 10 > -6).map(([m, key]) => ({ key, n: 1, margin: Math.round((m - 10) * 10) / 10 }));
-      cells.push({ lat, lon, car: true, n: 1, none: inCar.length ? 0 : 1, reps: inCar });
-    }
+    // walks north of A, the model 6 dB too gloomy; readings top out at +12
+    // (SNR saturates) and B answers less often
+    const walk = (bias) => {
+      const out = [];
+      for (let k = 1; k <= 30; k++) {
+        const lat = 47.6 + kmLat(0.1 * k), lon = -122.33 + (k % 3) * 0.002;
+        const mA = raw(reps[0], lat, lon) + bias, mB = raw(reps[1], lat, lon) + bias - 3;
+        const answered = [];
+        if (mA > -6) answered.push({ key: 'aaaaaaaa', n: 2, margin: Math.round(Math.min(12, mA) * 10) / 10 });
+        if (mB > -6 && k % 2) answered.push({ key: 'bbbbbbbb', n: 2, margin: Math.round(Math.min(12, mB) * 10) / 10 });
+        out.push({ lat, lon, car: false, n: 2, none: answered.length ? 0 : 2, reps: answered });
+        // drives aren't used: a car's loss can't be read from floors
+        out.push({ lat, lon, car: true, n: 1, none: 0, reps: answered.map((r) => Object.assign({}, r, { margin: r.margin - 10 })) });
+      }
+      return out;
+    };
+    const cells = walk(6);
     const f = M.fitField(cells, reps, land);
     assert.ok(f.used, JSON.stringify(f));
-    // they say about −6 dB; weighed lightly, the map moves n / (n + 40) of that
-    assert.ok(f.fitDb < -5 && f.fitDb > -9, `fit ${f.fitDb}`);
-    assert.ok(Math.abs(f.offsetDb - f.fitDb * f.n / (f.n + 40)) < 0.2, `offset ${f.offsetDb} of ${f.fitDb} from ${f.n}`);
-    assert.ok(f.spreadDb < 3, `spread ${f.spreadDb}`);
-    assert.ok((f.reps.bbbbbbbb || 0) < (f.reps.aaaaaaaa || 0), JSON.stringify(f.reps));
-    assert.ok(f.carN >= 10 && Math.abs(f.carLossDb - 10) < 3, `car ${f.carLossDb} from ${f.carN}`);
-    assert.ok(/^Checked against \d+ spots measured on the ground from 3 radios: lowered by [\d.]+ dB to match/.test(M.fieldText(f, { radios: 3 })), M.fieldText(f, { radios: 3 }));
-    // a phone in a pocket, indoors or on a train hears nothing anywhere:
-    // spots where nothing answered, however near the repeaters, don't drag
-    // the correction down
+    assert.ok(f.fitDb > 3 && f.fitDb <= 6.5, `fit ${f.fitDb}`);
+    // weighed lightly: the map moves n / (n + 40) of that
+    assert.ok(Math.abs(f.offsetDb - Math.round(f.fitDb * f.n / (f.n + 40) * 10) / 10) < 0.11, `offset ${f.offsetDb} of ${f.fitDb} from ${f.n}`);
+    assert.strictEqual(f.carLossDb, null);
+    assert.ok(/^Checked against \d+ spots where a repeater answered from 3 radios: raised by [\d.]+ dB, weighed lightly\./.test(M.fieldText(f, { radios: 3 })), M.fieldText(f, { radios: 3 }));
+    // the model 6 dB too hopeful, but every reading near the repeaters at
+    // the +12 ceiling: floors can't lower it, so no correction
+    const hopeful = M.fitField(walk(-6), reps, land);
+    assert.ok(hopeful.used && hopeful.offsetDb === 0 && Object.keys(hopeful.reps).length === 0, JSON.stringify(hopeful));
+    assert.ok(/no correction needed/.test(M.fieldText(hopeful)));
+    // a phone in a pocket, indoors or on a train: spots where nothing
+    // answered change nothing
     const pocket = [];
-    for (let k = 1; k <= 60; k++) {
-      pocket.push({ lat: 47.6 + kmLat(0.05 * k), lon: -122.326, car: false, n: 4, none: 4, reps: [] });
-    }
+    for (let k = 1; k <= 60; k++) pocket.push({ lat: 47.6 + kmLat(0.05 * k), lon: -122.326, car: false, n: 4, none: 4, reps: [] });
     const f2 = M.fitField(cells.concat(pocket), reps, land);
-    assert.ok(Math.abs(f2.offsetDb - f.offsetDb) < 0.5, `pockets moved it: ${f.offsetDb} → ${f2.offsetDb}`);
+    assert.strictEqual(f2.offsetDb, f.offsetDb);
     // too few: not used, and says how many it has
     const few = M.fitField(cells.slice(0, 6), reps, land);
     assert.ok(!few.used && /\(\d so far\)/.test(M.fieldText(few)));
@@ -770,7 +776,7 @@ function cellAt(cov, lat, lon) {
     assert.ok(Math.abs(M.pathProfile(reps[0], lat, -122.33, land, 'ground').marginDb - (before + shift)) < 1e-9);
     assert.ok(Math.abs(at(M.adjustCov(cov, 'outdoors')) - (covBefore + shift)) < 0.11);
     assert.ok(Math.abs(at(M.adjustCov(cov, 'indoors')) - (covBefore + shift - 14)) < 0.11);
-    assert.ok(Math.abs(at(M.adjustCov(cov, 'car')) - (covBefore + shift - f.carLossDb)) < 0.11, 'a car costs what the drives measured');
+    assert.ok(Math.abs(at(M.adjustCov(cov, 'car')) - (covBefore + shift - 8)) < 0.11, 'a car costs the default');
     assert.strictEqual(at(cov), covBefore, 'the estimate itself is left alone');
     const rows = M.budgetRows(M.pathProfile(reps[0], lat, -122.33, land, 'ground'));
     assert.ok(rows.some((r) => r[0] === 'Correction from coverage measured on the ground'), JSON.stringify(rows));

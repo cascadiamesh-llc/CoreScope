@@ -43,7 +43,7 @@ The MediaMesh tab shows `mapped_km2` as **km² mapped by people**, and the cover
 
 ## How the estimate uses them
 
-For each cell and each MediaMesh repeater within 6 km, the card compares the measured margin with the model's (before its 10 dB safety margin). A repeater that didn't answer in a cell where another one did counts as below −6 dB there (it would have answered on the main mesh, 6 dB more sensitive at 62.5 kHz); a cell where nothing answered at all is left out, since a phone in a pocket, indoors or on a train hears nothing anywhere. With at least 15 spots where a repeater answered, the correction that fits the walks best moves the whole ground estimate, but weighed lightly: n spots count for n / (n + 40) of it (15 spots, about a quarter), within ±10 dB. A repeater with 5 spots of its own gets its own correction too, pulled strongly towards the overall one (30 spots' worth). Drives, with 10 or more cells, set what **In a car** takes off. The correction replaces the one from links between repeaters for people on the ground, and shows in each terrain profile's budget.
+For each spot and each MediaMesh repeater that answered there, the card compares the measured margin with the model's (before its 10 dB safety margin). A measured margin is a floor, not a measurement: it comes from the main mesh's SNR, and LoRa's SNR readings top out around +12 dB, so a repeater 100 m away reads no better than one at the edge of range. So mapping can only raise the estimate, never lower it. Repeaters that didn't answer aren't counted: the apps' pings don't reach or ask every repeater (repeaters the model put 30 dB and more above the floor have stayed silent beside ones that answered). With at least 15 spots where a repeater answered, the whole ground estimate is raised by how far the spots' floors sit above the model (the 90th percentile, so one odd spot can't lead it), weighed lightly: n spots count for n / (n + 40) of it, at most 10 dB. A repeater with 5 spots of its own may be raised a little more, pulled strongly towards the overall one (30 spots' worth). A car's loss can't be measured from floors, so **In a car** stays 8 dB. The correction replaces the one from links between repeaters for people on the ground, and shows in each terrain profile's budget.
 
 ## Config
 
@@ -54,14 +54,13 @@ For each cell and each MediaMesh repeater within 6 km, the card compares the mea
 All of this applies only while **Mapped by people** is ticked (off by
 default): unticked, the map is the model alone. Ticked, the hexagons show,
 the whole-estimate and per-repeater corrections above apply, and the
-people-on-the-ground estimate leans toward what people found, where they found
-it: each mapped cell's best measured margin (outdoors: a vehicle's cells get
-the car's loss back; a cell where no MediaMesh repeater answered counts as 6 dB
-short, for half as much and at most 5 dB down) against the estimate there,
-within ±10 dB, spread to the estimate's cells within 600 m, nearest counting
-most, and weighed lightly: a spot's pings count w / (w + 6) of what they say
-(five pings, a little under half), so mapping nudges the model rather than
-overriding it.
+people-on-the-ground estimate is raised where people found more than it
+says: each mapped cell's best measured margin (a floor; a vehicle's cells get
+the car's loss back) above the estimate there, by at most 10 dB, spread to
+the estimate's cells within 600 m, nearest counting most, and weighed
+lightly: a spot's pings count w / (w + 6) of what they say (five pings, a
+little under half). Cells where nobody answered, or where the estimate
+already reaches, change nothing.
 
 **How sure** colours what the estimate reaches by how it is known: dark
 blue within 300 m of a mapped cell, light blue within 500 m of the line of a

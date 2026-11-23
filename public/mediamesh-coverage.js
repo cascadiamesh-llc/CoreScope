@@ -84,16 +84,14 @@
       { key: 'indoors', label: 'Indoors', lossDb: 14 },
     ],
     // Fitting the estimate for people on the ground to measured coverage
-    // points (GET /api/mediamesh/coverage-points): at least minCells cells
-    // where a repeater answered, a correction within +maxUpDb / -maxDownDb,
-    // weighed lightly: it counts n / (n + shrink) of what the n spots say,
-    // so mapping nudges the estimate rather than overriding it;
-    // each repeater with repMinCells of its own gets its own, pulled towards
-    // the overall one (repShrink cells' worth). A repeater within nearKm of
-    // a cell that didn't answer there, while another did, counts as below
-    // unheardDb (it would have answered on the main mesh, 6 dB more
-    // sensitive, above that); cells where nothing answered are left out.
-    field: { minCells: 15, maxUpDb: 10, maxDownDb: 10, shrink: 40, repMinCells: 5, repShrink: 30, nearKm: 6, unheardDb: -6, maxPairs: 800, carMinCells: 10 },
+    // points (GET /api/mediamesh/coverage-points): at least minCells spots
+    // where a repeater answered, each a floor (SNR readings top out around
+    // +12 dB), so the correction only raises the estimate, by at most
+    // maxUpDb, and weighed lightly: n spots count for n / (n + shrink) of
+    // what they say; a repeater with repMinCells of its own gets a little
+    // more, pulled towards the overall one (repShrink spots' worth).
+    // Repeaters that didn't answer aren't counted (fitField).
+    field: { minCells: 15, maxUpDb: 10, shrink: 40, repMinCells: 5, repShrink: 30, unheardDb: -6, maxPairs: 800 },
     // A quicker, coarser version of `ground`, for screening many spots or
     // drawing hundreds of main-mesh repeaters.
     quick: { rays: 360, radiusKm: 20, stepM: 100, cellM: 200 },
@@ -1595,14 +1593,16 @@
 
   /** How far a measured cell's correction reaches (m), and how much it may
    * move the estimate (dB). */
-  const LEARN = { radiusM: 600, maxDb: 10, unheardDb: 5, shrinkW: 6, linkM: 500, measuredM: 300 };
+  const LEARN = { radiusM: 600, maxDb: 10, shrinkW: 6, linkM: 500, measuredM: 300 };
 
   /**
    * Local corrections from the cells people mapped (fieldPoints cells):
-   * each cell's best measured margin against the estimate there (outdoors;
-   * a vehicle's cells get the car's loss back; a cell where no MediaMesh
-   * repeater answered counts as CONFIG.field.unheardDb), spread to the
-   * estimate's cells within LEARN.radiusM, nearest counting most.
+   * where a repeater answered, its best measured margin (a floor; a
+   * vehicle's cells get the car's loss back) above the estimate there
+   * raises the estimate, by at most LEARN.maxDb, spread to the estimate's
+   * cells within LEARN.radiusM, nearest counting most, weighed lightly.
+   * Cells where nobody answered, or where the estimate already reaches, add
+   * nothing.
    * Returns { delta (dB per cell), points: [{ lat, lon, res, n }] }.
    */
   function learnFromField(cov, cells, carLossDb) {
@@ -1615,16 +1615,17 @@
       const at = cellAt(cov, c.lat, c.lon);
       if (!at) return;
       const heard = (c.reps || []).map((r) => r.margin).filter(Number.isFinite);
-      let meas = heard.length ? Math.max(...heard) : CONFIG.field.unheardDb;
-      if (c.car && heard.length) meas += carDb;
+      // nobody answering isn't counted (the apps' pings don't reach or ask
+      // every repeater), and a reading is a floor (signal readings top out
+      // around +12 dB): mapping only raises the estimate, where it said no
+      if (!heard.length) return;
+      let meas = Math.max(...heard);
+      if (c.car) meas += carDb;
       const model = at.margin > NO_DATA / 2 ? at.margin : CONFIG.field.unheardDb - 10;
-      // nobody answered where the estimate already says no: nothing to learn
-      if (!heard.length && model < CONFIG.field.unheardDb) return;
-      // nobody answering can also be a phone indoors or in a pocket: it
-      // counts for less, and moves the estimate down by at most LEARN.unheardDb
-      const res = Math.max(heard.length ? -LEARN.maxDb : -LEARN.unheardDb, Math.min(LEARN.maxDb, meas - model));
+      const res = Math.min(LEARN.maxDb, meas - model);
+      if (!(res > 0)) return;
       points.push({ lat: c.lat, lon: c.lon, res, n: c.n });
-      const w0 = Math.min(5, c.n) * (heard.length ? 1 : 0.5);
+      const w0 = Math.min(5, c.n);
       const rRow = Math.ceil(LEARN.radiusM / M_PER_DEG_LAT / cellH);
       const rCol = Math.ceil(LEARN.radiusM / (M_PER_DEG_LAT * Math.cos(c.lat * Math.PI / 180)) / cellW);
       const row0 = Math.floor((b.north - c.lat) / cellH), col0 = Math.floor((c.lon - b.west) / cellW);
@@ -2261,42 +2262,33 @@
 
   // ---- Measured coverage points ------------------------------------------------
 
-  /** The correction (dB) that best fits pairs: { raw (the model's margin
-   * before any correction), meas (measured, heard) or limit (not heard: the
-   * margin was below it), w }. Least squares on the heard, and a penalty
-   * where the corrected model says a repeater that didn't answer should have. */
+  /** The correction (dB) the measured spots ask for: each is a floor (the
+   * margin was at least what it read: SNR readings top out around +12 dB,
+   * so a strong signal reads no higher than a fair one), so they can only
+   * raise the estimate. Robust: by the 90th percentile of how far each
+   * spot's floor is above the model, never below 0. pairs: [{ raw, meas }]. */
   function fieldSolve(pairs) {
-    const cost = (d) => {
-      let s = 0;
-      for (const q of pairs) {
-        if (q.meas !== undefined) { const e = q.meas - q.raw - d; s += q.w * e * e; } else {
-          const e = q.raw + d - q.limit;
-          if (e > 0) s += q.w * e * e;
-        }
-      }
-      return s;
-    };
-    let lo = -40, hi = 25;
-    for (let k = 0; k < 60; k++) {
-      const a = lo + (hi - lo) / 3, b = hi - (hi - lo) / 3;
-      if (cost(a) <= cost(b)) hi = b; else lo = a;
-    }
-    return (lo + hi) / 2;
+    const v = pairs.filter((q) => Number.isFinite(q.meas) && Number.isFinite(q.raw)).map((q) => q.meas - q.raw).sort((a, b) => a - b);
+    if (!v.length) return 0;
+    return Math.max(0, v[Math.min(v.length - 1, Math.floor(v.length * 0.9))]);
   }
 
   /**
    * Fits the estimate for people on the ground to measured coverage points:
    * cells is GET /api/mediamesh/coverage-points' cells, reps the placed
-   * repeaters, elevAt the terrain. Each cell and nearby repeater is a pair:
-   * the margin measured (from the main mesh's SNR, as the apps estimate it)
-   * or, where it didn't answer, a ceiling; against the model's margin with no
-   * safety margin taken off. Walks fit the correction; drives, where there
-   * are enough, what a car costs on top. Returns { used, n, cells, offsetDb,
-   * fitDb, spreadDb, reps: { key8: dB }, carLossDb, carN }.
+   * repeaters, elevAt the terrain. Each cell and repeater that answered
+   * there is a pair: the margin measured (from the main mesh's SNR, as the
+   * apps estimate it), a floor, against the model's margin with no safety
+   * margin taken off. A repeater that didn't answer isn't counted: the apps'
+   * pings don't reach or ask every repeater, and repeaters the model puts
+   * 30 dB and more above the floor have stayed silent beside ones that
+   * answered. Walks only; a car's loss can't be measured from floors, so it
+   * stays the default. Weighed lightly (CONFIG.field.shrink). Returns
+   * { used, n, cells, offsetDb, fitDb, short, reps: { key8: dB }, carLossDb, carN }.
    */
   function fitField(cells, reps, elevAt) {
     const F = CONFIG.field;
-    const none = { used: false, n: 0, cells: 0, offsetDb: 0, fitDb: null, spreadDb: null, reps: {}, carLossDb: null, carN: 0 };
+    const none = { used: false, n: 0, cells: 0, offsetDb: 0, fitDb: null, short: 0, spreadDb: null, reps: {}, carLossDb: null, carN: 0 };
     if (!elevAt || !Array.isArray(cells) || !cells.length) return none;
     const byKey = new Map();
     reps.forEach((r) => { if (Number.isFinite(r.lat) && Number.isFinite(r.lon) && key8(r)) byKey.set(key8(r), r); });
@@ -2306,47 +2298,31 @@
       return p ? p.rxDbm - p.calibrationDb - p.sensitivityDbm : null;
     };
     const pairs = [];
-    const sorted = cells.filter((c) => c && c.n > 0 && Number.isFinite(c.lat) && Number.isFinite(c.lon)).sort((a, b) => b.n - a.n);
+    const sorted = cells.filter((c) => c && c.n > 0 && !c.car && Number.isFinite(c.lat) && Number.isFinite(c.lon)).sort((a, b) => b.n - a.n);
     for (const c of sorted) {
       if (pairs.length >= F.maxPairs) break;
-      const heard = new Map((c.reps || []).map((r) => [String(r.key || '').toLowerCase(), r]));
-      // A spot where nothing answered at all says more about the phone (in
-      // a pocket, indoors, on a train) than about any one repeater: only
-      // where the radio was plainly working does a repeater's silence count.
-      const anyAnswered = heard.size > 0;
-      byKey.forEach((rep, k) => {
-        const h = heard.get(k);
-        if (!h && (!anyAnswered || distanceM(rep.lat, rep.lon, c.lat, c.lon) > F.nearKm * 1000)) return;
+      (c.reps || []).forEach((h) => {
+        const k = String(h.key || '').toLowerCase(), rep = byKey.get(k);
+        if (!rep || !Number.isFinite(h.margin)) return;
         const m = raw(rep, c);
-        if (m === null) return;
-        if (h) pairs.push({ key: k, car: !!c.car, raw: m, meas: h.margin, w: Math.min(5, h.n || 1) });
-        // didn't answer in any of the cell's samples
-        else if (m > F.unheardDb - 15) pairs.push({ key: k, car: !!c.car, raw: m, limit: F.unheardDb, w: Math.min(5, c.n) });
+        if (m !== null) pairs.push({ key: k, raw: m, meas: h.margin });
       });
     }
-    const walk = pairs.filter((q) => !q.car), heardWalk = walk.filter((q) => q.meas !== undefined);
-    const out = Object.assign({}, none, { n: heardWalk.length, cells: sorted.length });
-    if (heardWalk.length < F.minCells) return out;
-    const fitDb = fieldSolve(walk);
-    const share = heardWalk.length / (heardWalk.length + F.shrink);
-    const offsetDb = Math.round(Math.max(-F.maxDownDb, Math.min(F.maxUpDb, fitDb * share)) * 10) / 10;
-    const spreadDb = Math.round(median(heardWalk.map((q) => Math.abs(q.meas - q.raw - offsetDb))) * 10) / 10;
+    const out = Object.assign({}, none, { n: pairs.length, cells: sorted.length });
+    if (pairs.length < F.minCells) return out;
+    const fitDb = Math.round(fieldSolve(pairs) * 10) / 10;
+    const share = pairs.length / (pairs.length + F.shrink);
+    const offsetDb = Math.round(Math.min(F.maxUpDb, fitDb * share) * 10) / 10;
     const repAdj = {};
     byKey.forEach((_, k) => {
-      const mine = walk.filter((q) => q.key === k), n = mine.filter((q) => q.meas !== undefined).length;
-      if (n < F.repMinCells) return;
-      const own = Math.max(-F.maxDownDb, Math.min(F.maxUpDb, fieldSolve(mine)));
-      const adj = Math.round((own - offsetDb) * n / (n + F.repShrink) * 10) / 10;
-      if (adj) repAdj[k] = adj;
+      const mine = pairs.filter((q) => q.key === k);
+      if (mine.length < F.repMinCells) return;
+      const own = Math.min(F.maxUpDb, fieldSolve(mine));
+      const adj = Math.round((own * mine.length / (mine.length + F.shrink) - offsetDb) * mine.length / (mine.length + F.repShrink) * 10) / 10;
+      if (adj > 0) repAdj[k] = adj;
     });
-    const car = pairs.filter((q) => q.car), carN = car.filter((q) => q.meas !== undefined).length;
-    let carLossDb = null;
-    if (carN >= F.carMinCells) {
-      // the walks' corrections, then what is left over is the car
-      const left = car.map((q) => Object.assign({}, q, { raw: q.raw + offsetDb + (repAdj[q.key] || 0) }));
-      carLossDb = Math.round(Math.max(0, Math.min(25, -fieldSolve(left))) * 10) / 10;
-    }
-    return Object.assign(out, { used: true, offsetDb, fitDb, spreadDb, reps: repAdj, carLossDb, carN });
+    const short = pairs.filter((q) => q.raw + offsetDb + (repAdj[q.key] || 0) < q.meas).length;
+    return Object.assign(out, { used: true, offsetDb, fitDb, short, reps: repAdj });
   }
 
   /** One line on how the ground estimate compares with what was measured. */
@@ -2357,13 +2333,13 @@
         ? `Not yet checked against coverage measured on the ground: it needs ${F.minCells} spots where a repeater answered (${f.n} so far).`
         : 'Not yet checked against coverage measured on the ground. Switch on Share coverage points in MeshCore Open TAK or a Wadamesh TAK standalone, then map MediaMesh coverage on a walk.';
     }
-    const adj = f.offsetDb === 0 ? 'no correction needed' : `${f.offsetDb > 0 ? 'raised' : 'lowered'} by ${fmtDb(Math.abs(f.offsetDb))} dB to match`;
-    const capped = f.fitDb !== null && Math.abs(f.fitDb - f.offsetDb) > 0.05 ? ` (they suggest ${f.fitDb > 0 ? '+' : '−'}${fmtDb(Math.abs(f.fitDb))} dB; mapping is weighed lightly)` : '';
-    const nr = Object.keys(f.reps).length;
     const who = info && info.radios ? ` from ${info.radios} radio${info.radios === 1 ? '' : 's'}` : '';
-    return `Checked against ${f.n} spots measured on the ground${who}: ${adj}${capped}, typically within ±${fmtDb(f.spreadDb)} dB.`
-      + (nr ? ` ${nr} repeater${nr === 1 ? ' has' : 's have'} a correction of ${nr === 1 ? 'its' : 'their'} own.` : '')
-      + (Number.isFinite(f.carLossDb) ? ` Drives put a car at ${fmtDb(f.carLossDb)} dB.` : '');
+    const adj = f.offsetDb > 0 ? `raised by ${fmtDb(f.offsetDb)} dB, weighed lightly` : 'no correction needed';
+    const nr = Object.keys(f.reps).length;
+    return `Checked against ${f.n} spots where a repeater answered${who}: ${adj}.`
+      + (f.short ? ` The estimate still falls short of what was read at ${f.short} of them.` : '')
+      + (nr ? ` ${nr} repeater${nr === 1 ? ' is' : 's are'} raised a little more.` : '')
+      + ' Each reading counts as at least that much, since signal readings top out around +12 dB.';
   }
 
   /** Measured cell colours, as the apps draw their coverage dots. */
