@@ -213,6 +213,7 @@
 
   function pageHtml() {
     return `<div class="mms-page">
+      ${root.MediaMeshNav ? root.MediaMeshNav.html('status') : ''}
       <div id="mmsBanner"></div>
       <div class="mms-body">
         <div class="mms-head">

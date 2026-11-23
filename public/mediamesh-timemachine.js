@@ -89,6 +89,7 @@
       <div id="mmt${s}Map" class="mmt-map" role="img" aria-label="Map of MediaMesh on day ${s}"></div>
     </div>`;
     return `<div class="mml-page mmt-page">
+      ${root.MediaMeshNav ? root.MediaMeshNav.html('timemachine') : ''}
       <div class="mml-head">
         <h1>Time machine</h1>
         <p class="text-muted">MediaMesh on any day since it began, two days side by side: its repeaters, the links they pass photos, video and voice over, and the ground they reach.</p>

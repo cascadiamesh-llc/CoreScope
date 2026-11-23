@@ -65,6 +65,7 @@
   async function init(app) {
     destroyed = false;
     app.innerHTML = `<div class="mmc-page">
+      ${root.MediaMeshNav ? root.MediaMeshNav.html('cascadia') : ''}
       <div class="mmc-head"><h1>MediaMesh across Cascadia</h1>
         <p class="text-muted">This analyzer's MediaMesh and the other analyzers it knows, on one map, with the gaps between them.</p></div>
       <div class="mmc-split">

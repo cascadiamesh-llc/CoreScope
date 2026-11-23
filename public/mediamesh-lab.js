@@ -113,6 +113,7 @@
 
   function pageHtml() {
     return `<div class="mml-page">
+      ${root.MediaMeshNav ? root.MediaMeshNav.html('lab') : ''}
       <div class="mml-head">
         <h1>MediaMeshLab</h1>
         <p class="text-muted">Change the mesh and see what happens: take repeaters down, add one where you'd like one, and replay the last month's clips through it. Nothing you do here changes the real mesh.</p>

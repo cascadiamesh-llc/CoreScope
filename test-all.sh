@@ -33,6 +33,7 @@ node tests/unit/test-mediamesh-cascadia.js
 node tests/unit/test-mediamesh-live.js
 node tests/unit/test-mediamesh-windtunnel.js
 node tests/unit/test-mediamesh-timemachine.js
+node tests/unit/test-mediamesh-nav.js
 node tests/unit/test-mediamesh-cliplog.js
 node tests/unit/test-live-nightsky.js
 node tests/unit/test-mediamesh-3d.js

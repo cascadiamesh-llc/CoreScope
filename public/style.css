@@ -6643,6 +6643,20 @@ html.mm-embed--sky .mm-embed-open:hover { background: var(--mm-sky-ink); color: 
 .mms-note { font-size: 0.85em; margin: 6px 0 0; }
 
 /* ---- MediaMeshLab (mediamesh-lab.js) ---- */
+/* The MediaMesh bar (mediamesh-nav.js): every MediaMesh page, one row */
+.mmnav { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px; margin: 0 0 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--card-bg); }
+.mmnav-title { font-weight: 700; color: var(--mediamesh-text-color, var(--text)); padding: 0 8px 0 4px; }
+.mmnav-item { display: inline-flex; align-items: center; min-height: 32px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--border); color: var(--text); text-decoration: none; white-space: nowrap; }
+.mmnav-item:hover { border-color: var(--mediamesh-text-color, var(--accent)); }
+.mmnav-item--on { background: var(--mediamesh-text-color, var(--accent)); border-color: transparent; color: var(--card-bg); font-weight: 600; }
+.mmnav-short { display: none; }
+@media (max-width: 600px) {
+  .mmnav { gap: 5px; padding: 6px; }
+  .mmnav-title { display: none; }
+  .mmnav-item { padding: 0 10px; font-size: 0.85em; min-height: 30px; }
+  .mmnav-long { display: none; }
+  .mmnav-short { display: inline; }
+}
 .mml-page { padding: 16px 20px 24px; display: flex; flex-direction: column; gap: 14px; max-width: 1400px; margin: 0 auto; width: 100%; box-sizing: border-box; }
 .mml-head h1 { margin: 0 0 4px; color: var(--mediamesh-text-color, var(--text)); }
 .mml-head p { margin: 0; }

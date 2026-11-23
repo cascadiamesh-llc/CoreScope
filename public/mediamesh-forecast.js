@@ -134,6 +134,7 @@
 
   function pageHtml() {
     return `<div class="mmf-page">
+      ${root.MediaMeshNav ? root.MediaMeshNav.html('forecast') : ''}
       <div class="mmf-head">
         <h1>Forecast</h1>
         <p class="text-muted">How far MediaMesh should carry over the next days: the weather ahead, and how each link heard on radio2 has done in weather like it.</p>

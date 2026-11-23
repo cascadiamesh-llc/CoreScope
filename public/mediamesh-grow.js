@@ -134,6 +134,7 @@
 
   function pageHtml() {
     return `<div class="mmg-page">
+      ${root.MediaMeshNav ? root.MediaMeshNav.html('grow') : ''}
       <div class="mmg-head">
         <h1>Grow the mesh</h1>
         <p class="text-muted">The five moves that would do the most, one after another: main-mesh repeaters that could turn radio2 on, and high ground with no repeater yet.</p>
