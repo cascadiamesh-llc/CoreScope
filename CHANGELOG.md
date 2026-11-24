@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [3.19.0] - 2026-11-24
+
+See [docs/release-notes/v3.19.0.md](docs/release-notes/v3.19.0.md) for the full notes. 32 commits since v3.18.0: 14 fix, 8 feat, 5 test, 2 ci, 2 docs, 1 refactor.
+
+### Highlights
+- **The ingestor rebuilds the analyzer `observers` table once** (#2407, #2445) - an explicit `idx` primary key; local indexes, triggers and views are kept. It refuses, and ingestor and server stop, on a column CoreScope did not create or a NULL `id`; v3.18.0 still starts then. **Check before upgrading if you changed `observers` by hand.**
+- **The content-hash migration from #787 now runs, in the ingestor** (#2409) - only changes old installs with data from before April 18; restart the server if its log line asks.
+- **`users.db` migrates to schema v10 with user accounts on** (#2429) - a v3.18.x binary refuses it afterwards, so keep the pre-upgrade copy for a rollback.
+- **SNR per node from direct receptions only** (#2451, #2452, #2453, #2454) - Avg SNR, signal grade and "Heard By, direct" change; nodes nobody heard directly show no SNR. `topHops[].bestSnr`, `topHops[].medianSnr` and `hopsVsSnr` are removed from the API.
+- **Planner Coverage tab** (#2406), **more map providers and your own tile servers** (#2434), **plain SMTP for account mail plus a test mail** (#2466), **repeater claims from mobile apps** (#2429, #2430). All opt-in.
+- **Rows lost at startup** (#2408) and **ingest stopping after a broker restart** (#2413) are fixed.
+
 ## [3.18.0] - 2026-11-17
 
 See [docs/release-notes/v3.18.0.md](docs/release-notes/v3.18.0.md) for the full notes. 11 commits since v3.17.0: 5 fix, 3 feat, 1 test, 1 refactor, 1 docs.

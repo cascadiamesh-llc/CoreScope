@@ -45,19 +45,48 @@ const pruneBatchTransmissions = 250
 // pins the plan.
 const pruneAgedTransmissionIDs = `SELECT id FROM transmissions WHERE first_seen < ? ORDER BY first_seen, id LIMIT ?`
 
-// The two statements of one prune batch. Child observations go first (no
-// CASCADE in SQLite).
-const (
-	pruneObservationsBatch  = `DELETE FROM observations WHERE transmission_id IN (` + pruneAgedTransmissionIDs + `)`
-	pruneTransmissionsBatch = `DELETE FROM transmissions WHERE id IN (` + pruneAgedTransmissionIDs + `)`
-	// Sparse rx_radio_id rows of multi-radio observers (#1869), keyed by the
-	// observation, so they go before the observations they point at.
-	pruneObservationRadiosBatch = `DELETE FROM observation_radios WHERE observation_id IN (
-		SELECT id FROM observations WHERE transmission_id IN (` + pruneAgedTransmissionIDs + `))`
-	// Sparse MediaMesh marks (mediamesh.go), likewise keyed by the observation.
-	pruneObservationMediaMeshBatch = `DELETE FROM observation_mediamesh WHERE observation_id IN (
-		SELECT id FROM observations WHERE transmission_id IN (` + pruneAgedTransmissionIDs + `))`
-)
+// The statements of one prune batch.
+var pruneObservationRadiosBatch, pruneObservationsBatch, pruneTransmissionsBatch = transmissionDeleteStatements(pruneAgedTransmissionIDs)
+
+// The MediaMesh marks of one prune batch (mediaMeshObservationDeletes).
+var pruneObservationMediaMeshBatches = mediaMeshObservationDeletes(pruneAgedTransmissionIDs)
+
+// transmissionDeleteStatements returns the statements that delete the
+// transmissions selected by sel together with the rows that point at them, in
+// the order they must run. sel is the body of an IN (...) list: a subquery, or
+// "?" for a single id. Every path that deletes transmissions (retention prune,
+// content-hash merge) uses this so the child list lives in one place.
+//
+//   - observation_radios: sparse rx_radio_id rows of multi-radio observers
+//     (#1869), keyed by the observation, so they go before the observations.
+//   - observations: no CASCADE on transmission_id, and foreign keys are
+//     enforced, so they go before the transmissions.
+//   - advert_route_evidence and tx_rewrite_feed are ON DELETE CASCADE and
+//     need no statement of their own.
+//
+// MediaMesh's own marks go too: mediaMeshObservationDeletes, run with the
+// radios statement.
+func transmissionDeleteStatements(sel string) (radios, observations, transmissions string) {
+	radios = `DELETE FROM observation_radios WHERE observation_id IN (
+		SELECT id FROM observations WHERE transmission_id IN (` + sel + `))`
+	observations = `DELETE FROM observations WHERE transmission_id IN (` + sel + `)`
+	transmissions = `DELETE FROM transmissions WHERE id IN (` + sel + `)`
+	return radios, observations, transmissions
+}
+
+// mediaMeshObservationDeletes: the MediaMesh fork's sparse marks
+// (dbschema/mediamesh.go), observation_mediamesh and observation_mainmesh,
+// keyed by the observation like observation_radios and without a foreign
+// key, so they go before the observations they point at or they'd be left
+// behind. sel as for transmissionDeleteStatements; same arguments.
+func mediaMeshObservationDeletes(sel string) []string {
+	out := make([]string, 0, 2)
+	for _, t := range []string{"observation_mediamesh", "observation_mainmesh"} {
+		out = append(out, `DELETE FROM `+t+` WHERE observation_id IN (
+		SELECT id FROM observations WHERE transmission_id IN (`+sel+`))`)
+	}
+	return out
+}
 
 // PruneOldPackets deletes transmissions (and their child observations)
 // older than `days`. Returns count of transmissions deleted.
@@ -94,8 +123,10 @@ func (s *Store) pruneOldPackets(days int, betweenBatches func()) (int64, error) 
 			if _, err := tx.Exec(pruneObservationRadiosBatch, cutoff, pruneBatchTransmissions); err != nil {
 				return fmt.Errorf("prune observation radios: %w", err)
 			}
-			if _, err := tx.Exec(pruneObservationMediaMeshBatch, cutoff, pruneBatchTransmissions); err != nil {
-				return fmt.Errorf("prune observation mediamesh: %w", err)
+			for _, q := range pruneObservationMediaMeshBatches {
+				if _, err := tx.Exec(q, cutoff, pruneBatchTransmissions); err != nil {
+					return fmt.Errorf("prune observation mediamesh: %w", err)
+				}
 			}
 			if _, err := tx.Exec(pruneObservationsBatch, cutoff, pruneBatchTransmissions); err != nil {
 				return fmt.Errorf("prune observations: %w", err)

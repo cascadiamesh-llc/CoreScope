@@ -49,7 +49,57 @@ API instead of Brevo:
 }
 ```
 
-Everything else below applies to both providers, except where it names one.
+#### Or: use your own SMTP server
+
+CoreScope can also send through any SMTP server (your own Postfix, a mail host you
+already use) with no HTTP API or webhook involved:
+
+1. Make sure the server accepts mail from the address in `mail.fromEmail`.
+2. In `config.json`, set `mail.provider` to `"smtp"` and `mail.smtpHost` to the server's
+   name, e.g. `smtp.example.org`.
+3. If the server requires a login, set `mail.smtpUser` and provide the password as
+   `mail.smtpPassword` or, better, the environment variable `CORESCOPE_SMTP_PASSWORD`,
+   which wins over the config value. User and password are set together or not at all.
+   Leading and trailing whitespace of the password is removed. Only AUTH PLAIN is used.
+
+```json
+"mail": {
+  "provider": "smtp",
+  "smtpHost": "smtp.example.org",
+  "smtpPort": 587,
+  "smtpTls": "starttls",
+  "smtpUser": "noreply@example.org",
+  "smtpPassword": "<password, or leave out and use the env variable>",
+  "fromEmail": "noreply@example.org",
+  "fromName": "My CoreScope"
+}
+```
+
+- `smtpTls` is `starttls` (default), `tls` (implicit TLS) or `none`, in any letter case.
+  `none` is accepted only for the host `localhost`, `127.0.0.1` or `::1`.
+- `smtpPort` defaults to 587 with `starttls`, 465 with `tls` and 25 with `none`. 0 or
+  leaving it out means the default. Otherwise 1 to 65535.
+- With `starttls` and `tls` the server certificate is always verified against
+  `smtpHost`. There is no option to skip the check.
+- `smtpHost` may be an IPv6 literal in brackets, e.g. `[2001:db8::25]`. Verification
+  then needs a certificate that names that address.
+- A line break in `mail.fromName` is a startup error with SMTP.
+- An address with non-ASCII characters (e.g. `jürgen@example.org`) needs a server that
+  supports SMTPUTF8. Without it the mail fails with "the recipient address is not ASCII
+  and the server does not support SMTPUTF8" (or "sender" for `mail.fromEmail`).
+- `mail.webhookSecret` in the config is a startup error with SMTP, and
+  `CORESCOPE_BREVO_WEBHOOK_SECRET` is ignored.
+- At startup CoreScope connects, negotiates TLS (unless `smtpTls` is `none`) and logs in
+  (only when `smtpUser` is set), then quits without sending
+  anything. The log shows `[mail] SMTP ready: smtp.example.org:587 (starttls)` or
+  `[mail] SMTP check failed: <error>`. After a failed check the server keeps starting.
+- There is **no delivery status** with SMTP: the server only tells CoreScope that it
+  accepted the mail. A user's mail shows as "sent (no delivery status with SMTP)",
+  *Refresh status* is hidden and the admin overview shows one *Sent* figure instead of
+  delivered, bounced, blocked and so on. Bounces arrive in the mailbox of the sender
+  address, and CoreScope never flags an address as bouncing.
+
+Everything else below applies to every provider, except where it names one.
 
 ### 2. Configure
 
@@ -75,11 +125,16 @@ incomplete, and the log says what is missing.
 | `dbPath` | Where accounts are stored. Default: `users.db` next to the analyzer database. |
 | `sessionDays` | Login lifetime, extended while in use. Default 30, maximum 365. |
 | `trustedProxies` | CIDRs of your reverse proxy, so the per-IP login limits see real client IPs. Without it, behind a proxy every client shares the proxy's IP for the per-IP limits (they are switched off when that IP is loopback or private). Per-address and per-account limits apply either way. |
-| `mail.provider` | `brevo` (default) or `postal`. |
+| `mail.provider` | `brevo` (default), `postal` or `smtp`. |
 | `mail.brevoApiKey` | Brevo only: the API key. `CORESCOPE_BREVO_API_KEY` wins over it. Required with Brevo. |
 | `mail.postalBaseUrl` | Postal only: your Postal host, https (http only for localhost). Required with Postal. |
 | `mail.postalApiKey` | Postal only: the key of the server's API credential. `CORESCOPE_POSTAL_API_KEY` wins over it. Required with Postal. |
-| `mail.webhookSecret` | Enables delivery status (below). At least 16 characters. With Postal, only letters, digits, `.`, `_` and `-`. |
+| `mail.smtpHost` | SMTP only: the server. Required with SMTP. |
+| `mail.smtpPort` | SMTP only: default 587 (`starttls`), 465 (`tls`), 25 (`none`). |
+| `mail.smtpTls` | SMTP only: `starttls` (default), `tls` or `none` (localhost only). |
+| `mail.smtpUser` | SMTP only: login name. Set together with the password. |
+| `mail.smtpPassword` | SMTP only: the password. `CORESCOPE_SMTP_PASSWORD` wins over it. |
+| `mail.webhookSecret` | Enables delivery status (below). At least 16 characters. With Postal, only letters, digits, `.`, `_` and `-`. Not allowed with SMTP. |
 
 ### 3. The first admin
 
@@ -122,6 +177,19 @@ If the provider cannot reach your instance, use **Refresh status** in a user's d
 instead: CoreScope then asks the provider directly. Mails sent before you switched
 provider cannot be refreshed. "Opened" is indicative only. Some mail apps load
 tracking pixels automatically, and others block them.
+
+### Send a test mail
+
+To check the mail setup without registering an account, open **Admin, Overview**, find
+the *System* card and press *Send test mail*. It works with every provider and sends a
+fixed message only to your own address (the address of the logged-in admin, never one you
+type). Each admin and each IP address can send 3 per 10 minutes, and a failed attempt
+counts too. The counter is in memory, so a restart resets it. The attempt is recorded in
+the audit log as `mail.test` (result `ok` or `failed`). A mail that was sent also appears
+in the mail log with purpose `test`. With Brevo or Postal, once the webhook is set up or
+*Refresh status* is pressed, the delivery status of the test mail shows in your own
+entry's details under **Admin, Users**, and a bounce of it flags your own address like
+any other mail.
 
 ### When mail fails
 
@@ -305,7 +373,8 @@ With user management on, a user logs in from the CoreDrive RX app with their ema
 RX then holds a **device token** instead of a cookie: it shows under *My account, Devices* as
 "CoreDrive RX – <device name>", lasts 90 days from its last use, and *Log out* there revokes it.
 The token is limited to the account routes RX needs (`/api/auth/me`, `/api/auth/logout`,
-`/api/account/settings`, `/api/account/companions*`); anything else answers 403.
+`/api/account/settings`, `/api/account/companions*`); anything else answers 403. Other apps can
+ask for other scopes instead (see *Repeater info, Mobile apps*).
 
 RX then links the companion it is connected to: the companion signs a server challenge with its
 own key, so only whoever holds the device can link it. The newest proof wins: a companion that
@@ -343,8 +412,28 @@ enabled.
   but hidden and do not count, so a repeater whose only claimer is disabled is open again.
 - **Audit log:** edits are recorded as `repeater.edit` (with the old and new value of each
   changed field), claims as `repeater.claim` and `repeater.unclaim`.
+- **My repeaters:** *My account, My repeaters* lists the repeaters you claimed, silent ones
+  first: when each was last heard (by the same rule as the node pages), its saved status, who
+  else maintains it, and an *Unclaim* button. A repeater silent longer than
+  `retention.nodeDays`, which the analyzer moves to its inactive nodes, stays listed by name as
+  silent with its last advert. A repeater the analyzer has no record of at all is listed as no
+  longer in the database until you unclaim it. Deep link: `#/account?section=repeaters`.
 - **Removing a claim:** *Admin, Users*, open the user, *Remove* next to the claim. Admins use
   this when a claimer left or claimed a repeater that is not theirs.
+- **Mobile apps:** an app logs in at `POST /api/auth/device-token` like CoreDrive RX, but asks
+  for the scopes it needs: `repeater:claim` to claim a repeater and remove its own claim,
+  `repeater:edit` to edit details (still only where the account may edit, as above). Either
+  scope also lets the app read the account's own *My repeaters* list
+  (`GET /api/account/repeaters`). The token shows under *My account, Devices*, and its claims and edits are recorded with `via: device`.
+  Admin claim removal stays in the browser. There is no separate switch. An admin's
+  `repeater:edit` token can edit the details of every repeater, as an admin can in the browser,
+  for as long as the token lives (90 days, renewed with use); log it out under *Devices* when the
+  device is lost or changes hands.
+- **Edits from two places:** each save of the details counts up a `revision`. The node page and
+  an app both send the revision they started from, and if someone saved in between, CoreScope
+  refuses the save and returns the current details instead of overwriting them. The node page
+  keeps what you typed and shows the saved values under the form: *Save* again replaces them,
+  *Cancel* keeps them.
 
 ### Observer MQTT logins (optional)
 

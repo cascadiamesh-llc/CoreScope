@@ -39,6 +39,7 @@
 - [GET /api/elevation/profile](#get-apielevationprofile)
 - [GET /api/planner/profile](#get-apiplannerprofile)
 - [GET /api/planner/relay](#get-apiplannerrelay)
+- [GET /api/planner/viewshed](#get-apiplannerviewshed)
 - [GET /api/planner/coverage](#get-apiplannercoverage)
 - [GET /api/analytics/rf](#get-apianalyticsrf)
 - [GET /api/analytics/topology](#get-apianalyticstopology)
@@ -131,7 +132,7 @@ These routes are registered only when `userManagement.enabled` is true. When it 
 | `GET /api/account/export` | session | -> attachment `corescope-account-<YYYY-MM-DD>.json`: `{formatVersion: 1, exportedAt, instance, profile, sessions, companions, settings, proposals, notifications, audit, mail}`. `profile` is `{id, email, displayName, role, status, createdAt, lastLoginAt, emailBouncing, activatedAt, activatedBy}` (`activatedBy` is the admin id, `null` for a link activation); `sessions` `[{kind, label?, createdAt, lastSeenAt, userAgent?}]` (`kind` is `web` or `device`, `label` the device name); `companions` `[{pubkey, name, linkedAt}]`; `settings` `{revision, updatedAt, doc}` or `null`; `proposals` `[{kind, subject, status, note, createdAt, decidedAt}]`; `notifications` `{prefs: {enabled, events} or null, watches: [{pubkey, createdAt}]}`; `audit` `[{at, action, actorUserId, targetUserId, detail}]` (other accounts by id only); `mail` `[{to, purpose, sentAt, status, statusAt, reason?, events}]`. No row caps. No password hash, no session, link or unsubscribe token and no companion link challenge. Writes a `user.export` audit row afterwards |
 | `DELETE /api/account` | session | `{currentPassword}` -> `{ok, message}`. `409` you are the last admin |
 | `GET /api/admin/users?status=&role=&q=&bouncing=` | admin | -> `[adminUser]`, at most 1000, newest first. `status` is `pending`, `active` or `disabled`; `role` is `user` or `admin`; `bouncing=1` keeps only addresses whose mail bounces (any other value is `400`) |
-| `GET /api/admin/users/{id}` | admin | -> `{user, sessions, mail, audit}` |
+| `GET /api/admin/users/{id}` | admin | -> `{user, sessions, mail, audit, mailDeliveryStatus}`. `mailDeliveryStatus` is `false` when the provider (`smtp`) cannot report delivery events: mail shows as sent and there is nothing to refresh |
 | `POST /api/admin/users/{id}/disable` | admin | -> adminUser. Active accounts only; ends the user's sessions and links |
 | `POST /api/admin/users/{id}/enable` | admin | -> adminUser. Disabled accounts only |
 | `DELETE /api/admin/users/{id}` | admin | -> `{ok}` |
@@ -140,7 +141,8 @@ These routes are registered only when `userManagement.enabled` is true. When it 
 | `POST /api/admin/users/{id}/activate` | admin | -> adminUser. Pending accounts only; the address stays unverified |
 | `POST /api/admin/users/{id}/mail/{mailId}/refresh` | admin | -> mail record with `events`, pulled from the provider. `502` provider unavailable |
 | `GET /api/admin/audit?action=&user=&from=&to=&before=&limit=` | admin | -> `{entries, next}`, newest first. `action` is one action or a group ending in `.*` (`user.login.*`); `user` matches actor or target; `from`/`to` are RFC 3339 and inclusive; pass `next` as `before` for the next page (`null` on the last page); `limit` defaults to 100, capped at 500. Entry: `{id, at, action, actor, target, detail}`, with actor and target `{id, displayName, email}`, `{id, deleted: true}` or `null` (system). Login rows are kept 90 days. `400` on an invalid parameter |
-| `GET /api/admin/stats` | admin | -> `{total, active, pending, disabled, admins, stuckPending, bouncing, new7d, new30d, newPerDay, active7d, active30d, logins24h, failedLogins24h, mail7d, guessing}`. `newPerDay` is `[{day, count}]` for 30 UTC days, oldest first; registrations count `user.register` audit rows. `stuckPending` counts pending accounts older than 24 hours. `mail7d` is `{delivered, bounced, blocked, spam, pending, other}` by latest delivery event. `guessing` is `[{userId, displayName, failed}]`: accounts with 5 or more failed logins in 24 hours |
+| `GET /api/admin/stats` | admin | -> `{total, active, pending, disabled, admins, stuckPending, bouncing, new7d, new30d, newPerDay, active7d, active30d, logins24h, failedLogins24h, mail7d, guessing, mailDeliveryStatus}`. `newPerDay` is `[{day, count}]` for 30 UTC days, oldest first; registrations count `user.register` audit rows. `stuckPending` counts pending accounts older than 24 hours. `mail7d` is `{delivered, bounced, blocked, spam, pending, other}` by latest delivery event. `guessing` is `[{userId, displayName, failed}]`: accounts with 5 or more failed logins in 24 hours. `mailDeliveryStatus` is `false` when the provider (`smtp`) cannot report delivery events, so mail counts only as sent |
+| `POST /api/admin/mail/test` | admin | any body ignored -> `{ok: true, provider, messageId}`: a fixed test mail to the calling admin's own address through the configured provider. `502` `{ok: false, provider, error}` with the provider's error text, addresses redacted. Mail log purpose `test`; audit row `mail.test` with detail `{provider, result}` (`ok` or `failed`). `429` above 3 test mails per admin and per IP address per 10 minutes |
 | `GET /api/admin/users-backup` | admin | -> `application/octet-stream`, attachment `corescope-users-<YYYYMMDD-HHMMSS>.db` (UTC): a fresh consistent copy of `users.db`. It holds every password hash and address, so store it encrypted. Writes a `user.backup` audit row. Restore: docs/user-guide/accounts.md, Backups |
 | `POST /api/mail/brevo/webhook` | `Authorization: Bearer <webhookSecret>` | Brevo transactional event payload -> `{ok}`. `401` on a wrong secret |
 | `POST /api/mail/postal/webhook` | HTTP Basic auth, password `<webhookSecret>` (any user name) | Postal webhook payload `{event, timestamp, payload, uuid}` -> `{ok}`, also for events that are not about a message. `401` on a wrong secret |
@@ -161,7 +163,7 @@ Error codes you can get on the routes above:
 | `502` | `"mail provider unavailable"` (mail refresh) |
 | `503` | `"mail could not be sent, try again later"` |
 
-With user management on, every endpoint that needs `X-API-Key` also accepts an admin session (plus the CSRF header for unsafe methods). A request that sends `X-API-Key` is judged on the key alone. `GET /api/config/client` gains `"userManagement": {"enabled": true}` only when the feature is on; that block also carries `"companionLinking": true` on servers with the device-token and companion routes, which CoreDrive RX checks before it shows its login (an older server answers those paths with the SPA page).
+With user management on, every endpoint that needs `X-API-Key` also accepts an admin session (plus the CSRF header for unsafe methods). A request that sends `X-API-Key` is judged on the key alone. `GET /api/config/client` gains `"userManagement": {"enabled": true}` only when the feature is on; that block also carries `"companionLinking": true` on servers with the device-token and companion routes, which CoreDrive RX checks before it shows its login (an older server answers those paths with the SPA page), and `"repeaterTokens": true` on servers whose device tokens can ask for the `repeater:claim` and `repeater:edit` scopes and whose repeater edits take a `baseRevision` (a mobile client offers native repeater claims and edits only then).
 
 ---
 
@@ -471,7 +473,7 @@ Returns a JSON array (not wrapped in an object):
       "totalObservations":  number,
       "totalPackets":       number,   // same as totalTransmissions (backward compat)
       "packetsToday":       number,
-      "avgSnr":             number | null,
+      "avgSnr":             number | null,  // direct receptions only, see /health
       "lastHeard":          string (ISO) | null
     },
     // Direct-RF only, same shape and rule as GET /api/nodes/:pubkey/health.
@@ -586,7 +588,8 @@ Detailed health information for a single node.
   // Observers that received this node's OWN transmission off the air:
   // a flood packet whose last path hop resolves unambiguously to this
   // node, or a flood ADVERT it originated that arrived with an empty
-  // path. Only here do avgSnr/avgRssi describe this node's signal.
+  // path. These rows and stats.avgSnr below are the only signal numbers
+  // that describe this node.
   // Direct routes never qualify: their path is the remaining route,
   // not the travelled one.
   "observers": [
@@ -608,6 +611,10 @@ Detailed health information for a single node.
     "totalObservations":  number,
     "totalPackets":       number,    // same as totalTransmissions (backward compat)
     "packetsToday":       number,
+    // Mean SNR over every direct reception in "observers" (all samples, all
+    // observers). null when no observer heard the node directly. Before
+    // #2451 this averaged every transmission involving the node, relayed
+    // copies included.
     "avgSnr":             number | null,
     "avgHops":            number,    // rounded integer
     "lastHeard":          string (ISO) | null
@@ -699,7 +706,9 @@ Per-node analytics over a time range.
   "activityTimeline": [
     { "bucket": string (ISO),  "count": number }   // hourly buckets
   ],
-  "snrTrend": [
+  "snrTrend": [                     // direct receptions by fixed observers only
+                                     // (see heardBy), newest 500 in the window,
+                                     // oldest first
     {
       "timestamp":     string (ISO),
       "snr":           number,
@@ -708,10 +717,29 @@ Per-node analytics over a time range.
       "observer_name": string | null
     }
   ],
+  "heardBy": [                      // fixed observers that heard this node itself:
+                                     // the last path hop names it with 2 or more
+                                     // bytes and no other node shares that prefix,
+                                     // or a zero-hop advert. Sorted by medianSnr,
+                                     // best first; rows without an SNR last.
+    {
+      "observer_id":      string,
+      "observer_name":    string,
+      "count":            number,        // direct receptions in the window
+      "medianSnr":        number | null, // null: no reception carried an SNR
+      "p10Snr":           number | null,
+      "p90Snr":           number | null,
+      "recentMedianSnr":  number | null, // last 24 h; both change medians are
+      "earlierMedianSnr": number | null  // null unless the window is >= 3 days
+                                         // and each part has >= 3 receptions
+    }
+  ],
   "packetTypeBreakdown": [
     { "payload_type": number, "count": number }
   ],
-  "observerCoverage": [
+  "observerCoverage": [              // deprecated: every observer that saw a
+                                     // packet attributed to this node, relayed
+                                     // or not. The analytics page uses heardBy.
     {
       "observer_id":   string,
       "observer_name": string | null,
@@ -740,17 +768,38 @@ Per-node analytics over a time range.
     "availabilityPct":    number,     // 0–100
     "longestSilenceMs":   number,
     "longestSilenceStart": string (ISO) | null,
-    "signalGrade":        string,     // "A", "A-", "B+", "B", "C", "D"
-    "snrMean":            number,
-    "snrStdDev":          number,
+    "signalGrade":        string,     // "A", "A-", "B+", "B", "C", "D", from
+                                      // snrMean and snrStdDev
+    "snrMean":            number,     // mean of heardBy medianSnr: each observer
+                                      // counts once; 0 when there is none
+    "snrStdDev":          number,     // spread of those medians
     "relayPct":           number,     // % of packets with >1 hop
     "totalPackets":       number,
-    "uniqueObservers":    number,
+    "uniqueObservers":    number,     // fixed observers in heardBy
     "uniquePeers":        number,
     "avgPacketsPerDay":   number
   }
 }
 ```
+
+When `clientRxCoverage` is enabled the response also carries
+`mobileReceptions` (absent otherwise, and when there are none):
+
+```jsonc
+"mobileReceptions": {
+  "receptions":    number,        // mobile client receptions since timeRange.from
+  "receivers":     number,        // distinct receiving clients
+  "medianSnr":     number | null,
+  "maxDistanceKm": number | null  // null when the node has no position
+}
+```
+
+A reception counts when its heard key is this node's full key, its 8-byte
+discover prefix, or a 2- or 3-byte prefix that no other known node and no
+retired repeater shares. These receptions do not enter `computedStats`.
+
+`hopDistribution`, `peerInteractions` and `computedStats.relayPct` are
+deprecated: the analytics page will stop showing them.
 
 ### Response `404`
 
@@ -1542,7 +1591,7 @@ Line-of-sight profile along a chain of points, for the repeater planner at `#/to
 
 ### Common rules
 
-These rules apply to all three planner endpoints: this one, [`/api/planner/relay`](#get-apiplannerrelay) and [`/api/planner/coverage`](#get-apiplannercoverage).
+These rules apply to all planner endpoints: this one, [`/api/planner/relay`](#get-apiplannerrelay), [`/api/planner/viewshed`](#get-apiplannerviewshed) and [`/api/planner/coverage`](#get-apiplannercoverage).
 
 - **Opt-in.** Only available when `planner.enabled` is `true`. Otherwise the endpoints return `404`, and `/api/config/client` omits the `planner` block.
 - **Quantised input.** Points are rounded to 0.001°, antenna heights to 1 m, and `range` must be one of a fixed set. Coverage boxes are snapped outward to a 0.05° grid. Requests that round to the same values share one cache entry and one job.
@@ -1767,6 +1816,85 @@ Abbreviated: the `elev_m` arrays in `direct`, `leg_a` and `leg_b` are truncated 
 
 ---
 
+## GET /api/planner/viewshed
+
+Theoretical reach of one candidate repeater site, for the planner's Coverage tab. The server profiles the site to every cell of a grid around it and returns two classes per cell, plus the site's link to each known repeater within range. Common rules and the job protocol are described under [`/api/planner/profile`](#get-apiplannerprofile). A viewshed job shares the coverage endpoint's compute slot, queue limit and result cache.
+
+### Query Parameters
+
+| Param   | Type   | Default                         | Description |
+|---------|--------|---------------------------------|-------------|
+| `site`  | string | -                               | **Required.** The site as `lat,lon`. Must be within 50 km of a known node |
+| `h`     | number | `planner.newAntennaM` (10)      | Antenna height at the site, metres. Rounded to 1 m and clamped to 1 to 100 |
+| `rx`    | number | `planner.existingAntennaM` (5)  | Antenna height of the other repeater, for the Repeaters class and the links. Same limits as `h` |
+| `range` | number | `planner.defaultRangeKm` (30)   | Radius in km of the grid and of the link list. One of `10,15,20,30,40,50,60`, up to `planner.maxLegKm` |
+
+### Response `200`
+
+```json
+{
+  "source": "SRTM (AWS Open Data)",
+  "params": {
+    "site": {"lat": 30.11, "lon": -97.09},
+    "antenna_m": 10,
+    "rx_antenna_m": 5,
+    "range_km": 30,
+    "frequency_mhz": 910.525,
+    "k_factor": 1.333,
+    "user_reach": {"d50_km": 2.7, "slope": 0.3}
+  },
+  "bbox": [29.8402, -97.4027, 30.3798, -96.7773],
+  "rows": 301,
+  "cols": 301,
+  "cell_km": 0.2,
+  "cells": "AAAAQkJDQ0RE...",
+  "links": [
+    {
+      "pubkey": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "name": "Example Hilltop",
+      "lat": 30.1,
+      "lon": -97.1,
+      "link": {"distance_km": 1.43, "clearance_pct": 212.4, "verdict": "clear", "worst_km": 0.7, "obstruction_m": -14.2}
+    }
+  ],
+  "warnings": [],
+  "truncated": false
+}
+```
+
+Abbreviated: `cells` is truncated for readability.
+
+| Field | Description |
+|-------|-------------|
+| `source` | Terrain attribution |
+| `params` | The quantised inputs the result was computed with, the radio settings and the users reach curve (`planner.userReach`) |
+| `bbox` | `[s, w, n, e]` of the grid in degrees: the site ± `range_km` |
+| `rows`, `cols` | Grid size. Cell (r, c) is centred in the r-th of `rows` equal latitude bands from the north and the c-th of `cols` equal longitude bands from the west |
+| `cell_km` | Nominal cell size: 0.2 km, or `range_km / 150` above 30 km |
+| `cells` | Base64 of `rows × cols` bytes, row 0 north, row-major. Low nibble: Users class 1 to 5 from the handheld reach curve `P(d) = 1 / (1 + exp((ln d - ln d50) / slope))` (1: P below 0.10, 2: below 0.25, 3: below 0.50, 4: below 0.75, 5: 0.75 or more), two classes lower (at least 1) where a 1.5 m receiver is in deep terrain shadow. High nibble: Repeaters class for a receiver at `rx`, from the first-Fresnel clearance of the site-to-cell path: 1 blocked (below -20%), 2 slightly blocked (-20% to 0%), 3 line of sight (0% or more). These bounds differ from the link `verdict` on purpose: checked against one repeater's heard links, every link heard within 16 km had a clearance between 2% and 54%. A nibble of 0 means no data: outside `range_km`, or no terrain at the cell, the site or the path between |
+| `links` | Known repeaters within `range_km` (rooms and stale repeaters excluded, as in `/api/planner/relay`, and repeaters within 100 m of the site, which are the site itself), nearest first. Each carries `pubkey`, `name`, `lat`, `lon` and a `link` object (see [`/api/planner/relay`](#get-apiplannerrelay)) for the site at `h` to the repeater at `rx`. The `link` has no `elev_m` profile. Always an array |
+| `warnings` | Human-readable notes, for example missing terrain tiles. Always an array |
+| `truncated` | `true` when the grid holds more repeaters and rooms than the planner reads for one job (300) and the farthest one kept is still within `range_km`, so a repeater in range may be missing from `links`. `false` when the cut only dropped nodes beyond `range_km` (the corners of the square grid) |
+
+### Error codes
+
+| Message or code | Cause |
+|-----------------|-------|
+| `site required` | Site missing |
+| `site must be lat,lon within range` | Site malformed or out of range |
+| `h must be a number of metres`, `rx ...` | Height is not a number |
+| `range must be one of 10,15,20,30,40,50,60` | Range not in the allowed set. The message lists the values allowed up to `planner.maxLegKm` |
+| `out_of_area` | The site is not within 50 km of a known node |
+| `too_many_tiles` | The grid needs more 1° terrain tiles than the server loads for one request. Any site within latitudes -56 to 60 at any offered range fits |
+
+### Response `404`
+
+```json
+{ "error": "planner disabled" }
+```
+
+---
+
 ## GET /api/planner/coverage
 
 Repeater backbone plan for an area. The server reads the repeaters and rooms in a bounding box, builds the backbone graph between them, and suggests up to `sites` new sites that would strengthen it. The result is a suggestion, not an optimum. Common rules and the job protocol are described under [`/api/planner/profile`](#get-apiplannerprofile).
@@ -1971,9 +2099,6 @@ Network topology analytics.
       "pubkeyA": string | null,
       "pubkeyB": string | null
     }
-  ],
-  "hopsVsSnr": [
-    { "hops": number, "count": number, "avgSnr": number }
   ],
   "observers": [
     { "id": string, "name": string }
@@ -2182,7 +2307,7 @@ Hop distance analytics.
       "toPk":     string,
       "dist":     number,      // km
       "type":     string,      // "R↔R" | "C↔R" | "C↔C"
-      "snr":      number | null,
+      "obsCount": number,      // observations of this node pair
       "hash":     string,
       "timestamp": string (ISO)
     }
