@@ -29,7 +29,6 @@ node tests/unit/test-mediamesh-status.js
 node tests/unit/test-mediamesh-lab.js
 node tests/unit/test-mediamesh-grow.js
 node tests/unit/test-mediamesh-forecast.js
-node tests/unit/test-mediamesh-cascadia.js
 node tests/unit/test-mediamesh-live.js
 node tests/unit/test-mediamesh-windtunnel.js
 node tests/unit/test-mediamesh-timemachine.js

@@ -14,7 +14,6 @@
     { id: 'timemachine', href: '#/mediamesh-timemachine', label: 'Time machine' },
     { id: 'grow', href: '#/mediamesh-grow', label: 'Grow the mesh', short: 'Grow' },
     { id: 'forecast', href: '#/mediamesh-forecast', label: 'Forecast' },
-    { id: 'cascadia', href: '#/mediamesh-cascadia', label: 'Cascadia' },
   ];
 
   /** The bar, with `active` (a PAGES id) lit. */

@@ -1195,7 +1195,7 @@ function routeTitle(page, param) {
   const names = {
     home: '', packets: 'Packets', nodes: 'Nodes', map: 'Map', live: 'Live',
     channels: 'Channels', observers: 'Observers', analytics: 'Analytics',
-    'scope-audit': 'Scope Audit', 'mediamesh-status': 'Is MediaMesh up?', 'mediamesh-lab': 'MediaMeshLab', 'mediamesh-timemachine': 'Time machine', 'mediamesh-grow': 'Grow the mesh', 'mediamesh-forecast': 'Forecast', 'mediamesh-cascadia': 'Cascadia', perf: 'Performance', 'audio-lab': 'Audio Lab',
+    'scope-audit': 'Scope Audit', 'mediamesh-status': 'Is MediaMesh up?', 'mediamesh-lab': 'MediaMeshLab', 'mediamesh-timemachine': 'Time machine', 'mediamesh-grow': 'Grow the mesh', 'mediamesh-forecast': 'Forecast', perf: 'Performance', 'audio-lab': 'Audio Lab',
     'tools-landing': 'Tools', traces: 'Packet Trace', 'path-inspector': 'Path Inspector',
     account: 'Account', admin: 'Admin', compare: 'Observer Comparison', 'rx-coverage': 'RX Coverage',
   };

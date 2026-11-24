@@ -6771,25 +6771,6 @@ html.mm-embed--sky .mm-embed-open:hover { background: var(--mm-sky-ink); color: 
 .mmf-note { font-size: 0.85em; }
 
 
-/* ---- MediaMesh across Cascadia (mediamesh-cascadia.js) ---- */
-.mmc-page { padding: 16px 20px 24px; display: flex; flex-direction: column; gap: 14px; max-width: 1400px; margin: 0 auto; width: 100%; box-sizing: border-box; }
-.mmc-head h1 { margin: 0 0 4px; color: var(--mediamesh-text-color, var(--text)); }
-.mmc-head p { margin: 0; }
-.mmc-split { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
-.mmc-map { flex: 3 1 480px; min-width: 0; height: 520px; border-radius: 10px; border: 1px solid var(--border); }
-.mmc-side { flex: 2 1 340px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
-.mmc-card { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--card-bg); color: var(--text); }
-.mmc-card h2 { font-size: 1em; margin: 0 0 8px; }
-.mmc-card p { margin: 0; }
-.mmc-table { width: 100%; }
-.analytics-table.mmc-table th.mm-ins-num { text-align: right; }
-.mmc-gaps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-.mmc-gaps li { display: flex; flex-direction: column; gap: 2px; }
-.mmc-sites { font-weight: 700; color: var(--mediamesh-text-color, var(--text)); }
-.mmc-note { font-size: 0.85em; margin-top: 8px !important; }
-.mmc-label span { display: inline-block; white-space: nowrap; transform: translate(-50%, -150%); padding: 2px 8px; border-radius: 999px; font-weight: 700; font-size: 0.85em; background: var(--card-bg); color: var(--text); border: 1px solid var(--mediamesh-node-color); }
-.mmc-label { background: none; border: none; }
-
 /* ---- Live packets on the MediaMesh coverage map (mediamesh-live.js) ---- */
 .mmlive-canvas { position: absolute; inset: 0; z-index: 640; pointer-events: none; }
 .mmlive-canvas[hidden], .mmlive-panel[hidden], .mmlive-banner[hidden], .mmlive-body[hidden], .mmlive-replay[hidden] { display: none; }

@@ -13,7 +13,7 @@ function test(name, fn) {
 }
 
 test('every MediaMesh page, Overview first, the way back to the tab', () => {
-  assert.deepStrictEqual(N.PAGES.map((p) => p.id), ['overview', 'status', 'lab', 'timemachine', 'grow', 'forecast', 'cascadia']);
+  assert.deepStrictEqual(N.PAGES.map((p) => p.id), ['overview', 'status', 'lab', 'timemachine', 'grow', 'forecast']);
   assert.strictEqual(N.PAGES[0].href, '#/analytics?tab=mediamesh');
 });
 
@@ -21,7 +21,7 @@ test('the page you are on is lit, and only that one', () => {
   const h = N.html('timemachine');
   assert.strictEqual((h.match(/aria-current="page"/g) || []).length, 1);
   assert.ok(/mmnav-item--on" href="#\/mediamesh-timemachine" aria-current="page"/.test(h));
-  assert.strictEqual((h.match(/<a /g) || []).length, 7);
+  assert.strictEqual((h.match(/<a /g) || []).length, 6);
 });
 
 test('short names for phones keep the full name for screen readers', () => {
@@ -33,7 +33,7 @@ test('short names for phones keep the full name for screen readers', () => {
 test('wiring: loaded, on the tab and on every tool page, colours from variables', () => {
   assert.ok(pub('index.html').includes('<script src="mediamesh-nav.js?v=__BUST__"></script>'));
   assert.ok(pub('analytics.js').includes("MediaMeshNav.html('overview')"));
-  for (const [f, id] of [['status', 'status'], ['lab', 'lab'], ['timemachine', 'timemachine'], ['grow', 'grow'], ['forecast', 'forecast'], ['cascadia', 'cascadia']]) {
+  for (const [f, id] of [['status', 'status'], ['lab', 'lab'], ['timemachine', 'timemachine'], ['grow', 'grow'], ['forecast', 'forecast']]) {
     assert.ok(pub(`mediamesh-${f}.js`).includes(`MediaMeshNav.html('${id}')`), f);
   }
   const css = pub('style.css').match(/\.mmnav[^{]*\{[^}]*\}/g) || [];
