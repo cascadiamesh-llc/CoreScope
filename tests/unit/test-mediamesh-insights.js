@@ -45,7 +45,7 @@ test('delivery: whole, by parity, incomplete, unheard; by hops', () => {
   assert.ok(I.deliveryHtml([], nameOf, 7).includes('No announced clips'));
 });
 
-test('speed: kbit/s from bytes over time, by hops, the fastest route needs two clips', () => {
+test('speed: bit/s from bytes over time, by hops, the fastest route needs two clips', () => {
   const clips = [clip({ hops: 1, path: ['aa11'], observerName: 'SoDo', durationS: 8, bytes: 2000 }), clip({ hops: 1, path: ['aa11'], observerName: 'SoDo', durationS: 16, bytes: 2000 }),
     clip({ hops: 3, durationS: 100, bytes: 2500 }), clip({ outcome: 'partial', durationS: 1, bytes: 9999 }), clip({ durationS: 0 })];
   const s = I.speedSummary(clips, nameOf);
@@ -53,7 +53,7 @@ test('speed: kbit/s from bytes over time, by hops, the fastest route needs two c
   assert.ok(Math.abs(s.byHops[0].kbps - 1.5) < 1e-9, 'median of 2 and 1 kbit/s');
   assert.strictEqual(s.fastest.route, 'First <Hill> → SoDo');
   assert.strictEqual(s.photo1, 12);
-  assert.ok(I.speedHtml(clips, nameOf, 7).includes('fastest route this period, 1.5 kbit/s over 2 clips'));
+  assert.ok(I.speedHtml(clips, nameOf, 7).includes('fastest route this period, 1,500 bit/s while sending over 2 clips'));
 });
 
 test('clips sent privately: timed in the speed card, counted in the delivery card, never judged', () => {
@@ -78,7 +78,7 @@ test('speed: the bytes sent after the first piece, and private clips sized from 
   const s = I.speedSummary([], nameOf, priv);
   assert.ok(Math.abs(s.kbps - (144 * 163 * 8) / 250 / 1000) < 1e-9, String(s.kbps));
   const h = I.speedHtml([], nameOf, 7, priv);
-  assert.ok(h.includes('0.8 kbit/s') && h.includes('about 23.6 kB'), h);
+  assert.ok(h.includes('751 bit/s') && h.includes('about 23.6 kB'), h);
   assert.ok(h.includes('counted from their numbers'));
 });
 
@@ -87,11 +87,48 @@ test('speed while sending: pauses of over 15 s left out', () => {
   const s = I.speedSummary([], nameOf, priv);
   assert.ok(Math.abs(s.sendKbps - (144 * 163 * 8) / 134 / 1000) < 1e-9, String(s.sendKbps));
   const h = I.speedHtml([], nameOf, 7, priv);
-  assert.ok(h.includes('1.4 kbit/s</div><div class="mm-ins-label">median while sending'), h);
+  assert.ok(h.includes('1,401 bit/s</div><div class="mm-ins-label">median while sending'), h);
   assert.ok(h.includes('264 s') && h.includes('(130 s paused)') && h.includes('>While sending</th>'));
   // without the server's figure, while sending is the whole time
   const old = I.speedSummary([], nameOf, [clip({ outcome: 'unannounced', kind: 'unknown', total: 0, heard: 6, durationS: 20, bytes: 1000 })]);
   assert.strictEqual(old.sendKbps, old.kbps);
+});
+
+test('speed: a clip that waited on the far end is left out of the end-to-end median, not of while sending', () => {
+  const priv = [clip({ outcome: 'unannounced', kind: 'unknown', total: 0, heard: 15, hops: 2, durationS: 1865, sendingS: 10, bytes: 2576, rateBytes: 2415 }),
+    clip({ outcome: 'unannounced', kind: 'unknown', total: 0, heard: 15, hops: 2, durationS: 20, sendingS: 20, bytes: 2576, rateBytes: 2415 })];
+  const s = I.speedSummary([], nameOf, priv);
+  assert.deepStrictEqual([s.rows[0].waited, s.rows[1].waited, s.waited], [true, false, 1]);
+  assert.ok(Math.abs(s.kbps - (2415 * 8) / 20 / 1000) < 1e-9, 'only the one that did not wait');
+  assert.ok(Math.abs(s.sendKbps - ((2415 * 8) / 10 + (2415 * 8) / 20) / 2 / 1000) < 1e-9, 'median of both while sending');
+  const h = I.speedHtml([], nameOf, 7, priv);
+  assert.ok(h.includes('1 that waited on the far end left out') && h.includes('waited on the far end</span>'), h);
+  // repair rounds pausing half the time are not waiting
+  const repairs = I.speedRows([clip({ durationS: 243, sendingS: 100, bytes: 2771 })]);
+  assert.strictEqual(repairs[0].waited, false);
+});
+
+test('speed: too uncertain to time is left out of every figure', () => {
+  const clips = [clip({ hops: 2, durationS: 1, bytes: 450, rateBytes: 300 }), clip({ hops: 5, durationS: 100, sendingS: 75, bytes: 2700, rateBytes: 2559, heard: 2, bytesEstimated: true })];
+  const priv = [clip({ outcome: 'unannounced', kind: 'unknown', total: 0, heard: 3, hops: 6, durationS: 23, sendingS: 5.2, bytes: 13363, rateBytes: 13202, bytesEstimated: true })];
+  const s = I.speedSummary(clips, nameOf, priv);
+  const by = Object.fromEntries(s.rows.map((c) => [c.hops, c.doubtful]));
+  assert.deepStrictEqual(by, { 2: true, 5: false, 6: true }, 'too quick to time; an announced photo heard in part is sized by its announcement; a private clip of 3 pieces faster than radio2 carries');
+  assert.strictEqual(s.doubtful, 2);
+  assert.ok(Math.abs(s.sendKbps - (2559 * 8) / 75 / 1000) < 1e-9);
+  assert.deepStrictEqual(s.byHops.filter((b) => b.n).map((b) => b.hops), [5]);
+  const h = I.speedHtml(clips, nameOf, 7, priv);
+  assert.ok(h.includes('2 too uncertain to time left out') && h.includes('too uncertain to time</span>'), h);
+});
+
+test('speed: bars scale to those with enough clips, fewer than 3 faded', () => {
+  const clips = [1, 2, 3].map((i) => clip({ hops: 5, durationS: 100, bytes: 2500 + i })).concat([clip({ hops: 2, durationS: 10, bytes: 2500 })]);
+  const s = I.speedSummary(clips, nameOf);
+  assert.deepStrictEqual(s.byHops.filter((b) => b.n).map((b) => [b.hops, b.few]), [[2, true], [5, false]]);
+  const h = I.speedHtml(clips, nameOf, 7);
+  assert.ok(/mm-ins-bar-row--few"[^>]*><span>2 hops<\/span>\s*<span class="mm-ins-bar"><i style="width:100%">/.test(h), 'capped, not ten times as wide');
+  assert.ok(/<span>5\+ hops<\/span>\s*<span class="mm-ins-bar"><i style="width:100%">/.test(h), 'the bar with enough clips sets the scale');
+  assert.ok(h.includes('3 clips') && h.includes('Faded: fewer than 3 clips'));
 });
 
 test('did it arrive: receipts from the receiving apps, per clip and overall', () => {

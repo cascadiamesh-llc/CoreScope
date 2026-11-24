@@ -179,49 +179,79 @@
         const b = c.rateBytes > 0 ? c.rateBytes : c.bytes;
         // while sending: pauses of over 15 s cut out (the server's sendingS)
         const sendS = c.sendingS > 0 && c.sendingS < c.durationS ? c.sendingS : c.durationS;
-        return Object.assign({}, c, { kbps: (b * 8) / c.durationS / 1000, sendKbps: (b * 8) / sendS / 1000, paused: c.durationS - sendS });
+        const paused = c.durationS - sendS;
+        // waited on the far end: paused for nearly all of it, and for
+        // minutes, as when a phone comes back later and asks for the rest
+        // (repair rounds on a long route pause for far less). Its end-to-end
+        // speed is the wait, not the mesh, so it's left out of those figures.
+        const waited = paused >= WAITED_S && paused > c.durationS * 0.75;
+        const sendKbps = (b * 8) / sendS / 1000;
+        // too uncertain to time: faster than radio2 can carry, a clip sent
+        // privately whose size was worked out from the numbers of only a few
+        // pieces, or over too fast for whole-second times to measure
+        const doubtful = sendKbps > CEILING_KBPS || c.durationS < MIN_TIMED_S
+          || (c.outcome === 'unannounced' && (c.heard || 0) < MIN_HEARD);
+        return Object.assign({}, c, { kbps: (b * 8) / c.durationS / 1000, sendKbps, paused, waited, doubtful });
       });
   }
 
+  /** By hops and the fastest route go by speed while sending, so a pause
+   * waiting on the far end doesn't count against the mesh; a bar on fewer
+   * than FEW_CLIPS clips is marked as too few to go on. */
   function speedSummary(clips, nameOf, unannounced) {
     const rows = speedRows(clips, unannounced);
+    const timed = rows.filter((c) => !c.doubtful);
     const byHops = [1, 2, 3, 4, 5].map((h) => {
-      const r = rows.filter((c) => Math.min(5, Math.max(1, c.hops || 1)) === h);
-      return { hops: h, n: r.length, kbps: median(r.map((c) => c.kbps)) };
+      const r = timed.filter((c) => Math.min(5, Math.max(1, c.hops || 1)) === h);
+      return { hops: h, n: r.length, kbps: median(r.map((c) => c.sendKbps)), few: r.length < FEW_CLIPS };
     });
     const routes = {};
-    rows.forEach((c) => { const k = routeLabel(c, nameOf); (routes[k] = routes[k] || []).push(c.kbps); });
+    timed.forEach((c) => { const k = routeLabel(c, nameOf); (routes[k] = routes[k] || []).push(c.sendKbps); });
     let fastest = null;
     Object.keys(routes).forEach((k) => {
       if (routes[k].length < 2) return;
       const m = median(routes[k]);
       if (!fastest || m > fastest.kbps) fastest = { route: k, kbps: m, n: routes[k].length };
     });
-    const photo1 = median(rows.filter((c) => c.kind === 'photo' && c.hops <= 1).map((c) => c.durationS));
+    const photo1 = median(timed.filter((c) => c.kind === 'photo' && c.hops <= 1).map((c) => c.durationS));
     const priv = rows.filter((c) => c.outcome === 'unannounced').length;
-    return { n: rows.length, priv, kbps: median(rows.map((c) => c.kbps)), sendKbps: median(rows.map((c) => c.sendKbps)), byHops, fastest, photo1, rows };
+    const waited = timed.filter((c) => c.waited).length;
+    const doubtful = rows.length - timed.length;
+    return { n: rows.length, priv, waited, doubtful, kbps: median(timed.filter((c) => !c.waited).map((c) => c.kbps)), sendKbps: median(timed.map((c) => c.sendKbps)), byHops, fastest, photo1, rows };
   }
 
-  const fmtK = (v) => (v == null ? '—' : v < 10 ? v.toFixed(1) : String(Math.round(v)));
+  const WAITED_S = 300;
+  // radio2's fastest (zero hop, the US MediaMesh preset: 156 bytes every
+  // ~0.2 s), as kbit/s; anything faster is a timing error
+  const CEILING_KBPS = 6.4;
+  const MIN_HEARD = 5;
+  const MIN_TIMED_S = 3;
+  const FEW_CLIPS = 3;
+  // speeds are kept in kbit/s and shown in bit/s: across a few hops they
+  // run to a few hundred, which 0.1 and 0.2 kbit/s hid
+  const fmtB = (v) => (v == null ? '—' : Math.round(v * 1000).toLocaleString('en-US'));
 
   function speedHtml(clips, nameOf, days, unannounced) {
     const s = speedSummary(clips, nameOf, unannounced);
     const head = `<h3>How fast clips cross the mesh</h3><p class="text-muted mm-ins-sub">From the first piece the far end heard until it had enough to make the whole clip (its own pieces, and parity or repair pieces for those it missed; repair pieces sent later for other listeners don't count): announced clips the far end could make whole, and clips sent privately (in a direct message or on a private channel), timed from the pieces heard, with the pieces in between that no observer heard counted from their numbers. While sending leaves out the pauses: gaps of over 15 s in which far fewer pieces went than usual, as when the sending app waits on the far end. Last ${days} days.</p>`;
     if (!s.n) return head + '<p class="text-muted">No clips with more than one piece heard yet.</p>';
-    const maxK = Math.max(...s.byHops.map((b) => b.kbps || 0), 0.1);
+    // scaled to the bars with enough clips behind them, when there are any
+    const sure = s.byHops.filter((b) => b.n && !b.few);
+    const maxK = Math.max(...(sure.length ? sure : s.byHops).map((b) => b.kbps || 0), 0.001);
     const tiles = `<div class="mm-ins-tiles">
-      <div class="mm-ins-tile"><div class="mm-ins-big">${fmtK(s.kbps)} kbit/s</div><div class="mm-ins-label">median speed end to end, ${s.n} clip${s.n === 1 ? '' : 's'}${s.priv ? `, ${s.priv} sent privately` : ''}</div></div>
-      <div class="mm-ins-tile"><div class="mm-ins-big">${fmtK(s.sendKbps)} kbit/s</div><div class="mm-ins-label">median while sending, leaving out pauses of over 15 s</div></div>
+      <div class="mm-ins-tile"><div class="mm-ins-big">${fmtB(s.kbps)} bit/s</div><div class="mm-ins-label">median speed end to end, ${s.n} clip${s.n === 1 ? '' : 's'}${s.priv ? `, ${s.priv} sent privately` : ''}${s.waited ? `; ${s.waited} that waited on the far end left out` : ''}${s.doubtful ? `; ${s.doubtful} too uncertain to time left out` : ''}</div></div>
+      <div class="mm-ins-tile"><div class="mm-ins-big">${fmtB(s.sendKbps)} bit/s</div><div class="mm-ins-label">median while sending, leaving out pauses of over 15 s</div></div>
       <div class="mm-ins-tile"><div class="mm-ins-big">${s.photo1 == null ? '—' : Math.round(s.photo1) + ' s'}</div><div class="mm-ins-label">a photo over one hop, typical</div></div>
-      <div class="mm-ins-tile mm-ins-tile--wide"><div class="mm-ins-big mm-ins-accent mm-ins-route">${s.fastest ? esc(s.fastest.route) : '—'}</div><div class="mm-ins-label">${s.fastest ? `fastest route this period, ${fmtK(s.fastest.kbps)} kbit/s over ${s.fastest.n} clips` : 'fastest route: needs two clips on one route'}</div></div>
+      <div class="mm-ins-tile mm-ins-tile--wide"><div class="mm-ins-big mm-ins-accent mm-ins-route">${s.fastest ? esc(s.fastest.route) : '—'}</div><div class="mm-ins-label">${s.fastest ? `fastest route this period, ${fmtB(s.fastest.kbps)} bit/s while sending over ${s.fastest.n} clips` : 'fastest route: needs two clips on one route'}</div></div>
     </div>`;
-    const bars = s.byHops.filter((b) => b.n).map((b) => `<div class="mm-ins-bar-row"><span>${b.hops}${b.hops === 5 ? '+' : ''} hop${b.hops === 1 ? '' : 's'}</span>
-      <span class="mm-ins-bar"><i style="width:${Math.round(((b.kbps || 0) / maxK) * 100)}%"></i></span><span class="mm-ins-num">${fmtK(b.kbps)}</span><span class="text-muted mm-ins-n">${b.n}</span></div>`).join('');
+    const bars = s.byHops.filter((b) => b.n).map((b) => `<div class="mm-ins-bar-row${b.few ? ' mm-ins-bar-row--few' : ''}"${b.few ? ' title="Too few clips to go on yet"' : ''}><span>${b.hops}${b.hops === 5 ? '+' : ''} hop${b.hops === 1 ? '' : 's'}</span>
+      <span class="mm-ins-bar"><i style="width:${Math.min(100, Math.round(((b.kbps || 0) / maxK) * 100))}%"></i></span><span class="mm-ins-num">${fmtB(b.kbps)}</span><span class="text-muted mm-ins-n">${b.n} clip${b.n === 1 ? '' : 's'}</span></div>`).join('')
+      + (s.byHops.some((b) => b.n && b.few) ? `<p class="text-muted mm-ins-note">Faded: fewer than ${FEW_CLIPS} clips, too few to go on.</p>` : '');
     const rows = s.rows.slice(0, 8).map((c) => `<tr><td class="mm-ins-when">${whenHtml(c.at)}</td><td>${esc(routeLabel(c, nameOf))}</td><td class="mm-ins-num">${c.hops}</td><td>${esc(clipLabel(c))}, ${c.bytesEstimated ? '<span title="Worked out from the numbers of the first and last pieces heard">about ' : ''}${(c.bytes / 1000).toFixed(1)} kB${c.bytesEstimated ? '</span>' : ''}</td>
-      <td class="mm-ins-num">${Math.round(c.durationS)} s${c.paused >= 1 ? `<span class="text-muted mm-ins-paused" title="Paused for this long in all: gaps of over 15 s with far fewer pieces than usual"> (${Math.round(c.paused)} s paused)</span>` : ''}</td><td class="mm-ins-num"><strong>${fmtK(c.kbps)}</strong></td><td class="mm-ins-num">${fmtK(c.sendKbps)}</td></tr>`).join('');
+      <td class="mm-ins-num">${Math.round(c.durationS)} s${c.paused >= 1 ? `<span class="text-muted mm-ins-paused" title="Paused for this long in all: gaps of over 15 s with far fewer pieces than usual"> (${Math.round(c.paused)} s paused)</span>` : ''}${c.doubtful ? '<span class="mm-ins-waited">too uncertain to time</span>' : c.waited ? '<span class="mm-ins-waited">waited on the far end</span>' : ''}</td><td class="mm-ins-num">${c.doubtful || c.waited ? `<span class="text-muted" title="${c.doubtful ? 'Left out of every speed: too few pieces heard, too quick, or faster than radio2 can carry' : 'Left out of the end-to-end median: most of this was waiting on the far end'}">${fmtB(c.kbps)}</span>` : `<strong>${fmtB(c.kbps)}</strong>`}</td><td class="mm-ins-num">${c.doubtful ? `<span class="text-muted">${fmtB(c.sendKbps)}</span>` : fmtB(c.sendKbps)}</td></tr>`).join('');
     return head + tiles + `<div class="mm-ins-split">
-      <div class="mm-ins-col"><h4>kbit/s by hops (median)</h4>${bars}</div>
-      <div class="mm-ins-col mm-ins-wide"><h4>Recent clips</h4><div class="mm-ins-scroll"><table class="analytics-table mm-ins-table"><thead><tr><th scope="col">Sent</th><th scope="col">Route</th><th scope="col" class="mm-ins-num">Hops</th><th scope="col">Clip</th><th scope="col" class="mm-ins-num">Took</th><th scope="col" class="mm-ins-num">kbit/s</th><th scope="col" class="mm-ins-num" title="Leaving out pauses of over 15 s">While sending</th></tr></thead><tbody>${rows}</tbody></table></div></div></div>`;
+      <div class="mm-ins-col"><h4>bit/s by hops (median while sending)</h4>${bars}</div>
+      <div class="mm-ins-col mm-ins-wide"><h4>Recent clips</h4><div class="mm-ins-scroll"><table class="analytics-table mm-ins-table"><thead><tr><th scope="col">Sent</th><th scope="col">Route</th><th scope="col" class="mm-ins-num">Hops</th><th scope="col">Clip</th><th scope="col" class="mm-ins-num">Took</th><th scope="col" class="mm-ins-num">bit/s</th><th scope="col" class="mm-ins-num" title="Leaving out pauses of over 15 s">While sending</th></tr></thead><tbody>${rows}</tbody></table></div></div></div>`;
   }
 
   // ---- When it's busy -------------------------------------------------------

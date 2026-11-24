@@ -47,6 +47,27 @@ and 12 hours after. The MediaMesh tab's **Did it arrive?** shows how many delive
 and how, a **Recipient** column in its clip list, and the flight recorder adds what the receiving
 apps reported. Nothing is shown per radio.
 
+## How fast clips cross
+
+The MediaMesh tab's **How fast clips cross the mesh** card shows speeds in bit/s: across a few
+hops they run to a few hundred. A clip is timed from the first piece its far end heard until it
+had enough to make the whole clip; **while sending** leaves out pauses of over 15 s.
+
+Some clips are left out of the figures, and marked in the clip list:
+
+- **Waited on the far end:** paused for at least 5 minutes and for over three-quarters of its
+  time, as when a phone comes back later and asks for the rest. It's left out of the end-to-end
+  median, since that time is the wait, not the mesh. Repair rounds on a long route pause for far
+  less and stay in.
+- **Too uncertain to time:** faster while sending than radio2 can carry (about 6,400 bit/s, zero
+  hop on the US MediaMesh preset), over in under 3 s, or sent privately with fewer than 5 pieces
+  heard, so its size rests on a few pieces' numbers. It's left out of every figure.
+
+The bars by hops are medians while sending. A bar resting on fewer than 3 clips is faded, and the
+bars are scaled to those with enough clips. The fastest route goes by speed while sending too.
+The code is in `public/mediamesh-insights.js` and its tests in
+`tests/unit/test-mediamesh-insights.js`.
+
 ## Kept past memory
 
 The clips, the hourly photo and voice traffic and how fast clips crossed are worked out from the
