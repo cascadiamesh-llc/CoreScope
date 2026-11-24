@@ -179,8 +179,8 @@
     let mm, clipsData;
     try {
       [mm, clipsData] = await Promise.all([
-        fetch('/api/analytics/mediamesh').then((r) => r.json()),
-        fetch('/api/analytics/mediamesh/clips?days=30').then((r) => r.json()).catch(() => ({})),
+        CSApi.fetch('/api/analytics/mediamesh').then((r) => r.json()),
+        CSApi.fetch('/api/analytics/mediamesh/clips?days=30').then((r) => r.json()).catch(() => ({})),
       ]);
     } catch (_) {
       $('mmlReps').innerHTML = '<p class="text-muted">The analyzer could not be reached.</p>';
@@ -362,7 +362,7 @@
     const find = (q) => {
       const mine = ++findToken;
       if (q.length < 2) { found = []; $('mmlFound').innerHTML = ''; return; }
-      fetch('/api/nodes?role=repeater&limit=25&search=' + encodeURIComponent(q)).then((r) => r.json()).then((d) => {
+      CSApi.fetch('/api/nodes?role=repeater&limit=25&search=' + encodeURIComponent(q)).then((r) => r.json()).then((d) => {
         if (mine !== findToken || destroyed) return;
         found = candidates(Array.isArray(d) ? d : (d && d.nodes) || [], mmKeys);
         $('mmlFound').innerHTML = candidatesHtml(found, q);
@@ -438,7 +438,7 @@
           placePlan(lat, lon);
         } else if (/^[0-9a-f]{8,64}$/i.test(q.get('add') || '')) {
           // #/mediamesh-lab?add={public key}: start with that repeater added
-          const node = await fetch('/api/nodes/' + encodeURIComponent(q.get('add'))).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+          const node = await CSApi.fetch('/api/nodes/' + encodeURIComponent(q.get('add'))).then((r) => (r.ok ? r.json() : null)).catch(() => null);
           const c = candidates([node && (node.node || node)], mmKeys)[0];
           if (c && c.placed && !destroyed) addExisting(c);
         }

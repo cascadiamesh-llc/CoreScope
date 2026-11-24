@@ -148,7 +148,7 @@
     try {
       data = typeof root.api === 'function'
         ? await root.api('/analytics/mediamesh?window=' + win, { ttl: 60000 })
-        : await (await fetch('/api/analytics/mediamesh?window=' + win)).json();
+        : await (await CSApi.fetch('/api/analytics/mediamesh?window=' + win)).json();
     } catch (_) { return; }
     if (current !== token || !el.isConnected) return;
     const v = viewOf(data, obs, obs.id);

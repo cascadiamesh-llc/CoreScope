@@ -503,14 +503,14 @@
       if (clip) addClip(Object.assign({ pts, hash: r.hash }, clip), now, {});
       else addEmber(pts[0]);
     }
-    fetch('/api/observers').then((r) => r.json()).then((d) => addObservers(idx, (d && d.observers) || d)).catch(() => { /* links and repeaters only */ });
+    CSApi.fetch('/api/observers').then((r) => r.json()).then((d) => addObservers(idx, (d && d.observers) || d)).catch(() => { /* links and repeaters only */ });
     const wsHandler = (msg) => { if (msg && msg.type === 'packet') onPacket(msg.data); };
     if (typeof root.onWS === 'function') root.onWS(wsHandler);
 
     // ---- the day in a minute ----
     async function startReplay() {
       let data;
-      try { data = await fetch('/api/analytics/mediamesh/replay?hours=24').then((r) => r.json()); } catch (_) { data = null; }
+      try { data = await CSApi.fetch('/api/analytics/mediamesh/replay?hours=24').then((r) => r.json()); } catch (_) { data = null; }
       if (!data || destroyed) return;
       const H = helpers();
       const ann = new Map();

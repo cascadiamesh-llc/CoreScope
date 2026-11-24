@@ -31,6 +31,8 @@
     <div class="go">See it live →</div>
   </div>
 </a>
+<script src="deployment.js?v=__BUST__"></script>
+<script src="api-base.js?v=__BUST__"></script>
 <script>
 'use strict';
 (function () {
@@ -114,8 +116,8 @@
 
   function load() {
     Promise.all([
-      fetch('/api/analytics/mediamesh').then(function (r) { return r.json(); }),
-      fetch('/api/analytics/mediamesh/clips?days=1').then(function (r) { return r.json(); }).catch(function () { return { clips: [] }; }),
+      CSApi.fetch('/api/analytics/mediamesh').then(function (r) { return r.json(); }),
+      CSApi.fetch('/api/analytics/mediamesh/clips?days=1').then(function (r) { return r.json(); }).catch(function () { return { clips: [] }; }),
     ]).then(function (res) {
       reps = (res[0] && res[0].repeaters) || [];
       edges = ((res[0] && res[0].backbone) || []).filter(function (e) { return [e.a_lat, e.a_lon, e.b_lat, e.b_lon].every(Number.isFinite); });

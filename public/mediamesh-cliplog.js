@@ -274,7 +274,7 @@
       const api = (opts && opts.api) || root.api;
       log = typeof api === 'function'
         ? await api('/analytics/mediamesh/clips/' + encodeURIComponent(String(sid).toLowerCase()), { ttl: 30000 })
-        : await (await fetch('/api/analytics/mediamesh/clips/' + encodeURIComponent(String(sid).toLowerCase()))).json();
+        : await (await CSApi.fetch('/api/analytics/mediamesh/clips/' + encodeURIComponent(String(sid).toLowerCase()))).json();
     } catch (_) { log = null; }
     if (openState !== me) return;
     if (!log || !log.sid) {

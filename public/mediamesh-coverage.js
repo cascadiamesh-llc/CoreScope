@@ -2495,9 +2495,9 @@
   /** GET /api/mediamesh/coverage-points, or null. */
   async function loadFieldPoints(opts) {
     if (opts && opts.fieldPoints !== undefined) return opts.fieldPoints;
-    if (typeof fetch !== 'function') return null;
+    if (typeof CSApi === 'undefined') return null;
     try {
-      const res = await fetch('/api/mediamesh/coverage-points', { headers: { Accept: 'application/json' } });
+      const res = await CSApi.fetch('/api/mediamesh/coverage-points', { headers: { Accept: 'application/json' } });
       return res.ok ? await res.json() : null;
     } catch (_) { return null; }
   }

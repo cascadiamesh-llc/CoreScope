@@ -156,15 +156,15 @@
     const status = (t) => { if (!destroyed) $('mmfStatus').textContent = t; };
     let mm, hist, wx;
     try {
-      mm = await fetch('/api/analytics/mediamesh').then((r) => r.json());
+      mm = await CSApi.fetch('/api/analytics/mediamesh').then((r) => r.json());
     } catch (_) { status('The analyzer could not be reached.'); return; }
     const placed = ((mm && mm.repeaters) || []).filter((r) => Number.isFinite(r.lat) && Number.isFinite(r.lon));
     const lat = placed.length ? placed.reduce((a, r) => a + r.lat, 0) / placed.length : 47.6;
     const lon = placed.length ? placed.reduce((a, r) => a + r.lon, 0) / placed.length : -122.33;
     try {
       [hist, wx] = await Promise.all([
-        fetch('/api/mediamesh/link-history?days=60').then((r) => (r.ok ? r.json() : { hours: [] })).catch(() => ({ hours: [] })),
-        fetch(`/api/mediamesh/weather?lat=${lat.toFixed(2)}&lon=${lon.toFixed(2)}`).then((r) => { if (!r.ok) throw new Error('weather'); return r.json(); }),
+        CSApi.fetch('/api/mediamesh/link-history?days=60').then((r) => (r.ok ? r.json() : { hours: [] })).catch(() => ({ hours: [] })),
+        CSApi.fetch(`/api/mediamesh/weather?lat=${lat.toFixed(2)}&lon=${lon.toFixed(2)}`).then((r) => { if (!r.ok) throw new Error('weather'); return r.json(); }),
       ]);
     } catch (_) {
       status('The weather could not be loaded, so there is no forecast right now.');

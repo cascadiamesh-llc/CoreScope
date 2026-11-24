@@ -262,8 +262,8 @@
       let mm, nodes;
       try {
         [mm, nodes] = await Promise.all([
-          fetch('/api/analytics/mediamesh').then((r) => r.json()),
-          fetch('/api/nodes?role=repeater&limit=5000').then((r) => r.json()),
+          CSApi.fetch('/api/analytics/mediamesh').then((r) => r.json()),
+          CSApi.fetch('/api/nodes?role=repeater&limit=5000').then((r) => r.json()),
         ]);
       } catch (_) {
         const s = app.querySelector('#mmsStatus');

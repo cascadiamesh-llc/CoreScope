@@ -116,8 +116,8 @@
     let hist, mm;
     try {
       [hist, mm] = await Promise.all([
-        fetch('/api/mediamesh/history').then((r) => r.json()).catch(() => ({ days: [] })),
-        fetch('/api/analytics/mediamesh').then((r) => r.json()),
+        CSApi.fetch('/api/mediamesh/history').then((r) => r.json()).catch(() => ({ days: [] })),
+        CSApi.fetch('/api/analytics/mediamesh').then((r) => r.json()),
       ]);
     } catch (_) {
       $('mmtStatus').textContent = 'The analyzer could not be reached.';

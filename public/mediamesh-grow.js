@@ -162,8 +162,8 @@
     let mm, nodes;
     try {
       [mm, nodes] = await Promise.all([
-        fetch('/api/analytics/mediamesh').then((r) => r.json()),
-        fetch('/api/nodes?role=repeater&limit=5000').then((r) => r.json()),
+        CSApi.fetch('/api/analytics/mediamesh').then((r) => r.json()),
+        CSApi.fetch('/api/nodes?role=repeater&limit=5000').then((r) => r.json()),
       ]);
     } catch (_) { status('The analyzer could not be reached.'); return; }
     if (destroyed) return;
@@ -226,7 +226,7 @@
     const cands = ups.map((u) => ({ node: u, lat: u.lat, lon: u.lon })).concat(spots.map((sp) => Object.assign({}, sp)));
     let pts = [];
     try {
-      const pop = await fetch('/api/places/population').then((r) => r.json());
+      const pop = await CSApi.fetch('/api/places/population').then((r) => r.json());
       pts = (pop && pop.points) || [];
     } catch (_) { /* no people counts */ }
     const pool = M.workerPool ? M.workerPool() : null;
@@ -254,7 +254,7 @@
     try {
       const named = cands.filter((c) => !c.node);
       if (named.length) {
-        const res = await fetch('/api/places/near?' + named.map((c) => 'at=' + c.lat.toFixed(5) + ',' + c.lon.toFixed(5)).join('&')).then((r) => r.json());
+        const res = await CSApi.fetch('/api/places/near?' + named.map((c) => 'at=' + c.lat.toFixed(5) + ',' + c.lon.toFixed(5)).join('&')).then((r) => r.json());
         named.forEach((c, i) => { c.place = res && res.places && res.places[i]; });
       }
     } catch (_) { /* unnamed */ }

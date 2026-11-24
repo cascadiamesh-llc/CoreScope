@@ -264,7 +264,7 @@
     try {
       report = typeof root.api === 'function'
         ? await root.api('/nodes/' + encodeURIComponent(pubkey) + '/mediamesh', { ttl: 60000 })
-        : await (await fetch('/api/nodes/' + encodeURIComponent(pubkey) + '/mediamesh')).json();
+        : await (await CSApi.fetch('/api/nodes/' + encodeURIComponent(pubkey) + '/mediamesh')).json();
     } catch (_) { return; }
     if (current !== token || !report || !report.repeater || !el.isConnected) return;
     const rep = { name: report.repeater.name || (n && n.name), lat: Number(n && n.lat), lon: Number(n && n.lon), radio: report.repeater.radio };

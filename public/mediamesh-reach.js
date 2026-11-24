@@ -387,6 +387,9 @@
       out.innerHTML = '<p class="text-muted">Looking it up…</p>';
       const b = map.getBounds().pad(1), c = map.getCenter();
       const look = async (params, w, n, e, s) => {
+        // OpenStreetMap's geocoder, not the CoreScope server: CSApi only
+        // makes /api requests, so this one call is a plain fetch.
+        // eslint-disable-next-line no-restricted-syntax
         const res = await fetch(`${GEOCODER}?format=jsonv2&countrycodes=us,ca&viewbox=${w},${n},${e},${s}&${params}`, { headers: { Accept: 'application/json' } });
         return res.ok ? res.json() : [];
       };
