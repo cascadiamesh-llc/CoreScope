@@ -632,7 +632,7 @@
     let defaultCenter = [37.6, -122.1];
     let defaultZoom = 9;
     try {
-      const mapCfg = await (await fetch('/api/config/map')).json();
+      const mapCfg = await (await CSApi.fetch('/api/config/map')).json();
       if (Array.isArray(mapCfg.center) && mapCfg.center.length === 2) defaultCenter = mapCfg.center;
       if (typeof mapCfg.zoom === 'number') defaultZoom = mapCfg.zoom;
     } catch {}
@@ -670,27 +670,14 @@
     // If navigated with ?node=PUBKEY, highlight that node after markers load
     targetNodeKey = urlParams.get('node') || null;
 
-    const isDark = document.documentElement.getAttribute('data-theme') === 'dark' ||
-      (document.documentElement.getAttribute('data-theme') !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-    // #1420 — multi-provider dark-tile picker. Light mode unchanged.
+    const isDark = window.MC_isDarkTheme();
+    // #1420 — multi-provider dark-tile picker. Light mode unchanged (map page).
     let _darkRefLayer = null;  // Esri-only: labels overlay
+    // Single shared registry resolver (map-tile-providers.js loads before this
+    // file; there is deliberately no second fallback body here — AGENTS.md DRY).
     function _resolveTileUrl(dark) {
-      const reg = window.MC_TILE_PROVIDERS || {};
-      if (!dark) {
-        const lightId = (typeof window.MC_getLightTileProvider === 'function') ? window.MC_getLightTileProvider() : null;
-        const lp = lightId ? (reg[lightId] || null) : null;
-        if (lp && lp.url) {
-          return { url: (typeof lp.url === 'function' ? lp.url() : lp.url), attribution: lp.attribution || '© OpenStreetMap © CartoDB', refUrl: null };
-        }
-        return { url: TILE_LIGHT, attribution: '© OpenStreetMap © CartoDB', refUrl: null };
-      }
-      const id  = (typeof window.MC_getDarkTileProvider === 'function') ? window.MC_getDarkTileProvider() : 'carto-dark';
-      const p   = reg[id] || reg['carto-dark'] || {};
-      return {
-        url: (typeof p.url === 'function' ? p.url() : p.url) || (typeof p.baseUrl === 'function' ? p.baseUrl() : p.baseUrl) || TILE_DARK,
-        attribution: p.attribution || '© OpenStreetMap © CartoDB',
-        refUrl: p.refUrl || null
-      };
+      const r = window.MC_resolveTile(!!dark);
+      return { url: r.url, attribution: r.attribution, refUrl: r.refUrl, maxZoom: r.maxZoom };
     }
     const autoLayerGroup = L.layerGroup().addTo(map);
     
@@ -719,10 +706,10 @@
     const _initTile = _resolveTileUrl(isDark);
     const tileLayer = L.tileLayer(_initTile.url, {
       attribution: _initTile.attribution,
-      maxZoom: 19,
+      maxZoom: _initTile.maxZoom || 19,
     }).addTo(autoLayerGroup);
     if (isDark && _initTile.refUrl) {
-      _darkRefLayer = L.tileLayer(_initTile.refUrl, { maxZoom: 19, attribution: _initTile.attribution }).addTo(autoLayerGroup);
+      _darkRefLayer = L.tileLayer(_initTile.refUrl, { maxZoom: _initTile.maxZoom || 19, attribution: _initTile.attribution }).addTo(autoLayerGroup);
     }
     if (typeof window.MC_applyTileFilter === 'function') window.MC_applyTileFilter();
     
@@ -732,15 +719,13 @@
     }
 
     const _mapThemeObs = new MutationObserver(function () {
-      const dark = document.documentElement.getAttribute('data-theme') === 'dark' ||
-        (document.documentElement.getAttribute('data-theme') !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      const dark = window.MC_isDarkTheme();
       _syncDarkTiles(dark);
     });
     _mapThemeObs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
     // #1420 — re-render when the user picks a different dark provider in the customizer.
     window.addEventListener('mc-tile-provider-changed', function (e) {
-      const dark = document.documentElement.getAttribute('data-theme') === 'dark' ||
-        (document.documentElement.getAttribute('data-theme') !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      const dark = window.MC_isDarkTheme();
       if (e && e.detail && e.detail.type && e.detail.type !== (dark ? 'dark' : 'light')) return;
       _syncDarkTiles(dark);
     });
@@ -896,7 +881,8 @@
     // Affinity Debug overlay toggle — shown only when debugAffinity config is on or localStorage override
     (function initAffinityDebug() {
       var label = document.getElementById('mcAffinityDebugLabel');
-      var show = (window.CLIENT_CONFIG && window.CLIENT_CONFIG.debugAffinity) || localStorage.getItem('meshcore-affinity-debug') === 'true';
+      // Needs the admin API key, which an anonymous static build cannot send.
+      var show = !CSApi.anonymous && ((window.CLIENT_CONFIG && window.CLIENT_CONFIG.debugAffinity) || localStorage.getItem('meshcore-affinity-debug') === 'true');
       if (show && label) label.style.display = '';
       var cb = document.getElementById('mcAffinityDebug');
       if (!cb) return;
@@ -1161,7 +1147,7 @@
       try {
         const hopList = (hopKeys || []).join(',');
         const apiUrl = '/api/resolve-hops?hops=' + encodeURIComponent(hopList);
-        const resp = await fetch(apiUrl, { cache: 'no-cache' });
+        const resp = await CSApi.fetch(apiUrl, { cache: 'no-cache' });
         if (resp.ok) {
           const json = await resp.json();
           serverResolved = json && json.resolved ? json.resolved : null;
@@ -1430,7 +1416,7 @@
     if (!inferred) {
       try {
         const apiUrl = '/api/resolve-hops?hops=' + encodeURIComponent(canonicalPath.join(','));
-        const resp = await fetch(apiUrl, { cache: 'no-cache' });
+        const resp = await CSApi.fetch(apiUrl, { cache: 'no-cache' });
         if (resp.ok) {
           const json = await resp.json();
           serverResolved = json && json.resolved ? json.resolved : null;
@@ -1556,7 +1542,7 @@
       if (!nodes || !nodes.length) {
         await new Promise(r => setTimeout(r, 600));
       }
-      const resp = await fetch('/api/packets/' + encodeURIComponent(packetHash));
+      const resp = await CSApi.fetch('/api/packets/' + encodeURIComponent(packetHash));
       if (!resp.ok) {
         console.warn('[deep-link] /api/packets/' + packetHash + ' returned ' + resp.status);
         return;
@@ -1692,7 +1678,7 @@
       // GRP_TXT: try to resolve the channel name from /api/channels.
       if (inferredType === 'GRP_TXT' && inferredChannelHash) {
         try {
-          const chResp = await fetch('/api/channels?includeEncrypted=true');
+          const chResp = await CSApi.fetch('/api/channels?includeEncrypted=true');
           if (chResp.ok) {
             const chData = await chResp.json();
             const chList = chData.channels || [];
@@ -1742,7 +1728,7 @@
         if (!pktCtx.channelEncrypted) {
           try {
             const cleanName = (pktCtx.channelName || '').replace(/^#/, '');
-            const msgResp = await fetch('/api/channels/' + encodeURIComponent(cleanName) + '/messages?limit=10');
+            const msgResp = await CSApi.fetch('/api/channels/' + encodeURIComponent(cleanName) + '/messages?limit=10');
             if (msgResp.ok) {
               const msgs = await msgResp.json();
               const m = (msgs.messages || []).find(mm => mm.packet_hash === packetHash || mm.hash === packetHash);
@@ -2488,11 +2474,7 @@
     if (err) { errDiv.textContent = err; return; }
 
     resultsDiv.innerHTML = '<p style="font-size:12px;">Loading...</p>';
-    fetch('/api/paths/inspect', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prefixes: prefixes })
-    })
+    CSApi.postJSON('/api/paths/inspect', { prefixes: prefixes })
       .then(function (r) {
         if (r.status === 503) return r.json().then(function () { throw new Error('Service warming up, retry shortly.'); });
         if (!r.ok) return r.json().then(function (d) { throw new Error(d.error || 'Request failed'); });
@@ -2621,7 +2603,7 @@
     clearAffinityOverlay();
     // Fetch debug data — requires API key stored in localStorage
     var apiKey = localStorage.getItem('meshcore-api-key') || '';
-    fetch('/api/debug/affinity', { headers: { 'X-API-Key': apiKey } })
+    CSApi.fetch('/api/debug/affinity', { headers: { 'X-API-Key': apiKey } })
       .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
       .then(function (data) {
         affinityData = data;

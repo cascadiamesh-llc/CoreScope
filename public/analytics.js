@@ -514,10 +514,10 @@
     `;
 
     // Affinity stats widget — fetch and append if debugAffinity enabled
-    var showDebug = (window.CLIENT_CONFIG && window.CLIENT_CONFIG.debugAffinity) || localStorage.getItem('meshcore-affinity-debug') === 'true';
+    var showDebug = !CSApi.anonymous && ((window.CLIENT_CONFIG && window.CLIENT_CONFIG.debugAffinity) || localStorage.getItem('meshcore-affinity-debug') === 'true');
     if (showDebug) {
       var apiKey = localStorage.getItem('meshcore-api-key') || '';
-      fetch('/api/debug/affinity', { headers: { 'X-API-Key': apiKey } })
+      CSApi.fetch('/api/debug/affinity', { headers: { 'X-API-Key': apiKey } })
         .then(function (r) { return r.ok ? r.json() : null; })
         .then(function (data) {
           if (!data || !data.stats) return;
@@ -2996,7 +2996,12 @@
     // Render minimap
     if (hasMap && typeof L !== 'undefined') {
       const map = L.map('subpathMap', { zoomControl: false, attributionControl: false });
-      L.tileLayer(getTileUrl(), { maxZoom: 18 }).addTo(map);
+      // Shared resolver for attribution/maxZoom parity with the other maps
+      // (OpenTopoMap caps at 17, USGS at 16 — a hardcoded 18 404s above those).
+      const _tileR = (typeof window.MC_resolveTile === 'function')
+        ? window.MC_resolveTile(typeof window.MC_isDarkTheme === 'function' ? window.MC_isDarkTheme() : false)
+        : null;
+      L.tileLayer((_tileR && _tileR.url) || getTileUrl(), { maxZoom: (_tileR && _tileR.maxZoom) || 18 }).addTo(map);
 
       const latlngs = [];
       nodesWithLoc.forEach((n, i) => {
@@ -3762,6 +3767,7 @@ function destroy() { _stopRolesRefresh(); _stopScopesRefresh(); _stopDistanceRet
     window._analyticsRetransmissionBucketFor = retransmissionBucketFor;
     window._analyticsRenderRetransmissionChart = renderRetransmissionChart;
     window._analyticsScopeAdvertsByRoleHtml = scopeAdvertsByRoleHtml;
+    window._analyticsScopeSummaryCardsHtml = scopeSummaryCardsHtml;
     window._analyticsPacketsPerHourCard = packetsPerHourCard;
   }
 
@@ -5428,7 +5434,7 @@ function destroy() { _stopRolesRefresh(); _stopScopesRefresh(); _stopDistanceRet
     el.innerHTML = '<div class="text-center text-muted" style="padding:40px">Loading clock health data…</div>';
     try {
       const aqs = AreaFilter.areaQueryString();
-      var data = await (await fetch('/api/nodes/clock-skew' + (aqs ? '?' + aqs.slice(1) : ''))).json();
+      var data = await (await CSApi.fetch('/api/nodes/clock-skew' + (aqs ? '?' + aqs.slice(1) : ''))).json();
       if (!Array.isArray(data) || !data.length) {
         el.innerHTML = '<div class="text-center text-muted" style="padding:40px">No clock skew data available. Nodes need recent adverts for clock analysis.</div>';
         return;
@@ -5559,6 +5565,35 @@ function destroy() { _stopRolesRefresh(); _stopScopesRefresh(); _stopDistanceRet
       '</table>';
   }
 
+  // #2364: summary cards for /api/scope-stats. Shares are of `total`
+  // (scoped + unscoped, all routes); servers older than #2364 send no
+  // `total`, so it falls back to scoped + unscoped. The route split of
+  // unscoped is only shown when the server reports it.
+  function scopeSummaryCardsHtml(s) {
+    function pct(n, total) {
+      if (!total) return '—';
+      return (n / total * 100).toFixed(1) + '%';
+    }
+    var transportTotal = s.transportTotal || 0;
+    var overall = s.total != null ? s.total : (s.scoped || 0) + (s.unscoped || 0);
+    var unscopedNote = pct(s.unscoped, overall) + ' of all traffic';
+    if (s.unscopedFlood != null && s.unscopedDirect != null) {
+      unscopedNote += ' · ' + (s.unscopedTransport || 0).toLocaleString() + ' transport, ' +
+        s.unscopedFlood.toLocaleString() + ' flood, ' + s.unscopedDirect.toLocaleString() + ' direct';
+    }
+    return [
+      { label: 'Transport Total', value: transportTotal.toLocaleString(), note: 'routes 0,3 (carry scope)' },
+      { label: 'Scoped', value: s.scoped.toLocaleString(), note: pct(s.scoped, overall) + ' of all traffic' },
+      { label: 'Unscoped', value: s.unscoped.toLocaleString(), note: unscopedNote },
+      { label: 'Unknown Scope', value: s.unknownScope.toLocaleString(), note: pct(s.unknownScope, s.scoped) + ' of scoped' },
+    ].map(function(c) {
+      return '<div class="stat-card"><div class="stat-value">' + c.value + '</div>' +
+        '<div class="stat-label">' + c.label + '</div>' +
+        (c.note ? '<div class="stat-note text-muted" style="font-size:11px">' + c.note + '</div>' : '') +
+        '</div>';
+    }).join('');
+  }
+
   async function renderScopesTab(el) {
     var winKey = 'scopes_window';
     var selectedWindow = (typeof sessionStorage !== 'undefined' && sessionStorage.getItem(winKey)) || '24h';
@@ -5625,24 +5660,10 @@ function destroy() { _stopRolesRefresh(); _stopScopesRefresh(); _stopDistanceRet
       // #1838: denominator = transport-carrying transmissions (route_type 0,3).
       // Unscoped now includes non-transport routes (1,2) which are inherently
       // unscoped by MeshCore protocol, so unscoped can exceed transportTotal.
-      var total = s.transportTotal || 0;
-      var overall = (s.scoped || 0) + (s.unscoped || 0);
-
-      // Summary cards
+      // #2364: the server reports `total` (= scoped + unscoped) and splits
+      // unscoped by route; fall back for older servers.
       var cardsEl = document.getElementById('scopes-cards');
-      if (cardsEl) {
-        cardsEl.innerHTML = [
-          { label: 'Transport Total', value: total.toLocaleString(), note: 'routes 0,3 (carry scope)' },
-          { label: 'Scoped', value: s.scoped.toLocaleString(), note: pct(s.scoped, overall) + ' of all traffic' },
-          { label: 'Unscoped', value: s.unscoped.toLocaleString(), note: pct(s.unscoped, overall) + ' of all traffic' },
-          { label: 'Unknown Scope', value: s.unknownScope.toLocaleString(), note: pct(s.unknownScope, s.scoped) + ' of scoped' },
-        ].map(function(c) {
-          return '<div class="stat-card"><div class="stat-value">' + c.value + '</div>' +
-            '<div class="stat-label">' + c.label + '</div>' +
-            (c.note ? '<div class="stat-note text-muted" style="font-size:11px">' + c.note + '</div>' : '') +
-            '</div>';
-        }).join('');
-      }
+      if (cardsEl) cardsEl.innerHTML = scopeSummaryCardsHtml(s);
 
       // Per-region table
       var tbodyEl = document.getElementById('scopes-tbody');

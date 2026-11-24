@@ -104,6 +104,8 @@ function makeSandbox(stored) {
   };
   ctx.window.L = ctx.L;
   vm.createContext(ctx);
+  // map.js reaches the API through CSApi (api-base.js), as in the browser
+  require('./api-base-sandbox').loadApiBase(ctx);
   vm.runInContext(fs.readFileSync('public/roles.js', 'utf8'), ctx);
   vm.runInContext(fs.readFileSync('public/mediamesh.js', 'utf8'), ctx);
   for (const k of Object.keys(ctx.window)) ctx[k] = ctx.window[k];
