@@ -654,6 +654,10 @@ function cellAt(cov, lat, lon) {
     const links = M.planLinks(planned, reps, elev);
     assert.deepStrictEqual(links.map((l) => l.rep.name), ['Close', 'Mid']);
     assert.ok(links[0].marginDb > links[1].marginDb && links[1].index === 1);
+    // the far end at its own height: a repeater whose owner gave 222 ft is heard better than one at the default 10 m
+    const tall = M.planLinks(planned, [{ name: 'Default', lat: 47.75, lon: -122.33 }, { name: 'Skyline', lat: 47.75, lon: -122.33, public_key: '1ffbd69aa03faadc' }], elev);
+    assert.deepStrictEqual(tall.map((l) => l.rep.name), ['Skyline', 'Default']);
+    assert.ok(tall[0].marginDb > tall[1].marginDb, JSON.stringify(tall.map((l) => l.marginDb)));
     // a higher antenna gets further
     assert.strictEqual(M.antennaHeight({}), 10);
     assert.strictEqual(M.antennaHeight({ heightM: 30 }), 30);

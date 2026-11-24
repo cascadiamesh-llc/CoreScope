@@ -1853,7 +1853,8 @@
     reps.forEach((r, index) => {
       const distM = distanceM(planned.lat, planned.lon, r.lat, r.lon);
       if (!(distM > 1) || distM > radiusM) return;
-      const p = pathProfile(planned, r.lat, r.lon, elevAt, 'repeater', radioFor(r));
+      // the far end at its own antenna height, as predictedLinks does
+      const p = pathProfile(planned, r.lat, r.lon, elevAt, 'repeater', radioFor(r), { rxHeightM: antennaHeight(r) });
       if (p && p.marginDb >= 0) out.push({ rep: r, index, distM, marginDb: p.marginDb });
     });
     return out.sort((a, b) => b.marginDb - a.marginDb);
