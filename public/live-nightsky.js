@@ -9,7 +9,8 @@
  * - The camera follows what's crossing: it eases in on the routes in use and
  *   back out to every MediaMesh repeater when the sky is quiet. Names are
  *   placed so none covers another, busiest first.
- * - The land glows faintly underneath, shoreline and hills, from the same
+ * - The land lies underneath, darker than the sky with its hills shaded,
+ *   the water in the site's blue and the shoreline traced, from the same
  *   elevation tiles the coverage estimate uses (MediaMeshCoverage).
  * - When a clip's last piece has passed, how it went shows where it
  *   arrived: a burst when the observers heard every piece, a shimmer when
@@ -193,8 +194,9 @@
   // ---- The land ---------------------------------------------------------------
 
   /**
-   * The land under bounds as a faint picture: hills shaded from the
-   * north-west, open water left dark, the shoreline traced. elevAt(lat, lon)
+   * The land under bounds as a faint picture: water in the site's blue,
+   * the land darker than the sky with its hills shaded from the north-west,
+   * the shoreline traced. elevAt(lat, lon)
    * in metres (NaN for none). Water: the sea (0.5 m or lower) and lakes,
    * which elevation data holds dead flat. Returns a canvas pw x ph.
    */
@@ -232,16 +234,18 @@
     const img = g.createImageData(pw, ph), d = img.data;
     for (let y = 1; y < ph - 1; y++) {
       for (let x = 1, i = y * pw + 1; x < pw - 1; x++, i++) {
+        const k = i * 4;
+        // water in the site's blue; beyond the terrain (2) left as sky
+        if (water[i] === 1) { d[k] = 34; d[k + 1] = 92; d[k + 2] = 170; d[k + 3] = 72; continue; }
         if (water[i]) continue;
-        // light from the north-west, 45° up
+        // land darker than the sky, the hills lit from the north-west, 45° up
         const dzdx = (el[i + 1] - el[i - 1]) / (2 * mPerPx), dzdy = (el[i + pw] - el[i - pw]) / (2 * mPerPx);
         const shade = Math.max(0, Math.min(1, 0.55 + (-dzdx - dzdy) * 0.9 / Math.sqrt(1 + dzdx * dzdx + dzdy * dzdy)));
         const coast = water[i - 1] === 1 || water[i + 1] === 1 || water[i - pw] === 1 || water[i + pw] === 1;
-        const k = i * 4;
         if (coast) { d[k] = 239; d[k + 1] = 240; d[k + 2] = 242; d[k + 3] = 120; continue; }
         const hi = Math.min(1, Math.max(0, el[i] / 400));
-        d[k] = 24 + 20 * hi; d[k + 1] = 70 + 40 * hi; d[k + 2] = 144 + 50 * hi;
-        d[k + 3] = Math.round(18 + 34 * shade + 18 * hi);
+        d[k] = 6 + 14 * hi; d[k + 1] = 14 + 22 * hi; d[k + 2] = 34 + 36 * hi;
+        d[k + 3] = Math.round(120 - 60 * shade + 20 * hi);
       }
     }
     g.putImageData(img, 0, 0);

@@ -13,7 +13,8 @@ function test(name, fn) {
 }
 
 test('every MediaMesh page, Overview first, the way back to the tab', () => {
-  assert.deepStrictEqual(N.PAGES.map((p) => p.id), ['overview', 'status', 'lab', 'timemachine', 'grow', 'forecast']);
+  assert.deepStrictEqual(N.PAGES.map((p) => p.id), ['overview', 'status', 'lab', 'timemachine', 'grow', 'forecast', 'nightsky']);
+  assert.strictEqual(N.PAGES.find((p) => p.id === 'nightsky').href, '#/live?nightsky=1', 'opens the night sky over Live');
   assert.strictEqual(N.PAGES[0].href, '#/analytics?tab=mediamesh');
 });
 
@@ -21,7 +22,7 @@ test('the page you are on is lit, and only that one', () => {
   const h = N.html('timemachine');
   assert.strictEqual((h.match(/aria-current="page"/g) || []).length, 1);
   assert.ok(/mmnav-item--on" href="#\/mediamesh-timemachine" aria-current="page"/.test(h));
-  assert.strictEqual((h.match(/<a /g) || []).length, 6);
+  assert.strictEqual((h.match(/<a /g) || []).length, 7);
 });
 
 test('short names for phones keep the full name for screen readers', () => {

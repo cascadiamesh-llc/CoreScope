@@ -14,6 +14,8 @@
     { id: 'timemachine', href: '#/mediamesh-timemachine', label: 'Time machine' },
     { id: 'grow', href: '#/mediamesh-grow', label: 'Grow the mesh', short: 'Grow' },
     { id: 'forecast', href: '#/mediamesh-forecast', label: 'Forecast' },
+    // full screen over the Live page, so it has no bar of its own
+    { id: 'nightsky', href: '#/live?nightsky=1', label: 'Night sky' },
   ];
 
   /** The bar, with `active` (a PAGES id) lit. */

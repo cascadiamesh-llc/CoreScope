@@ -145,10 +145,11 @@ test('the land: sea and lakes left dark, the shore traced, a flat field still la
     const b = { s: 47.45, n: 47.8, w: -122.5, e: -122.15 };
     S.landCanvas(b, elev, 300, 300);
     const a = (lat, lon) => img.data[(Math.floor((b.n - lat) / (b.n - b.s) * 300) * 300 + Math.floor((lon - b.w) / (b.e - b.w) * 300)) * 4 + 3];
-    assert.strictEqual(a(47.62, -122.45), 0, 'the sound is dark');
-    assert.strictEqual(a(47.62, -122.25), 0, 'the lake is dark, all of it');
-    assert.ok(a(47.5, -122.3) > 0, 'a flat field is land');
-    assert.ok(a(47.62, -122.33) > 0, 'land glows');
+    const blue = (lat, lon) => { const i = (Math.floor((b.n - lat) / (b.n - b.s) * 300) * 300 + Math.floor((lon - b.w) / (b.e - b.w) * 300)) * 4; return img.data[i + 2] > img.data[i] + 100 && img.data[i + 3] > 0; };
+    assert.ok(blue(47.62, -122.45), 'the sound is blue');
+    assert.ok(blue(47.62, -122.25), 'the lake is blue');
+    assert.ok(a(47.5, -122.3) > 0 && !blue(47.5, -122.3), 'a flat field is land, dark');
+    assert.ok(a(47.62, -122.33) > 0 && !blue(47.62, -122.33), 'land is dark');
     let coast = 0;
     for (let i = 0; i < img.data.length; i += 4) if (img.data[i] === 239 && img.data[i + 2] === 242 && img.data[i + 3] === 120) coast++;
     assert.ok(coast > 200, 'the shore is traced: ' + coast);
