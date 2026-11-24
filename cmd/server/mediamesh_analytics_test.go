@@ -82,12 +82,22 @@ func TestMediaMeshAnalyticsOwnTransmission(t *testing.T) {
 	}
 }
 
-// Observation 2 (observer obs2, path ["aa"], SNR 8, RSSI -95) was heard on
-// radio2 from the one node whose key starts with aa: that is a link, with
-// the sender's position and radio2 setting, and the observer's position
-// once the observer has a node of its own.
+// Observation 2 (observer obs2, SNR 8, RSSI -95), given the path ["aabb"],
+// was heard on radio2 from the one node whose key starts with aabb: that is
+// a link, with the sender's position and radio2 setting, and the observer's
+// position once the observer has a node of its own. (A 1-byte hop, the
+// fixture's ["aa"], names nobody: packetpath.MinHeardHopBytes.)
 func TestMediaMeshAnalyticsLinks(t *testing.T) {
 	srv, router := setupTestServer(t)
+	srv.store.mu.Lock()
+	for _, tx := range srv.store.packets {
+		for _, o := range tx.Observations {
+			if o.ID == 2 {
+				o.PathJSON = `["aabb"]`
+			}
+		}
+	}
+	srv.store.mu.Unlock()
 	if _, err := srv.db.conn.Exec(`INSERT INTO nodes (public_key, name, role, lat, lon, last_seen, first_seen, advert_count)
 		VALUES ('obs2', 'Observer Two Node', 'repeater', 37.7, -122.2, ?, '2026-01-01T00:00:00Z', 1)`, mmRecentTS()); err != nil {
 		t.Fatal(err)

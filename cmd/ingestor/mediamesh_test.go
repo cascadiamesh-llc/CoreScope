@@ -932,7 +932,7 @@ func TestUpdateMediaMeshPrefixNeighbours(t *testing.T) {
 		t.Fatal(err)
 	}
 	var obsIdx int64
-	if err := s.db.QueryRow(`SELECT rowid FROM observers WHERE id = ?`, obsKey).Scan(&obsIdx); err != nil {
+	if err := s.db.QueryRow(`SELECT idx FROM observers WHERE id = ?`, obsKey).Scan(&obsIdx); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RecordMediaMeshPrefix("9E3C", "relayed", now); err != nil {
@@ -1028,7 +1028,7 @@ func TestUpdateMediaMeshNodeStats(t *testing.T) {
 		t.Fatal(err)
 	}
 	var obsIdx int64
-	if err := s.db.QueryRow(`SELECT rowid FROM observers WHERE id = ?`, obsKey).Scan(&obsIdx); err != nil {
+	if err := s.db.QueryRow(`SELECT idx FROM observers WHERE id = ?`, obsKey).Scan(&obsIdx); err != nil {
 		t.Fatal(err)
 	}
 	route, decoded := 1, ""

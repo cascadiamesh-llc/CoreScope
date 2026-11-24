@@ -423,7 +423,7 @@ func analyzerWriteViolations(t *testing.T, fset *token.FileSet, files map[string
 						out = append(out, where+": "+method+" on the analyzer connection in "+fd.Name.Name)
 					}
 				}
-				if idx, ok := analyzerSQLCallArgs[method]; ok && idx < len(call.Args) {
+				if idx, ok := analyzerSQLCallArgs[method]; ok && idx < len(call.Args) && !mediaMeshOwnDBFiles[name] {
 					if q, ok := resolve(call.Args[idx]); ok {
 						if m := analyzerWriteSQL.FindString(leadingSQL(q)); m != "" {
 							out = append(out, where+": "+strings.ToUpper(m)+" passed to "+method+" in "+fd.Name.Name)

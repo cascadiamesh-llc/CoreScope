@@ -388,7 +388,7 @@ func (s *Store) UpdateMediaMeshPrefixNeighbours(now time.Time) int {
 			FROM observation_mediamesh m
 			JOIN observations o ON o.id = m.observation_id
 			JOIN transmissions t ON t.id = o.transmission_id
-			LEFT JOIN observers obs ON obs.rowid = o.observer_idx
+			LEFT JOIN observers obs ON obs.idx = o.observer_idx
 			WHERE o.timestamp >= ? AND o.path_json IS NOT NULL AND o.path_json != '[]'`,
 			now.Add(-mediaMeshNextWindow).Unix())
 		if err != nil {
@@ -609,7 +609,7 @@ func (s *Store) UpdateMediaMeshNodeStats(now time.Time) int {
 		FROM observation_mediamesh m
 		JOIN observations o ON o.id = m.observation_id
 		JOIN transmissions t ON t.id = o.transmission_id
-		LEFT JOIN observers obs ON obs.rowid = o.observer_idx
+		LEFT JOIN observers obs ON obs.idx = o.observer_idx
 		WHERE o.timestamp >= ? AND t.payload_type IN (?, ?)`,
 		since, payloadGrpData, payloadRawCustom)
 	if err != nil {
@@ -1197,7 +1197,7 @@ func (s *Store) BackfillMediaMeshRelays(now time.Time) int {
 		FROM observation_mediamesh m
 		JOIN observations o ON o.id = m.observation_id
 		JOIN transmissions t ON t.id = o.transmission_id
-		LEFT JOIN observers obs ON obs.rowid = o.observer_idx
+		LEFT JOIN observers obs ON obs.idx = o.observer_idx
 		WHERE o.timestamp >= ? AND t.payload_type IN (?, ?)
 		ORDER BY o.timestamp`, since, payloadGrpData, payloadRawCustom)
 	if err != nil {
