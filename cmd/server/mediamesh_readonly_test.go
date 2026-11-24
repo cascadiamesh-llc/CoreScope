@@ -20,6 +20,7 @@ var mediaMeshOwnDBFiles = map[string]bool{
 	"mediamesh_days.go":            true,
 	"mediamesh_hours_keep.go":      true,
 	"mediamesh_link_history.go":    true,
+	"mediamesh_receipts.go":        true,
 }
 
 // Each listed file exists and never names the analyzer connection (conn,
