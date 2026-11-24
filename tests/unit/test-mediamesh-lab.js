@@ -51,6 +51,30 @@ test('a clip replayed: as it went, the other way round, or lost and why', () => 
   assert.ok(L.reasonText(unk, placed, { path: ['AA', 'ZZ'] }).includes("can't tell"));
 });
 
+test('repeaters that could join: not on MediaMesh, repeaters only, by name, those without a position marked', () => {
+  const nodes = [
+    { public_key: 'BB22aa', name: 'Zed Hill', role: 'repeater', lat: 47.6, lon: -122.3 },
+    { public_key: 'aa11ff', name: 'On MediaMesh', role: 'repeater', lat: 47.5, lon: -122.2 },
+    { public_key: 'cc33', name: 'Alpha <Ridge>', role: 'repeater', lat: null, lon: null },
+    { public_key: 'dd44', name: 'Somebody', role: 'companion', lat: 47.6, lon: -122.3 },
+    { public_key: 'ee55', name: 'Null Island', role: 'repeater', lat: 0, lon: 0 },
+  ];
+  const c = L.candidates(nodes, ['AA11FF']);
+  assert.deepStrictEqual(c.map((r) => [r.name, r.placed]), [['Alpha <Ridge>', false], ['Null Island', false], ['Zed Hill', true]]);
+  const h = L.candidatesHtml(c, 'a');
+  assert.strictEqual((h.match(/data-mml-add=/g) || []).length, 1, 'only one with a position can be picked');
+  assert.ok(h.includes('data-mml-add="BB22aa"') && h.includes('Alpha &lt;Ridge&gt;') && !h.includes('<Ridge>') && h.includes('no position'));
+  assert.ok(L.candidatesHtml([], '<x>').includes('&lt;x&gt;'), 'the query is escaped');
+  assert.deepStrictEqual(L.candidates(null, []), []);
+});
+
+test('the page finds repeaters by name and adds one at its own position', () => {
+  const src = pub('mediamesh-lab.js');
+  assert.ok(src.includes("'/api/nodes?role=repeater&limit=25&search='"));
+  assert.ok(src.includes('id="mmlFind"') && src.includes('placePlan(r.lat, r.lon, { name: r.name, public_key: r.public_key })'));
+  assert.ok(src.includes('placePlan(planned.lat, planned.lon, planned.as)'), 'a new height keeps it');
+});
+
 test('wiring: the page, the script, the link from the MediaMesh tab, colours from variables', () => {
   assert.ok(pub('index.html').includes('<script src="mediamesh-lab.js?v=__BUST__"></script>'));
   assert.ok(pub('app.js').includes("'mediamesh-lab': 'MediaMeshLab'"));

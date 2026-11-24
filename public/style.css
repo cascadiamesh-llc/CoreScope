@@ -6670,6 +6670,11 @@ html.mm-embed--sky .mm-embed-open:hover { background: var(--mm-sky-ink); color: 
 .mml-reps { max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; }
 .mml-rep, .mml-check { display: flex; gap: 8px; align-items: center; min-height: 32px; color: var(--text); cursor: pointer; }
 .mml-rep[hidden] { display: none; }
+.mml-find-label { display: block; margin: 12px 0 4px; font-size: 0.9em; color: var(--text); }
+.mml-found { list-style: none; margin: 6px 0 0; padding: 0; max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.mml-found-btn { width: 100%; text-align: left; min-height: 36px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--card-bg); color: var(--text); font: inherit; cursor: pointer; }
+.mml-found-btn:hover, .mml-found-btn:focus-visible { border-color: var(--mediamesh-path-color); }
+.mml-found-off { display: block; padding: 6px 10px; color: var(--text-muted); }
 .mml-plan { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--text); }
 .mml-plan input { width: 64px; min-height: 32px; border-radius: 6px; border: 1px solid var(--border); background: var(--input-bg, var(--card-bg)); color: var(--text); font: inherit; padding: 0 6px; }
 .mml-note { font-size: 0.85em; margin: 0; }

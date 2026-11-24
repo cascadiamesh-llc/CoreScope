@@ -6,7 +6,13 @@ mesh.
 - **Take down** any MediaMesh repeater.
 - **Add a repeater**: place it on the map at an antenna height; its links
   are worked out repeater to repeater over the terrain (`planLinks`), and
-  its coverage for people on the ground, drawn in green.
+  its coverage for people on the ground, drawn in green. Or find one of
+  the repeaters already up by name: the search covers every repeater the
+  analyzer knows that isn't on MediaMesh yet, and picking one adds it at its
+  own position, under its name, to show what bringing it onto MediaMesh
+  would do. Its antenna height isn't known, so set it for a closer answer.
+  Repeaters that haven't sent a position are listed but can't be picked.
+  `#/mediamesh-lab?add={public key}` opens with that repeater added.
 - **Links**: the links heard this week always count; those only the model
   predicts can be counted or left out.
 

@@ -1,7 +1,8 @@
 /* === CoreScope — mediamesh-lab.js ===
  * MediaMeshLab (#/mediamesh-lab): change the mesh and see what happens.
- * Take repeaters down, add a planned one (its links worked out over the
- * terrain), count or leave out the links only the model predicts, and see:
+ * Take repeaters down, add a planned one (anywhere on the map, or one of
+ * the analyzer's repeaters not yet on MediaMesh; its links worked out over
+ * the terrain), count or leave out the links only the model predicts, and see:
  * whether the mesh stays in one piece, how many routes between repeaters
  * still connect and in how many hops, what is still reached, which single
  * repeaters would split it, and the last 30 days' real clips replayed:
@@ -107,6 +108,25 @@
     }
   }
 
+  /** Repeaters from /api/nodes that could join MediaMesh: not already on
+   * it (`mmKeys`, lower-case public keys), by name; `placed` says whether
+   * it sent a position to work its links out from. */
+  function candidates(nodes, mmKeys) {
+    const on = new Set([...(mmKeys || [])].map((k) => String(k).toLowerCase()));
+    return (Array.isArray(nodes) ? nodes : [])
+      .filter((r) => r && r.public_key && !on.has(String(r.public_key).toLowerCase()) && (!r.role || r.role === 'repeater'))
+      .map((r) => ({ name: repName(r), public_key: r.public_key, lat: Number(r.lat), lon: Number(r.lon),
+        placed: Number.isFinite(Number(r.lat)) && Number.isFinite(Number(r.lon)) && !(Number(r.lat) === 0 && Number(r.lon) === 0) }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  function candidatesHtml(list, query) {
+    if (!list.length) return `<p class="text-muted mml-note">No repeater by that name${query ? ` (“${esc(query)}”)` : ''} that isn't already on MediaMesh.</p>`;
+    return `<ul class="mml-found" role="list">${list.map((r) => `<li>${r.placed
+      ? `<button type="button" class="mml-found-btn" data-mml-add="${esc(r.public_key)}">${esc(r.name)} <span class="text-muted">${esc(String(r.public_key).slice(0, 8))}</span></button>`
+      : `<span class="mml-found-off" title="It hasn't sent a position, so its links can't be worked out">${esc(r.name)} <span class="text-muted">no position</span></span>`}</li>`).join('')}</ul>`;
+  }
+
   // ---- The page --------------------------------------------------------------
 
   let map = null, destroyed = false, off = null;
@@ -130,6 +150,9 @@
             <button type="button" class="tab-btn" id="mmlRemove" hidden>Remove it</button>
           </div>
           <p class="text-muted mml-note" id="mmlPlanNote">Click Place, then the map. Its links are worked out over the terrain, repeater to repeater.</p>
+          <label class="mml-find-label" for="mmlFind">Or add one of the repeaters already up, not on MediaMesh yet</label>
+          <input type="search" class="mml-search" id="mmlFind" placeholder="Find a repeater by name" autocomplete="off">
+          <div id="mmlFound" aria-live="polite"></div>
           <h2>Links</h2>
           <label class="mml-check"><input type="checkbox" id="mmlModel" checked> Count links the model predicts but nobody has heard</label>
           <button type="button" class="tab-btn" id="mmlReset">Back to the real mesh</button>
@@ -176,7 +199,7 @@
     const W = root.MediaMeshWindTunnel;
     if (W) $('mmlWind').innerHTML = W.controlsHtml();
     const hopP = W ? W.hopChance(clips) : 0.85;
-    let planned = null, plannedLinks = [], plannedCov = null, predicted = null, cov = null, elevAt = null, placing = false;
+    let planned = null, plannedLinks = [], plannedCov = null, predicted = null, cov = null, elevAt = null, placing = false, noTerrain = false;
     let token = 0;
 
     $('mmlReps').innerHTML = placed.map((r, i) => `<label class="mml-rep" data-mml-search="${esc((repName(r) + ' ' + (r.near || '')).toLowerCase())}"><input type="checkbox" data-mml-down="${i}"> <span>${esc(repName(r))}</span>${r.near ? ` <span class="text-muted">${esc(String(r.near).split(',')[0])}</span>` : ''}</label>`).join('');
@@ -248,7 +271,7 @@
         placed.forEach((r, i) => L.circleMarker([r.lat, r.lon], down[i]
           ? { radius: 8, weight: 3, color: '#ef4444', fillColor: '#ffffff', fillOpacity: 1 }
           : { radius: 5, weight: 2, color: '#ffffff', fillColor: '#d946ef', fillOpacity: 1 }).bindTooltip(repName(r) + (down[i] ? ' · taken down' : '')).addTo(layer));
-        if (planned) L.circleMarker([planned.lat, planned.lon], { radius: 8, weight: 3, color: '#ffffff', fillColor: '#16a34a', fillOpacity: 1 }).bindTooltip(`Planned repeater, ${planned.heightM} m up`).addTo(layer);
+        if (planned) L.circleMarker([planned.lat, planned.lon], { radius: 8, weight: 3, color: '#ffffff', fillColor: '#16a34a', fillOpacity: 1 }).bindTooltip(`${planned.as ? `${planned.name} on MediaMesh` : 'Planned repeater'}, ${planned.heightM} m up`).addTo(layer);
       }
       // clips
       const rows = clips.slice(0, 60).map((c) => ({ c, r: replayClip(c, placed, adj, upNow) }));
@@ -287,17 +310,22 @@
       return out;
     }
 
-    async function placePlan(lat, lon) {
+    async function placePlan(lat, lon, as) {
       placing = false;
       $('mmlPlace').setAttribute('aria-pressed', 'false');
       $('mmlPlace').textContent = 'Move it';
       $('mmlRemove').hidden = false;
-      planned = { name: 'Planned repeater', lat, lon, heightM: Math.max(2, Math.min(300, Number($('mmlHeight').value) || 10)), radio: '' };
+      planned = { name: as ? as.name : 'Planned repeater', as: as || null, lat, lon, heightM: Math.max(2, Math.min(300, Number($('mmlHeight').value) || 10)), radio: '' };
       plannedLinks = [];
       plannedCov = null;
       draw();
       const mine = ++token;
-      if (!elevAt || !M) return;
+      if (!elevAt || !M) {
+        // worked out when the terrain has loaded (below)
+        $('mmlPlanNote').textContent = (planned.as ? `${planned.name} on MediaMesh: ` : '')
+          + (noTerrain || !M ? 'without the terrain its links can\'t be worked out.' : 'its links are worked out once the terrain has loaded.');
+        return;
+      }
       $('mmlPlanNote').textContent = 'Working out its links and coverage…';
       try {
         plannedLinks = M.planLinks(planned, placed, elevAt);
@@ -310,9 +338,11 @@
           const b = plannedCov.bounds;
           planOverlay = M.canvasOverlay(L, M.coverageCanvas(plannedCov, [22, 163, 74]), [[b.south, b.west], [b.north, b.east]], { pane: 'mmlCov', opacity: 0.8 }).addTo(map);
         }
-        $('mmlPlanNote').textContent = plannedLinks.length
+        const who = planned.as ? `${planned.name} on MediaMesh: ` : '';
+        $('mmlPlanNote').textContent = who + (plannedLinks.length
           ? `Links to ${plannedLinks.slice(0, 4).map((l) => repName(l.rep)).join(', ')}${plannedLinks.length > 4 ? ` and ${plannedLinks.length - 4} more` : ''}, by the model.`
-          : 'The model finds no repeater it would reach: it would stand on its own.';
+          : 'The model finds no repeater it would reach: it would stand on its own.')
+          + (planned.as ? ' Set its antenna height above for a closer answer.' : '');
       } catch (_) {
         $('mmlPlanNote').textContent = 'Terrain could not be loaded for that spot.';
       }
@@ -324,14 +354,44 @@
       if (t.matches('[data-mml-down]')) { down[Number(t.dataset.mmlDown)] = t.checked; draw(); }
       else if (t.id === 'mmwPreset' || t.id === 'mmwRepair' || t.id === 'mmwRounds') draw();
       else if (t.id === 'mmlModel') draw();
-      else if (t.id === 'mmlHeight' && planned) placePlan(planned.lat, planned.lon);
+      else if (t.id === 'mmlHeight' && planned) placePlan(planned.lat, planned.lon, planned.as);
+    };
+    // repeaters the analyzer knows that aren't on MediaMesh, by name
+    const mmKeys = ((mm && mm.repeaters) || []).map((r) => r.public_key);
+    let found = [], findTimer = null, findToken = 0;
+    const find = (q) => {
+      const mine = ++findToken;
+      if (q.length < 2) { found = []; $('mmlFound').innerHTML = ''; return; }
+      fetch('/api/nodes?role=repeater&limit=25&search=' + encodeURIComponent(q)).then((r) => r.json()).then((d) => {
+        if (mine !== findToken || destroyed) return;
+        found = candidates(Array.isArray(d) ? d : (d && d.nodes) || [], mmKeys);
+        $('mmlFound').innerHTML = candidatesHtml(found, q);
+      }).catch(() => { if (mine === findToken && !destroyed) $('mmlFound').innerHTML = '<p class="text-muted mml-note">The repeaters could not be loaded.</p>'; });
+    };
+    const addExisting = (r) => {
+      $('mmlFind').value = '';
+      $('mmlFound').innerHTML = '';
+      if (map) map.setView([r.lat, r.lon], Math.max(map.getZoom(), 11));
+      placePlan(r.lat, r.lon, { name: r.name, public_key: r.public_key });
     };
     const onInput = (e) => {
+      if (e.target.id === 'mmlFind') {
+        clearTimeout(findTimer);
+        const q = e.target.value.trim();
+        findTimer = setTimeout(() => find(q), 250);
+        return;
+      }
       if (e.target.id !== 'mmlSearch') return;
       const q = e.target.value.trim().toLowerCase();
       app.querySelectorAll('[data-mml-search]').forEach((l) => { l.hidden = !!q && !l.dataset.mmlSearch.includes(q); });
     };
     const onClick = (e) => {
+      const add = e.target.closest('[data-mml-add]');
+      if (add) {
+        const r = found.find((c) => c.public_key === add.dataset.mmlAdd);
+        if (r) addExisting(r);
+        return;
+      }
       if (e.target.closest('#mmlPlace')) {
         placing = !placing;
         e.target.closest('#mmlPlace').setAttribute('aria-pressed', placing ? 'true' : 'false');
@@ -354,6 +414,7 @@
     app.addEventListener('input', onInput);
     app.addEventListener('click', onClick);
     off = () => {
+      clearTimeout(findTimer);
       app.removeEventListener('change', onChange);
       app.removeEventListener('input', onInput);
       app.removeEventListener('click', onClick);
@@ -368,15 +429,23 @@
         predicted = M.predictedLinks(placed, elevAt).filter((p) => !heard.some(([a, b]) => a === p.a && b === p.b));
         $('mmlStatus').textContent = '';
         draw();
+        if (planned) placePlan(planned.lat, planned.lon, planned.as); // picked while the terrain loaded
         // #/mediamesh-lab?lat=…&lon=… (from Grow the mesh): start with a repeater there
         const q = new URLSearchParams(String(location.hash.split('?')[1] || ''));
         const lat = Number(q.get('lat')), lon = Number(q.get('lon'));
         if (Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180 && q.get('lat') !== null) {
           if (map) map.setView([lat, lon], 12);
           placePlan(lat, lon);
+        } else if (/^[0-9a-f]{8,64}$/i.test(q.get('add') || '')) {
+          // #/mediamesh-lab?add={public key}: start with that repeater added
+          const node = await fetch('/api/nodes/' + encodeURIComponent(q.get('add'))).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+          const c = candidates([node && (node.node || node)], mmKeys)[0];
+          if (c && c.placed && !destroyed) addExisting(c);
         }
       } catch (_) {
+        noTerrain = true;
         $('mmlStatus').textContent = 'Terrain could not be loaded, so what is reached and the links the model predicts aren\'t shown.';
+        if (planned) placePlan(planned.lat, planned.lon, planned.as);
       }
     }
   }
@@ -389,6 +458,6 @@
     map = null;
   }
 
-  root.MediaMeshLab = { adjacency, hopsFrom, routes, hopIndex, replayClip, reasonText, init, destroy };
+  root.MediaMeshLab = { adjacency, hopsFrom, routes, hopIndex, replayClip, reasonText, candidates, candidatesHtml, init, destroy };
   if (typeof root.registerPage === 'function') root.registerPage('mediamesh-lab', { init, destroy });
 })(typeof window !== 'undefined' ? window : globalThis);
