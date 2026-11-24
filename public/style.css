@@ -6681,16 +6681,37 @@ html.mm-embed--sky .mm-embed-open:hover { background: var(--mm-sky-ink); color: 
 .mml-controls h2, .mml-main h2 { font-size: 1em; margin: 8px 0 2px; color: var(--text); }
 .mml-search { min-height: 36px; border-radius: 8px; border: 1px solid var(--border); background: var(--input-bg, var(--card-bg)); color: var(--text); padding: 0 10px; font: inherit; }
 .mml-reps { max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; }
-.mml-rep, .mml-check { display: flex; gap: 8px; align-items: center; min-height: 32px; color: var(--text); cursor: pointer; }
-.mml-rep[hidden] { display: none; }
+.mml-check { display: flex; gap: 8px; align-items: center; min-height: 32px; color: var(--text); cursor: pointer; }
 .mml-find-label { display: block; margin: 12px 0 4px; font-size: 0.9em; color: var(--text); }
 .mml-found { list-style: none; margin: 6px 0 0; padding: 0; max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
 .mml-found-btn { width: 100%; text-align: left; min-height: 36px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--card-bg); color: var(--text); font: inherit; cursor: pointer; }
 .mml-found-btn:hover, .mml-found-btn:focus-visible { border-color: var(--mediamesh-path-color); }
 .mml-found-off { display: block; padding: 6px 10px; color: var(--text-muted); }
-.mml-plan { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--text); }
-.mml-plan input { width: 64px; min-height: 32px; border-radius: 6px; border: 1px solid var(--border); background: var(--input-bg, var(--card-bg)); color: var(--text); font: inherit; padding: 0 6px; }
 .mml-note { font-size: 0.85em; margin: 0; }
+.mml-sep { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 10px !important; }
+.mml-place { align-self: flex-start; min-height: 40px; }
+.mml-found-btn { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.mml-found-plus { display: inline-flex; align-items: center; gap: 4px; font-size: 0.85em; color: var(--mms-good); white-space: nowrap; }
+.mml-found-added { float: right; font-size: 0.85em; color: var(--mms-good); }
+.mml-added-list { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--border); padding-top: 10px; margin-top: 4px; }
+.mml-group { font-size: 0.75em; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); margin-top: 2px; }
+.mml-mark { flex: 0 0 10px; width: 10px; height: 10px; border-radius: 50%; box-sizing: border-box; }
+.mml-mark--add { background: var(--mms-good); }
+.mml-mark--on { background: var(--mediamesh-node-color); }
+.mml-mark--down { border: 2px solid var(--mms-bad); }
+.mml-added, .mml-down, .mml-up { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 2px 0 10px; border-radius: 8px; color: var(--text); }
+.mml-added { background: color-mix(in srgb, var(--mms-good) 12%, var(--card-bg)); border: 1px solid color-mix(in srgb, var(--mms-good) 45%, var(--border)); }
+.mml-down { background: color-mix(in srgb, var(--mms-bad) 12%, var(--card-bg)); border: 1px solid color-mix(in srgb, var(--mms-bad) 45%, var(--border)); margin-bottom: 4px; }
+.mml-added-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.mml-added-name, .mml-up-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mml-up-name { flex: 1 1 auto; min-width: 0; }
+.mml-added-note { font-size: 0.78em; }
+.mml-added-h { display: inline-flex; align-items: center; gap: 4px; font-size: 0.82em; color: var(--text); white-space: nowrap; }
+.mml-added-h input { width: 52px; min-height: 30px; box-sizing: border-box; border-radius: 6px; border: 1px solid var(--border); background: var(--input-bg, var(--card-bg)); color: var(--text); font: inherit; padding: 0 6px; }
+.mml-down-name { flex: 1 1 auto; min-width: 0; text-decoration: line-through; text-decoration-color: var(--mms-bad); }
+.mml-x { flex: 0 0 auto; width: 36px; height: 36px; border-radius: 8px; border: none; background: transparent; color: var(--text); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.mml-x:hover, .mml-x:focus-visible { background: color-mix(in srgb, var(--text) 10%, transparent); }
+.mml-back { flex: 0 0 auto; min-height: 36px; padding: 0 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--mms-bad) 45%, var(--border)); background: transparent; color: var(--text); font: inherit; font-size: 0.85em; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; }
 .mml-main { flex: 3 1 480px; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
 .mml-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
 .mml-tile { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--card-bg); }

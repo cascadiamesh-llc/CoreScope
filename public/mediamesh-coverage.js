@@ -1843,6 +1843,34 @@
   }
 
   /**
+   * Land that several planned repeaters together add (km²): reached by one
+   * of them and by nothing counted in cov, each cell once however many of
+   * them reach it. planCovs: each one's computeCoverage, alone.
+   */
+  function plansGainKm2(planCovs, cov) {
+    const list = (planCovs || []).filter(Boolean);
+    let km2 = 0;
+    list.forEach((pc, k) => {
+      const a = cellAreaKm2(pc);
+      for (let row = 0, i = 0; row < pc.height; row++) {
+        for (let col = 0; col < pc.width; col++, i++) {
+          if (!(pc.margins[i] >= 0) || !isLand(pc, i)) continue;
+          const ll = cellCenter(pc, col, row);
+          const c = cellAt(cov, ll[0], ll[1]);
+          if (c && c.margin >= 0) continue;
+          let before = false;
+          for (let j = 0; j < k && !before; j++) {
+            const e = cellAt(list[j], ll[0], ll[1]);
+            before = !!(e && e.margin >= 0);
+          }
+          if (!before) km2 += a;
+        }
+      }
+    });
+    return km2;
+  }
+
+  /**
    * The counted repeaters a planned one would link to, repeater to repeater
    * (both ways the same path), best first: [{ rep, index, distM, marginDb }]
    * with something to spare, within the repeater view's radius.
@@ -3368,7 +3396,7 @@
     fitCalibration, calibrationText, setCalibration, getCalibration, CAL,
     clutterLossDb, setField, setFieldOn, isFieldOn, getField, fieldDbFor, placeLossDb, fitField, fieldSolve, measuredOf, fieldText, fieldBand, adjustCov, FIELD_RGB, loadFieldPoints, fieldPoints, hexCorners, hexBand, session,
     backboneWeight, backboneTip, areaHistory, footprint, coverageImage, legendGradient,
-    growthSteps, presentAt, antennaHeight, knownHeightM, KNOWN_HEIGHTS, coverageCanvas, canvasOverlay, whatIfBase, whatIfDefaults, whatIfJob, whatIfCoverage, whatIfCanvas, cellAreaKm2, coveredKm2, unionKm2, repAreasKm2, repOnlyKm2, predictedLinks, meshEvidence, meshCells, meshRows, meshCanvas, meshPalette, groundCoverage, learnFromField, applyLearned, confidenceCells, confidenceCanvas, learnedTop, learnedHtml, LEARN, meshStatsHtml, meshTableHtml, MESH_OFTEN, planGain, planLinks, planHtml, PLAN_RGB,
+    growthSteps, presentAt, antennaHeight, knownHeightM, KNOWN_HEIGHTS, coverageCanvas, canvasOverlay, whatIfBase, whatIfDefaults, whatIfJob, whatIfCoverage, whatIfCanvas, cellAreaKm2, coveredKm2, unionKm2, repAreasKm2, repOnlyKm2, predictedLinks, meshEvidence, meshCells, meshRows, meshCanvas, meshPalette, groundCoverage, learnFromField, applyLearned, confidenceCells, confidenceCanvas, learnedTop, learnedHtml, LEARN, meshStatsHtml, meshTableHtml, MESH_OFTEN, planGain, plansGainKm2, planLinks, planHtml, PLAN_RGB,
     repNotes, repArea, repGroups, repSummaryHtml, repPanelHtml, repAction, assumptionsHtml, linkRows, linksTableHtml, init,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

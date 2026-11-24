@@ -649,6 +649,15 @@ function cellAt(cov, lat, lon) {
     const same = await M.computeCoverage([{ lat: 47.6, lon: -122.33 }], elev, 'repeater');
     g = M.planGain(planCov, same);
     assert.ok(g.newKm2 === 0 && g.overlapKm2 > 100, JSON.stringify({ n: g.newKm2, o: g.overlapKm2 }));
+    // several planned together: the land two of them both reach counted once
+    const alone = M.planGain(planCov, null).newKm2;
+    const twice = M.plansGainKm2([planCov, same], null);
+    assert.ok(Math.abs(twice - alone) < 1e-6, JSON.stringify({ twice, alone }));
+    const apart = await M.computeCoverage([{ lat: 47.9, lon: -122.33 }], elev, 'repeater');
+    const both = M.plansGainKm2([planCov, apart], null);
+    assert.ok(both > alone && both < alone + M.planGain(apart, null).newKm2 + 1e-6, JSON.stringify({ both, alone }));
+    assert.strictEqual(M.plansGainKm2([planCov, same], same), 0, 'nothing new over what is counted');
+    assert.strictEqual(M.plansGainKm2([], null), 0);
     // links: within reach on flat ground, best first; out of the radius left out
     const reps = [{ name: 'Far', lat: 48.4, lon: -122.33 }, { name: 'Mid', lat: 47.75, lon: -122.33 }, { name: 'Close', lat: 47.62, lon: -122.33 }];
     const links = M.planLinks(planned, reps, elev);

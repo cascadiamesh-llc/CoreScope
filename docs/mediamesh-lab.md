@@ -3,16 +3,21 @@
 Change the mesh and see what happens. Nothing done here touches the real
 mesh.
 
-- **Take down** any MediaMesh repeater.
-- **Add a repeater**: place it on the map at an antenna height; its links
-  are worked out repeater to repeater over the terrain (`planLinks`), and
-  its coverage for people on the ground, drawn in green. Or find one of
-  the repeaters already up by name: the search covers every repeater the
-  analyzer knows that isn't on MediaMesh yet, and picking one adds it at its
-  own position, under its name, to show what bringing it onto MediaMesh
-  would do. Its antenna height isn't known, so set it for a closer answer.
-  Repeaters that haven't sent a position are listed but can't be picked.
-  `#/mediamesh-lab?add={public key}` opens with that repeater added.
+- **Add a repeater** (first): add as many as you like. Place one on the
+  map, or find repeaters already up by name: the search covers every
+  repeater the analyzer knows that isn't on MediaMesh yet, and each one
+  picked joins at its own position, under its name, to show what bringing
+  it onto MediaMesh would do. Repeaters that haven't sent a position are
+  listed but can't be picked. Each added repeater has its own antenna
+  height (10 m to start; the analyzer doesn't know a repeater's) and an X
+  to remove it. Their links are worked out repeater to repeater over the
+  terrain (`planLinks`), to the MediaMesh repeaters at their own heights
+  and to each other, and each one's coverage for people on the ground is
+  drawn in green; the land they add is counted once however many of them
+  reach it (`plansGainKm2`). `#/mediamesh-lab?add={public key}` opens with
+  that repeater added, `?lat=…&lon=…` with one placed there.
+- **Take down** any MediaMesh repeater with the X by its name. Those taken
+  down move above the list, crossed out, with Bring back.
 - **Links**: the links heard this week always count; those only the model
   predicts can be counted or left out.
 

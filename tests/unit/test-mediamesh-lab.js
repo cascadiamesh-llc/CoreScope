@@ -68,11 +68,48 @@ test('repeaters that could join: not on MediaMesh, repeaters only, by name, thos
   assert.deepStrictEqual(L.candidates(null, []), []);
 });
 
-test('the page finds repeaters by name and adds one at its own position', () => {
+test('the page adds several: from the map or found by name, each at its own height, each with an X', () => {
   const src = pub('mediamesh-lab.js');
   assert.ok(src.includes("'/api/nodes?role=repeater&limit=25&search='"));
-  assert.ok(src.includes('id="mmlFind"') && src.includes('placePlan(r.lat, r.lon, { name: r.name, public_key: r.public_key })'));
-  assert.ok(src.includes('placePlan(planned.lat, planned.lon, planned.as)'), 'a new height keeps it');
+  assert.ok(src.includes('Or add one or several of the repeaters already up, not on MediaMesh yet.'));
+  assert.ok(src.indexOf('<h2>Add a repeater</h2>') < src.indexOf('>Take down</h2>'), 'Add a repeater comes first');
+  assert.ok(src.includes('addPlan(r.lat, r.lon, { name: r.name, public_key: r.public_key })') && src.includes('addPlan(e.latlng.lat, e.latlng.lng, null)'));
+  assert.ok(src.includes('plans.push(p)') && src.includes('M.plansGainKm2('), 'a list of them, their area counted together');
+});
+
+test('added repeaters: a line each with its links, its own antenna height and an X', () => {
+  const plans = [
+    { id: 1, name: 'Planned repeater 1', as: null, heightM: 15, state: '', links: [{ rep: { name: 'A' } }, { rep: { name: 'B' } }, { rep: { name: 'C' } }, { rep: { name: 'D' } }] },
+    { id: 2, name: 'Tree <house>', as: { name: 'Tree <house>', public_key: '7e0ce8e9aa' }, heightM: 10, state: 'working', links: [] },
+  ];
+  const h = L.addedHtml(plans);
+  assert.ok(h.includes('Added · 2'));
+  assert.strictEqual((h.match(/data-mml-remove="/g) || []).length, 2);
+  assert.ok(h.includes('data-mml-height="1"') && h.includes('value="15"') && h.includes('value="10"'), 'each its own height');
+  assert.ok(h.includes('aria-label="Remove Tree &lt;house&gt;"') && !h.includes('<house>'), 'escaped');
+  assert.strictEqual(L.planNote(plans[0]), 'Placed on the map · links to A, B, C and 1 more');
+  assert.strictEqual(L.planNote(plans[1]), 'Already up · 7e0ce8e9 · working out its links…');
+  assert.ok(L.planNote({ links: [], state: '' }).includes('stand on its own'));
+  assert.ok(L.planNote({ state: 'no-terrain' }).includes("can't be worked out"));
+  assert.ok(L.addedHtml([]).includes('None yet.'));
+});
+
+test('search results: one already added says so instead of offering Add', () => {
+  const c = L.candidates([{ public_key: 'AA11', name: 'One', lat: 47.6, lon: -122.3 }, { public_key: 'bb22', name: 'Two', lat: 47.6, lon: -122.3 }], []);
+  const h = L.candidatesHtml(c, 'o', new Set(['aa11']));
+  assert.ok(!h.includes('data-mml-add="AA11"') && h.includes('data-mml-add="bb22"') && h.includes('>Added<'));
+});
+
+test('take down: an X by each MediaMesh repeater; those taken down above, crossed out, with Bring back', () => {
+  const placed = [{ name: 'Rainier View', near: 'Seattle, WA' }, { name: 'First <Hill>' }, { name: 'Kremwerk' }];
+  const h = L.repListHtml(placed, [false, false, true], '');
+  assert.ok(h.includes('Taken down · 1') && h.includes('data-mml-up="2"') && h.includes('Bring back'));
+  assert.ok(h.includes('On MediaMesh · 2') && h.includes('data-mml-down="0"') && h.includes('data-mml-down="1"') && !h.includes('data-mml-down="2"'));
+  assert.ok(h.includes('aria-label="Take down First &lt;Hill&gt;"'));
+  assert.ok(h.indexOf('Taken down') < h.indexOf('On MediaMesh'));
+  const f = L.repListHtml(placed, [false, false, true], 'seattle');
+  assert.ok(f.includes('data-mml-down="0"') && !f.includes('data-mml-down="1"') && f.includes('data-mml-up="2"'), 'the search filters those up; taken down stay');
+  assert.ok(L.repListHtml(placed, [false, false, false], 'zzz').includes('None by that name.'));
 });
 
 test('wiring: the page, the script, the link from the MediaMesh tab, colours from variables', () => {
