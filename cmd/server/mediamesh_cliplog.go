@@ -55,6 +55,9 @@ type MediaMeshClipLog struct {
 	Announcement *MediaMeshClipAnnouncement  `json:"announcement"`
 	Pieces       []MediaMeshClipPiece        `json:"pieces"`
 	Hops         map[string]MediaMeshClipHop `json:"hops"`
+	// A private-channel clip: its pieces can't be read, so each is a packet
+	// of the burst, numbered in the order heard.
+	Private bool `json:"private,omitempty"`
 }
 
 // MediaMeshClipAnnouncement is the message that announced the clip.
@@ -70,24 +73,55 @@ const mediaClipLogDays = 28
 
 func (s *Server) handleMediaMeshClipLog(w http.ResponseWriter, r *http.Request) {
 	raw := strings.ToLower(mux.Vars(r)["sid"])
-	b, err := hex.DecodeString(raw)
-	if err != nil || len(b) != 4 {
-		http.Error(w, "sid: 8 hex digits", http.StatusBadRequest)
+	build, ok := clipLogBuilder(raw)
+	if !ok {
+		http.Error(w, "sid: 8 hex digits, or a private-channel clip's p<channel><time>", http.StatusBadRequest)
 		return
 	}
-	sid := uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
-	if s.store == nil {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
+	var out *MediaMeshClipLog
+	if s.store != nil {
+		since := time.Now().UTC().Add(-mediaClipLogDays * 24 * time.Hour).Format(time.RFC3339)
+		res := s.store.cachedMediaMesh("mediamesh-cliplog|"+raw, func() interface{} { return build(s.store, since) })
+		out, _ = res.(*MediaMeshClipLog)
 	}
-	since := time.Now().UTC().Add(-mediaClipLogDays * 24 * time.Hour).Format(time.RFC3339)
-	res := s.store.cachedMediaMesh("mediamesh-cliplog|"+raw, func() interface{} { return s.store.mediaMeshClipLog(sid, since) })
-	out, _ := res.(*MediaMeshClipLog)
+	// its pieces may have left memory: the kept log, if it's fuller
+	if st, _ := s.coveragePoints(); st != nil {
+		if kept := keptClipLog(st.db, raw); kept != nil && (out == nil || clipLogHeard(kept) > clipLogHeard(out)) {
+			out = kept
+		}
+	}
 	if out == nil || (out.Clip == nil && len(out.Pieces) == 0) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
 	writeJSON(w, out)
+}
+
+// clipLogBuilder: how to gather the log of the clip with key raw (lower
+// case): 8 hex digits, a session id; or a private-channel clip's key
+// (privateChannelClip).
+func clipLogBuilder(raw string) (func(st *PacketStore, since string) *MediaMeshClipLog, bool) {
+	if ch, first, ok := parsePrivateClipKey(raw); ok {
+		return func(st *PacketStore, _ string) *MediaMeshClipLog { return st.mediaMeshPrivateClipLog(raw, ch, first) }, true
+	}
+	b, err := hex.DecodeString(raw)
+	if err != nil || len(b) != 4 {
+		return nil, false
+	}
+	sid := uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
+	return func(st *PacketStore, since string) *MediaMeshClipLog { return st.mediaMeshClipLog(sid, since) }, true
+}
+
+// clipLogHeard: how many times observers heard the log's pieces.
+func clipLogHeard(l *MediaMeshClipLog) int {
+	if l == nil {
+		return 0
+	}
+	n := 0
+	for _, p := range l.Pieces {
+		n += len(p.Heard)
+	}
+	return n
 }
 
 // mediaMeshClipLog gathers everything about clip sid since `since` (RFC
@@ -277,6 +311,14 @@ func (s *PacketStore) mediaMeshClipLog(sid uint32, since string) *MediaMeshClipL
 		return a.Heard[0].At < b.Heard[0].At
 	})
 
+	out.Hops = s.clipLogHops(hopSet)
+	return out
+}
+
+// clipLogHops names each hop (lower-case path hash) and where it is, when
+// the analyzer knows.
+func (s *PacketStore) clipLogHops(hopSet map[string]bool) map[string]MediaMeshClipHop {
+	out := map[string]MediaMeshClipHop{}
 	_, pm := s.getCachedNodesAndPM()
 	for h := range hopSet {
 		hop := MediaMeshClipHop{}
@@ -291,7 +333,7 @@ func (s *PacketStore) mediaMeshClipLog(sid uint32, since string) *MediaMeshClipL
 				hop.Ambiguous = len(cands) > 1
 			}
 		}
-		out.Hops[h] = hop
+		out[h] = hop
 	}
 	return out
 }

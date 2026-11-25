@@ -22,6 +22,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 )
@@ -183,6 +184,9 @@ type MediaMeshDelivery struct {
 	// privately the analyzer knows neither otherwise.
 	Total int    `json:"total,omitempty"`
 	Kind  string `json:"kind,omitempty"`
+	// For each receiving app that had it whole: how many seconds after the
+	// clip was announced (or first heard) it finished, from its receipt.
+	WholeAfterS []int `json:"wholeAfterS,omitempty"`
 }
 
 // attachDeliveries gives each clip its receipts (by session id, received
@@ -222,6 +226,9 @@ func attachDeliveries(clips []MediaMeshClip, receipts []storedReceipt) {
 			}
 			if r.Whole {
 				d.Whole++
+				if !at.IsZero() && r.At >= at.Unix() {
+					d.WholeAfterS = append(d.WholeAfterS, int(r.At-at.Unix()))
+				}
 				if r.Asked > 0 {
 					d.Asked++
 				} else if r.Rebuilt > 0 {
@@ -229,6 +236,7 @@ func attachDeliveries(clips []MediaMeshClip, receipts []storedReceipt) {
 				}
 			}
 		}
+		sort.Ints(d.WholeAfterS)
 		c.Delivery = d
 	}
 }

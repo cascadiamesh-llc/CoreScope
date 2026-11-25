@@ -88,6 +88,7 @@ func keepMMClips(db *sql.DB, out *MediaMeshClips) error {
 			return nil
 		}
 		c.Delivery = nil // receipts are added when asked
+		c.Replay = false // and whether it can be replayed
 		var old string
 		switch err := tx.QueryRow(`SELECT clip FROM mm_clips WHERE kind = ? AND sid = ?`, kind, c.SID).Scan(&old); err {
 		case nil:
@@ -286,10 +287,16 @@ func (s *Server) keepMMClipsLoop(stop <-chan struct{}) {
 		if err := keepMMClips(st.db, out); err != nil {
 			log.Printf("[mediamesh] keeping clips: %v", err)
 		}
+		s.keepMMClipLogsNow(st.db, out, now)
+		if err := keepMMRelayHours(st.db, s.store.mediaMeshRelayHours(out.From)); err != nil {
+			log.Printf("[mediamesh] keeping relay hours: %v", err)
+		}
 		s.keepMMHoursNow(st)
 		if n++; n%144 == 1 {
 			pruneMMClips(st.db, mmClipKeepDays)
 			pruneMMHours(st.db, mmClipKeepDays)
+			pruneMMRelayHours(st.db, mmClipKeepDays)
+			pruneMMClipLogs(st.db, mmClipLogKeepDays)
 		}
 	}
 }

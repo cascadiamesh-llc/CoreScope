@@ -130,10 +130,16 @@ type MediaMeshClip struct {
 	Delivery *MediaMeshDelivery `json:"delivery,omitempty"`
 	// A clip sent privately: the data pieces its far end heard, by number,
 	// so a receipt's total can say which were missed (TotalFrom "receipt").
-	HeardIdx  []int  `json:"heardIdx,omitempty"`
-	TotalFrom string `json:"totalFrom,omitempty"`
+	HeardIdx []int `json:"heardIdx,omitempty"`
+	// An announced clip: HeardByHop[h-1] is how many of its data pieces
+	// some observer heard at least h hops out (heardByHop).
+	HeardByHop []int  `json:"heardByHop,omitempty"`
+	TotalFrom  string `json:"totalFrom,omitempty"`
 	// A clip on a private channel: the channel's one-byte hash (hex).
 	Channel string `json:"channel,omitempty"`
+	// Whether its path can be replayed: its flight recorder is in memory or
+	// kept (mediamesh_cliplog_keep.go).
+	Replay bool `json:"replay,omitempty"`
 }
 
 // MediaMeshClipHour is the photo, video and voice traffic of one hour.
@@ -159,6 +165,7 @@ type MediaMeshClips struct {
 	// of pieces on one channel (Outcome "private"); see
 	// mediamesh_private_channel.go.
 	PrivateChannel []MediaMeshClip `json:"privateChannel"`
+	memFrom        string          // the oldest packet in memory (RFC 3339)
 }
 
 // analyseMediaClips matches pieces to announcements and judges each clip at
@@ -183,6 +190,8 @@ func analyseMediaClips(anns []mediaClipAnn, pieces []mediaClipPiece) []MediaMesh
 		events      []clipEvent // every piece, for when it could be whole
 	}
 	per := map[uint32]map[string]*seen{}
+	// the most hops each data piece was heard at, by any observer
+	reach := map[uint32]map[int]int{}
 	for _, p := range pieces {
 		sid, parity, repair := p.sid, false, false
 		if _, ok := bySid[sid]; !ok {
@@ -217,6 +226,12 @@ func analyseMediaClips(anns []mediaClipAnn, pieces []mediaClipPiece) []MediaMesh
 			o.parity[p.info/8]++
 			o.events = append(o.events, clipEvent{at: p.at, what: clipParity, info: p.info})
 		} else if p.info < a.total {
+			if reach[sid] == nil {
+				reach[sid] = map[int]int{}
+			}
+			if h, ok := reach[sid][p.info]; !ok || len(p.path) > h {
+				reach[sid][p.info] = len(p.path)
+			}
 			o.events = append(o.events, clipEvent{at: p.at, what: clipData, info: p.info})
 			if !o.data[p.info] {
 				o.bytes += p.bytes
@@ -241,6 +256,7 @@ func analyseMediaClips(anns []mediaClipAnn, pieces []mediaClipPiece) []MediaMesh
 			Kind: a.kind, Total: a.total, Seconds: a.seconds, At: a.at.UTC().Format(time.RFC3339), Path: []string{}, Outcome: "none"}
 		obs := per[sid]
 		c.Observers = len(obs)
+		c.HeardByHop = heardByHop(reach[sid])
 		var far *seen
 		farKey := ""
 		for k, o := range obs {
@@ -467,6 +483,31 @@ func unannouncedClip(sid uint32, ps []mediaClipPieceP) (MediaMeshClip, bool) {
 		}
 	}
 	return c, true
+}
+
+// mediaClipMaxHops: HeardByHop goes this many hops out at most.
+const mediaClipMaxHops = 8
+
+// heardByHop: for h = 1, 2, …, how many of a clip's data pieces some
+// observer heard at least h hops from where the clip started (the most hops
+// each was heard at: reach). Up to the furthest any was heard, at most
+// mediaClipMaxHops.
+func heardByHop(reach map[int]int) []int {
+	far := 0
+	for _, h := range reach {
+		far = max(far, h)
+	}
+	far = min(far, mediaClipMaxHops)
+	if far == 0 {
+		return nil
+	}
+	out := make([]int, far)
+	for _, h := range reach {
+		for k := 0; k < min(h, far); k++ {
+			out[k]++
+		}
+	}
+	return out
 }
 
 // clipEvent is one piece an observer heard: data (info = index), parity
@@ -750,6 +791,11 @@ func (s *Server) handleMediaMeshClips(w http.ResponseWriter, r *http.Request) {
 		}
 		s.withKeptMMClips(out)
 		s.addDeliveries(out)
+		kept := map[string]bool{}
+		if st, _ := s.coveragePoints(); st != nil {
+			kept = keptClipLogKeys(st.db, out.From)
+		}
+		markReplays(out, kept, out.memFrom)
 		return out
 	}
 	if s.store == nil {
@@ -826,6 +872,9 @@ func (s *PacketStore) mediaMeshClips(since string, out *MediaMeshClips) {
 	mediaMeshMu.RLock()
 	bursts := s.mediaMeshBurstsLocked(since)
 	for _, tx := range s.packets {
+		if tx != nil && tx.FirstSeen != "" && (out.memFrom == "" || tx.FirstSeen < out.memFrom) {
+			out.memFrom = tx.FirstSeen
+		}
 		if tx == nil || tx.FirstSeen < since || tx.PayloadType == nil {
 			continue
 		}

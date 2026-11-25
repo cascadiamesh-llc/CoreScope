@@ -86,6 +86,27 @@ func TestAnalyseMediaClips(t *testing.T) {
 	if c[0].SID != "00000004" {
 		t.Errorf("newest first: %s", c[0].SID)
 	}
+	// every piece of clip 1 reached 3 hops; clip 3's 23 too; clip 4 none
+	if h := by["00000001"].HeardByHop; len(h) != 3 || h[0] != 4 || h[2] != 4 {
+		t.Errorf("clip 1 by hop: %v", h)
+	}
+	if h := by["00000003"].HeardByHop; len(h) != 3 || h[2] != 23 {
+		t.Errorf("clip 3 by hop: %v", h)
+	}
+	if by["00000004"].HeardByHop != nil {
+		t.Errorf("clip 4 by hop: %v", by["00000004"].HeardByHop)
+	}
+}
+
+func TestHeardByHop(t *testing.T) {
+	// pieces 0..3 heard at most 1, 3, 3 and 0 hops out
+	got := heardByHop(map[int]int{0: 1, 1: 3, 2: 3, 3: 0})
+	if len(got) != 3 || got[0] != 3 || got[1] != 2 || got[2] != 2 {
+		t.Fatalf("%v", got)
+	}
+	if heardByHop(map[int]int{0: 12})[mediaClipMaxHops-1] != 1 || len(heardByHop(map[int]int{0: 12})) != mediaClipMaxHops {
+		t.Fatal("capped")
+	}
 }
 
 // The flight recorder: every piece of one clip each observer heard on

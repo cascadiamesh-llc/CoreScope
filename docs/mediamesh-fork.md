@@ -20,6 +20,7 @@ MediaMesh change pushed to master ───────────────�
   newest 3.16.x build. Pin one exact build with `:v3.16.0-mediamesh`.
 - **Releases:** <https://github.com/cascadiamesh-llc/CoreScope/releases>
 - **Observers:** how to connect one, with MediaMesh: [observers.md](observers.md)
+- **How clips cross radio2:** the Analytics cards on relays, airtime, lost pieces and receipts, and replaying a clip's path: [mediamesh-journey.md](mediamesh-journey.md)
 
 ---
 

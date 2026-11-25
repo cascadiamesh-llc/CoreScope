@@ -60,7 +60,7 @@ func privateChannelClips(ps []privatePiece) []MediaMeshClip {
 
 func privateChannelClip(ch int, xs []privatePiece) MediaMeshClip {
 	first, last := xs[0].at, xs[len(xs)-1].at
-	chHex := "??"
+	chHex := "xx"
 	if ch >= 0 {
 		chHex = fmt.Sprintf("%02x", ch&0xff)
 	}

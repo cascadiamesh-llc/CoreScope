@@ -47,6 +47,10 @@ and 12 hours after. The MediaMesh tab's **Did it arrive?** shows how many delive
 and how, a **Recipient** column in its clip list, and the flight recorder adds what the receiving
 apps reported. Nothing is shown per radio.
 
+`delivery.wholeAfterS` lists, for each recipient that had it whole, how many seconds after
+the clip was announced (or first heard) its receipt says it finished: **How long until a clip
+is whole** ([mediamesh-journey.md](mediamesh-journey.md)) draws them.
+
 ### Clips sent privately, judged by their receipts
 
 A clip sent in a direct message has its announcement encrypted, so the analyzer knows its pieces

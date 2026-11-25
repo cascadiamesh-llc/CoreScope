@@ -51,8 +51,12 @@ func TestAttachDeliveries(t *testing.T) {
 		r("r1", "aaaa0002", 2*24*time.Hour, true, 0, 0), // the same id days later: another clip
 	})
 	d := clips[0].Delivery
-	if d == nil || *d != (MediaMeshDelivery{Recipients: 3, Whole: 2, Asked: 1, Rebuilt: 1}) {
+	if d == nil || d.Recipients != 3 || d.Whole != 2 || d.Asked != 1 || d.Rebuilt != 1 {
 		t.Fatalf("%+v", d)
+	}
+	// r1 (latest, 1 min after) and r2 (2 min after) had it whole
+	if len(d.WholeAfterS) != 2 || d.WholeAfterS[0] != 60 || d.WholeAfterS[1] != 120 {
+		t.Fatalf("whole after %v", d.WholeAfterS)
 	}
 	if clips[1].Delivery != nil || clips[2].Delivery != nil {
 		t.Fatal("receipts for other clips")

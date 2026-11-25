@@ -181,6 +181,8 @@
     return `<div class="mm-ins-cover" role="img" aria-label="${esc('Clips on radio2: ' + label)}">${bar}</div><div class="mm-ins-cover-key">${key}</div>`;
   }
 
+  const MAP_ICON = '<svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3z"/><path d="M9 3v15"/><path d="M15 6v15"/></svg>';
+
   /** A clip in the recent table: what it is, and how the analyzer knows. */
   function recentRowHtml(c, nameOf) {
     const label = c.kind === 'unknown' ? 'Clip' : clipLabel(c);
@@ -188,7 +190,7 @@
       : `<button type="button" class="mm-fr-open" data-mm-clip="${esc(c.sid)}" title="Open its flight recorder: every piece, when and by which path">${esc(label)}</button>`;
     let how = '', pieces, far, farCls = `mm-ins-outcome mm-ins-outcome--${esc(c.outcome)}`;
     if (c.outcome === 'private') {
-      how = `on a private channel${c.channel ? ` (${esc(String(c.channel).toUpperCase())})` : ''}`;
+      how = `on a private channel${c.channel && c.channel !== 'xx' ? ` (${esc(String(c.channel).toUpperCase())})` : ''}`;
       pieces = `<span class="text-muted">${(c.heard || 0).toLocaleString()} piece${c.heard === 1 ? '' : 's'} heard</span>`;
       far = 'unknown';
       farCls = 'text-muted';
@@ -207,7 +209,11 @@
       far = outcomeText(c);
     }
     const clipCell = how ? `<span class="mm-ins-clip">${clipBtn}<span class="mm-ins-how">${how}</span></span>` : clipBtn;
-    return `<tr><td class="mm-ins-when">${whenHtml(c.at || c.firstAt)}</td><td>${clipCell}</td><td>${esc(routeLabel(c, nameOf))}</td><td class="mm-ins-num">${c.hops || 0}</td>
+    const title = `${label}, ${new Date(Date.parse(c.at || c.firstAt)).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}`;
+    const mapBtn = c.replay
+      ? `<button type="button" class="mm-replay-btn" data-mm-replay="${esc(c.sid)}" data-mm-replay-title="${esc(title)}" aria-expanded="false" aria-label="Replay this clip's path on a map" title="Replay its path on a map">${MAP_ICON}</button>`
+      : `<button type="button" class="mm-replay-btn" disabled aria-label="No replay: paths are kept for a week" title="Replays are kept for a week">${MAP_ICON}</button>`;
+    return `<tr><td class="mm-ins-when">${whenHtml(c.at || c.firstAt)}</td><td>${clipCell}</td><td><span class="mm-route-cell">${mapBtn}<span>${esc(routeLabel(c, nameOf))}</span></span></td><td class="mm-ins-num">${c.hops || 0}</td>
       <td>${pieces}</td><td class="${farCls}">${esc(far)}</td><td class="${arrivalClass(c)}">${arrivalText(c) ? esc(arrivalText(c)) : '<span class="text-muted">—</span>'}</td></tr>`;
   }
 
@@ -244,7 +250,7 @@
     return head + coverageBarHtml(v) + tiles + wholeLine + `<div class="mm-ins-split">
       <div class="mm-ins-col"><h4>Clips heard, by hops</h4>${bars || '<p class="text-muted">None yet.</p>'}</div>
       <div class="mm-ins-col mm-ins-wide">${recentHead(recentList.length)}${recentList.length ? '' : recentNone}<div class="mm-ins-scroll mm-ins-recent" tabindex="0" role="region" aria-label="Recent clips, last ${RECENT_H} hours"${recentList.length ? '' : ' hidden'}><table class="analytics-table mm-ins-table"><thead><tr><th scope="col">Sent</th><th scope="col">Clip</th><th scope="col">Route</th><th scope="col" class="mm-ins-num">Hops</th><th scope="col">Pieces heard</th><th scope="col">Far end heard</th><th scope="col">Recipient</th></tr></thead><tbody>${recent}</tbody></table></div>
-      <p class="text-muted mm-ins-key">Pick a clip for its flight recorder. <span class="mm-pieces"><span></span></span> heard · <span class="mm-pieces"><span class="is-rebuilt"></span></span> rebuilt from parity or repair pieces · <span class="mm-pieces"><span class="is-missing"></span></span> not heard by an observer. A clip on a private channel shows only how many pieces were heard.</p></div></div>`;
+      <p class="text-muted mm-ins-key">Pick a clip for its flight recorder, or <span class="mm-key-map">${MAP_ICON}</span> beside its route to replay its path on a map. <span class="mm-pieces"><span></span></span> heard · <span class="mm-pieces"><span class="is-rebuilt"></span></span> rebuilt from parity or repair pieces · <span class="mm-pieces"><span class="is-missing"></span></span> not heard by an observer. A clip on a private channel shows only how many pieces were heard.</p></div></div>`;
   }
 
   // ---- Speed ----------------------------------------------------------------
@@ -732,6 +738,8 @@
     const delivery = el.querySelector('#mmDeliveryCard');
     if (delivery) {
       me.onClip = (e) => {
+        const r = e.target.closest('[data-mm-replay]');
+        if (r) { toggleReplay(r, fetcher); return; }
         const b = e.target.closest('[data-mm-clip]');
         if (b && root.MediaMeshClipLog) root.MediaMeshClipLog.open(b.dataset.mmClip);
       };
@@ -740,6 +748,7 @@
     // #/analytics?tab=mediamesh&clip={sid} opens that clip's flight recorder
     const want = /[?&]clip=([0-9a-f]{8})\b/i.exec((root.location && root.location.hash) || '');
     if (want && root.MediaMeshClipLog && !me.openedFromLink) { me.openedFromLink = true; root.MediaMeshClipLog.open(want[1]); }
+    if (root.MediaMeshJourney) root.MediaMeshJourney.draw(el, data, nameOf, fetcher);
     const busy = el.querySelector('#mmBusyCard');
     if (busy) {
       me.onBusy = (e) => {
@@ -750,7 +759,35 @@
     }
   }
 
+  /** Opens the replay of a clip's path under its row, or closes it
+   * (mediamesh-replay.js). One open at a time. */
+  function toggleReplay(btn, fetcher) {
+    const R = root.MediaMeshReplay;
+    if (!R || btn.disabled) return;
+    const row = btn.closest('tr');
+    const wasOpen = btn.getAttribute('aria-expanded') === 'true';
+    R.close();
+    if (wasOpen || !row) return;
+    const tr = document.createElement('tr');
+    tr.className = 'mm-replay-row';
+    const td = document.createElement('td');
+    td.colSpan = row.children.length;
+    const box = document.createElement('div');
+    box.className = 'mm-replay';
+    td.appendChild(box);
+    tr.appendChild(td);
+    row.after(tr);
+    btn.setAttribute('aria-expanded', 'true');
+    row.classList.add('mm-replay-open');
+    R.open(box, btn.dataset.mmReplay, {
+      api: fetcher, title: btn.dataset.mmReplayTitle || 'this clip',
+      onClose: () => { tr.remove(); btn.setAttribute('aria-expanded', 'false'); row.classList.remove('mm-replay-open'); },
+    });
+  }
+
   function destroy() {
+    if (root.MediaMeshReplay) root.MediaMeshReplay.close();
+    if (root.MediaMeshJourney) root.MediaMeshJourney.destroy();
     if (!state) return;
     state.maps.forEach((m) => { try { m.remove(); } catch (_) { /* gone */ } });
     const busy = state.el.querySelector('#mmBusyCard');
@@ -763,8 +800,9 @@
   /** The tab's placeholders for these cards. */
   function cardsHtml() {
     const card = (id, title) => `<div class="analytics-row"><div class="analytics-card flex-1 mm-ins-card" id="${id}"><h3>${title}</h3><p class="text-muted">Loading…</p></div></div>`;
-    return card('mmDeliveryCard', 'How much of each clip the observers heard') + card('mmSpeedCard', 'How fast clips cross the mesh')
-      + card('mmWeakCard', 'Where one repeater going down would split MediaMesh') + card('mmBusyCard', 'When MediaMesh is busy');
+    const j = root.MediaMeshJourney ? root.MediaMeshJourney.cards() : { afterDelivery: '', afterSpeed: '', section: '' };
+    return card('mmDeliveryCard', 'How much of each clip the observers heard') + j.afterDelivery + card('mmSpeedCard', 'How fast clips cross the mesh') + j.afterSpeed
+      + j.section + card('mmWeakCard', 'Where one repeater going down would split MediaMesh') + card('mmBusyCard', 'When MediaMesh is busy');
   }
 
   root.MediaMeshInsights = {

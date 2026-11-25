@@ -37,6 +37,7 @@ node tests/unit/test-mediamesh-cliplog.js
 node tests/unit/test-live-nightsky.js
 node tests/unit/test-mediamesh-3d.js
 node tests/unit/test-mediamesh-insights.js
+node tests/unit/test-mediamesh-journey.js
 node tests/unit/test-mediamesh-reach.js
 node tests/unit/test-mediamesh-kiosk.js
 node tests/unit/test-anl1-tooltip-render.js
