@@ -55,6 +55,24 @@
     return out.join(' → ');
   }
 
+  // ---- Recent clips: the last 24 hours, in a list that scrolls ---------------
+
+  const RECENT_H = 24;
+  const clipTime = (c) => Date.parse(c.at || c.firstAt) || 0;
+
+  /** The clips sent in the RECENT_H hours before now, newest first. */
+  function recentClips(list, now) {
+    const t = now == null ? Date.now() : now;
+    return list.filter((c) => { const a = clipTime(c); return a > t - RECENT_H * 3600000 && a <= t + 300000; })
+      .sort((a, b) => clipTime(b) - clipTime(a));
+  }
+
+  function recentHead(n) {
+    return `<h4>Recent clips <span class="text-muted mm-ins-recent-n">last ${RECENT_H} hours${n ? `, ${n.toLocaleString()}` : ''}</span></h4>`;
+  }
+
+  const recentNone = `<p class="text-muted">No clips in the last ${RECENT_H} hours.</p>`;
+
   // ---- How much of each clip the observers heard ------------------------------------------------
 
   /** The judged clips (heard at all) and their outcomes, overall and by hops. */
@@ -193,7 +211,7 @@
       <td>${pieces}</td><td class="${farCls}">${esc(far)}</td><td class="${arrivalClass(c)}">${arrivalText(c) ? esc(arrivalText(c)) : '<span class="text-muted">—</span>'}</td></tr>`;
   }
 
-  function deliveryHtml(clips, nameOf, days, unannounced, privateCh) {
+  function deliveryHtml(clips, nameOf, days, unannounced, privateCh, now) {
     clips = clips || [];
     unannounced = unannounced || [];
     privateCh = privateCh || [];
@@ -221,12 +239,11 @@
     const maxN = Math.max(1, ...byHops.map((b) => b.n));
     const bars = byHops.filter((b) => b.n).map((b) => `<div class="mm-ins-bar-row"><span>${b.hops}${b.hops === 5 ? '+' : ''} hop${b.hops === 1 ? '' : 's'}</span>
       <span class="mm-ins-bar" role="img" aria-label="${b.n} clip${b.n === 1 ? '' : 's'}"><i style="width:${Math.round(b.n / maxN * 100)}%"></i></span><span class="mm-ins-num">${b.n}</span></div>`).join('');
-    const at = (c) => Date.parse(c.at || c.firstAt) || 0;
-    const recent = clips.filter((c) => c.outcome !== 'none').concat(unannounced, privateCh)
-      .sort((a, b) => at(b) - at(a)).slice(0, 10).map((c) => recentRowHtml(c, nameOf)).join('');
+    const recentList = recentClips(clips.filter((c) => c.outcome !== 'none').concat(unannounced, privateCh), now);
+    const recent = recentList.map((c) => recentRowHtml(c, nameOf)).join('');
     return head + coverageBarHtml(v) + tiles + wholeLine + `<div class="mm-ins-split">
       <div class="mm-ins-col"><h4>Clips heard, by hops</h4>${bars || '<p class="text-muted">None yet.</p>'}</div>
-      <div class="mm-ins-col mm-ins-wide"><h4>Recent clips</h4><div class="mm-ins-scroll"><table class="analytics-table mm-ins-table"><thead><tr><th scope="col">Sent</th><th scope="col">Clip</th><th scope="col">Route</th><th scope="col" class="mm-ins-num">Hops</th><th scope="col">Pieces heard</th><th scope="col">Far end heard</th><th scope="col">Recipient</th></tr></thead><tbody>${recent}</tbody></table></div>
+      <div class="mm-ins-col mm-ins-wide">${recentHead(recentList.length)}${recentList.length ? '' : recentNone}<div class="mm-ins-scroll mm-ins-recent" tabindex="0" role="region" aria-label="Recent clips, last ${RECENT_H} hours"${recentList.length ? '' : ' hidden'}><table class="analytics-table mm-ins-table"><thead><tr><th scope="col">Sent</th><th scope="col">Clip</th><th scope="col">Route</th><th scope="col" class="mm-ins-num">Hops</th><th scope="col">Pieces heard</th><th scope="col">Far end heard</th><th scope="col">Recipient</th></tr></thead><tbody>${recent}</tbody></table></div>
       <p class="text-muted mm-ins-key">Pick a clip for its flight recorder. <span class="mm-pieces"><span></span></span> heard · <span class="mm-pieces"><span class="is-rebuilt"></span></span> rebuilt from parity or repair pieces · <span class="mm-pieces"><span class="is-missing"></span></span> not heard by an observer. A clip on a private channel shows only how many pieces were heard.</p></div></div>`;
   }
 
@@ -298,7 +315,7 @@
   // run to a few hundred, which 0.1 and 0.2 kbit/s hid
   const fmtB = (v) => (v == null ? '—' : Math.round(v * 1000).toLocaleString('en-US'));
 
-  function speedHtml(clips, nameOf, days, unannounced) {
+  function speedHtml(clips, nameOf, days, unannounced, now) {
     const s = speedSummary(clips, nameOf, unannounced);
     const head = `<h3>How fast clips cross the mesh</h3><p class="text-muted mm-ins-sub">From the first piece the far end heard until it had enough to make the whole clip (its own pieces, and parity or repair pieces for those it missed; repair pieces sent later for other listeners don't count): announced clips the far end could make whole, and clips sent privately (in a direct message or on a private channel), timed from the pieces heard, with the pieces in between that no observer heard counted from their numbers. While sending leaves out the pauses: gaps of over 15 s in which far fewer pieces went than usual, as when the sending app waits on the far end. Last ${days} days.</p>`;
     if (!s.n) return head + '<p class="text-muted">No clips with more than one piece heard yet.</p>';
@@ -314,11 +331,12 @@
     const bars = s.byHops.filter((b) => b.n).map((b) => `<div class="mm-ins-bar-row${b.few ? ' mm-ins-bar-row--few' : ''}"${b.few ? ' title="Too few clips to go on yet"' : ''}><span>${b.hops}${b.hops === 5 ? '+' : ''} hop${b.hops === 1 ? '' : 's'}</span>
       <span class="mm-ins-bar"><i style="width:${Math.min(100, Math.round(((b.kbps || 0) / maxK) * 100))}%"></i></span><span class="mm-ins-num">${fmtB(b.kbps)}</span><span class="text-muted mm-ins-n">${b.n} clip${b.n === 1 ? '' : 's'}</span></div>`).join('')
       + (s.byHops.some((b) => b.n && b.few) ? `<p class="text-muted mm-ins-note">Faded: fewer than ${FEW_CLIPS} clips, too few to go on.</p>` : '');
-    const rows = s.rows.slice(0, 8).map((c) => `<tr><td class="mm-ins-when">${whenHtml(c.at)}</td><td>${esc(routeLabel(c, nameOf))}</td><td class="mm-ins-num">${c.hops}</td><td>${esc(clipLabel(c))}, ${c.bytesEstimated ? '<span title="Worked out from the numbers of the first and last pieces heard">about ' : ''}${(c.bytes / 1000).toFixed(1)} kB${c.bytesEstimated ? '</span>' : ''}</td>
+    const recentList = recentClips(s.rows, now);
+    const rows = recentList.map((c) => `<tr><td class="mm-ins-when">${whenHtml(c.at)}</td><td>${esc(routeLabel(c, nameOf))}</td><td class="mm-ins-num">${c.hops}</td><td>${esc(clipLabel(c))}, ${c.bytesEstimated ? '<span title="Worked out from the numbers of the first and last pieces heard">about ' : ''}${(c.bytes / 1000).toFixed(1)} kB${c.bytesEstimated ? '</span>' : ''}</td>
       <td class="mm-ins-num">${Math.round(c.durationS)} s${c.paused >= 1 ? `<span class="text-muted mm-ins-paused" title="Paused for this long in all: gaps of over 15 s with far fewer pieces than usual"> (${Math.round(c.paused)} s paused)</span>` : ''}${c.doubtful ? '<span class="mm-ins-waited">too uncertain to time</span>' : c.waited ? '<span class="mm-ins-waited">waited on the far end</span>' : ''}</td><td class="mm-ins-num">${c.doubtful || c.waited ? `<span class="text-muted" title="${c.doubtful ? 'Left out of every speed: too few pieces heard, too quick, or faster than radio2 can carry' : 'Left out of the end-to-end median: most of this was waiting on the far end'}">${fmtB(c.kbps)}</span>` : `<strong>${fmtB(c.kbps)}</strong>`}</td><td class="mm-ins-num">${c.doubtful ? `<span class="text-muted">${fmtB(c.sendKbps)}</span>` : fmtB(c.sendKbps)}</td></tr>`).join('');
     return head + tiles + `<div class="mm-ins-split">
       <div class="mm-ins-col"><h4>bit/s by hops (median while sending)</h4>${bars}</div>
-      <div class="mm-ins-col mm-ins-wide"><h4>Recent clips</h4><div class="mm-ins-scroll"><table class="analytics-table mm-ins-table"><thead><tr><th scope="col">Sent</th><th scope="col">Route</th><th scope="col" class="mm-ins-num">Hops</th><th scope="col">Clip</th><th scope="col" class="mm-ins-num">Took</th><th scope="col" class="mm-ins-num">bit/s</th><th scope="col" class="mm-ins-num" title="Leaving out pauses of over 15 s">While sending</th></tr></thead><tbody>${rows}</tbody></table></div></div></div>`;
+      <div class="mm-ins-col mm-ins-wide">${recentHead(recentList.length)}${recentList.length ? '' : recentNone}<div class="mm-ins-scroll mm-ins-recent" tabindex="0" role="region" aria-label="Recent clips, last ${RECENT_H} hours"${recentList.length ? '' : ' hidden'}><table class="analytics-table mm-ins-table"><thead><tr><th scope="col">Sent</th><th scope="col">Route</th><th scope="col" class="mm-ins-num">Hops</th><th scope="col">Clip</th><th scope="col" class="mm-ins-num">Took</th><th scope="col" class="mm-ins-num">bit/s</th><th scope="col" class="mm-ins-num" title="Leaving out pauses of over 15 s">While sending</th></tr></thead><tbody>${rows}</tbody></table></div></div></div>`;
   }
 
   // ---- When it's busy -------------------------------------------------------
@@ -706,8 +724,9 @@
     const put = (sel, html) => { const c = el.querySelector(sel); if (c) c.innerHTML = html; };
     const unannounced = (data && data.unannounced) || [];
     const privateCh = (data && data.privateChannel) || [];
-    put('#mmDeliveryCard', deliveryHtml(clips, nameOf, days, unannounced, privateCh));
-    put('#mmSpeedCard', speedHtml(clips, nameOf, days, unannounced));
+    const now = Date.parse(data.to) || Date.now();
+    put('#mmDeliveryCard', deliveryHtml(clips, nameOf, days, unannounced, privateCh, now));
+    put('#mmSpeedCard', speedHtml(clips, nameOf, days, unannounced, now));
     const grid = busyGrid(data.hours, data.from, data.to);
     put('#mmBusyCard', busyHtml(grid, 'packets', days));
     const delivery = el.querySelector('#mmDeliveryCard');
@@ -749,7 +768,7 @@
   }
 
   root.MediaMeshInsights = {
-    init, destroy, cardsHtml, namer, routeLabel, clipLabel, whenHtml, deliverySummary, coverageSummary, deliveryHtml, arrivalSummary, arrivalText, speedRows, speedSummary, speedHtml,
+    init, destroy, cardsHtml, namer, routeLabel, clipLabel, whenHtml, recentClips, deliverySummary, coverageSummary, deliveryHtml, arrivalSummary, arrivalText, speedRows, speedSummary, speedHtml,
     busyGrid, busyHtml, backboneGraph, components, resilienceScore, weakSpots, weakHtml, median, mapPng,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

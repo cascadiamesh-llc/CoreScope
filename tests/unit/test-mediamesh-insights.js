@@ -6,6 +6,9 @@ const fs = require('fs');
 const path = require('path');
 require(path.join(__dirname, '../../public/mediamesh-insights.js'));
 const I = globalThis.MediaMeshInsights;
+// the recent-clips lists show the last 24 hours: the clips below are sent on 18 Nov
+const NOW = Date.parse('2026-11-19T09:00:00Z');
+Date.now = () => NOW;
 const pub = (f) => fs.readFileSync(path.join(__dirname, '../../public', f), 'utf8');
 
 let passed = 0, failed = 0;
@@ -57,7 +60,7 @@ test('speed: bit/s from bytes over time, by hops, the fastest route needs two cl
 });
 
 test('clips sent privately: timed in the speed card, counted in the delivery card, judged only from a receipt', () => {
-  const priv = [clip({ outcome: 'unannounced', kind: 'unknown', total: 0, heard: 6, hops: 2, durationS: 20, bytes: 1000, at: '2026-11-20T01:00:00Z' }),
+  const priv = [clip({ outcome: 'unannounced', kind: 'unknown', total: 0, heard: 6, hops: 2, durationS: 20, bytes: 1000, at: '2026-11-18T20:00:00Z' }),
     clip({ outcome: 'unannounced', kind: 'unknown', total: 0, heard: 1, durationS: 5, bytes: 150 })];
   const s = I.speedSummary([], nameOf, priv);
   assert.deepStrictEqual([s.n, s.priv], [1, 1], 'two pieces at least');
@@ -214,6 +217,18 @@ test('recent clips: when each was sent, in the viewer\'s time', () => {
   const html = I.deliveryHtml([clip({})], (k) => k, 7, []) + I.speedHtml([clip({})], (k) => k, 7, []);
   assert.strictEqual((html.match(/<th scope="col">Sent<\/th>/g) || []).length, 2, 'both tables');
   assert.ok(html.includes('>Took</th>'));
+});
+
+test('recent clips: the last 24 hours, newest first, in a list that scrolls', () => {
+  const list = [clip({ sid: 'old', at: '2026-11-17T12:00:00Z' }), clip({ sid: 'a', at: '2026-11-18T10:00:00Z' }), clip({ sid: 'b', at: '2026-11-19T08:00:00Z' })];
+  assert.deepStrictEqual(I.recentClips(list, NOW).map((c) => c.sid), ['b', 'a']);
+  const many = Array.from({ length: 30 }, (_, i) => clip({ sid: 's' + i, at: new Date(NOW - i * 1800000).toISOString() }));
+  const h = I.deliveryHtml(many, nameOf, 7, [], [], NOW);
+  assert.strictEqual((h.match(/data-mm-clip="s\d+"/g) || []).length, 30, 'every clip of the day, not the first few');
+  assert.ok(h.includes('class="mm-ins-scroll mm-ins-recent" tabindex="0" role="region"') && h.includes('last 24 hours, 30'), 'scrolls, and says the window');
+  const none = I.deliveryHtml([clip({ at: '2026-11-10T10:00:00Z' })], nameOf, 7, [], [], NOW);
+  assert.ok(none.includes('No clips in the last 24 hours.') && none.includes(' hidden>'), none);
+  assert.ok(I.speedHtml(many, nameOf, 7, [], NOW).includes('last 24 hours, 30'));
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
