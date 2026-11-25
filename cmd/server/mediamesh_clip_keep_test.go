@@ -67,6 +67,30 @@ func TestKeepAndMerge(t *testing.T) {
 	}
 }
 
+func TestKeepPrivateChannelClips(t *testing.T) {
+	db := openKeepDB(t)
+	whole := MediaMeshClip{SID: "p2c1", Channel: "2c", Outcome: "private", Heard: 12,
+		At: "2026-11-24T19:58:00Z", FirstAt: "2026-11-24T19:58:00Z", LastAt: "2026-11-24T20:00:20Z"}
+	if err := keepMMClips(db, &MediaMeshClips{PrivateChannel: []MediaMeshClip{whole}}); err != nil {
+		t.Fatal(err)
+	}
+	// its first pieces have left memory: it starts later, under another key
+	late := MediaMeshClip{SID: "p2c2", Channel: "2c", Outcome: "private", Heard: 4,
+		At: "2026-11-24T19:59:30Z", FirstAt: "2026-11-24T19:59:30Z", LastAt: "2026-11-24T20:00:20Z"}
+	fresh := &MediaMeshClips{PrivateChannel: []MediaMeshClip{late}}
+	if err := keepMMClips(db, fresh); err != nil {
+		t.Fatal(err)
+	}
+	kept, err := keptMMClips(db, "2026-11-24T00:00:00Z")
+	if err != nil || len(kept.PrivateChannel) != 2 {
+		t.Fatalf("%v %+v", err, kept)
+	}
+	mergeMMClips(kept, fresh)
+	if len(fresh.PrivateChannel) != 1 || fresh.PrivateChannel[0].Heard != 12 {
+		t.Fatalf("%+v", fresh.PrivateChannel)
+	}
+}
+
 func TestPrune(t *testing.T) {
 	db := openKeepDB(t)
 	keepMMClips(db, &MediaMeshClips{Clips: []MediaMeshClip{{SID: "old", At: "2020-01-01T00:00:00Z", Outcome: "whole"}}, Hours: []MediaMeshClipHour{{T: "2020-01-01T00:00:00Z", Packets: 1}}})

@@ -47,6 +47,27 @@ and 12 hours after. The MediaMesh tab's **Did it arrive?** shows how many delive
 and how, a **Recipient** column in its clip list, and the flight recorder adds what the receiving
 apps reported. Nothing is shown per radio.
 
+### Clips sent privately, judged by their receipts
+
+A clip sent in a direct message has its announcement encrypted, so the analyzer knows its pieces
+(each carries the session id) but not how many there are. `delivery` adds the receipt's `total`
+and `kind` (the largest total any receiving app reported), and the clip gets them: `total`,
+`kind`, `totalFrom: "receipt"`, and `missing`, the pieces its far end didn't hear, from the
+pieces it did (`heardIdx`). Piece numbers are one byte on the air, so a clip of more than 256
+pieces gets its total but no `missing`. **What the observers heard** then shows it like an
+announced clip.
+
+### Clips on private channels
+
+On a private channel everything is encrypted, session id included. The analyzer counts each
+burst of unreadable channel data on radio2 (at least 3 pieces within 60 s, on one channel, pieces
+less than 2 minutes apart) as one clip: `privateChannel` in `/api/analytics/mediamesh/clips`,
+with `outcome: "private"`, the channel's one-byte hash (`channel`), when, how many pieces
+(`heard`), and the far end's hops and path. Never its kind or who it was for. They're kept with
+the other clips (`mm_clips`, kind `p`); a burst worked out again after its first pieces left
+memory starts later, so overlapping bursts on one channel are counted once, the fullest.
+**What the observers heard** shows all three groups in one bar and in its clip list.
+
 ## How fast clips cross
 
 The MediaMesh tab's **How fast clips cross the mesh** card shows speeds in bit/s: across a few

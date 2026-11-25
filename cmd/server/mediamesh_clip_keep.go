@@ -116,6 +116,11 @@ func keepMMClips(db *sql.DB, out *MediaMeshClips) error {
 			return err
 		}
 	}
+	for _, c := range out.PrivateChannel {
+		if err := put("p", c); err != nil {
+			return err
+		}
+	}
 	for _, h := range out.Hours {
 		if _, err := tx.Exec(`INSERT INTO mm_clip_hours (t, packets, clips, partial) VALUES (?, ?, ?, ?)
 			ON CONFLICT(t) DO UPDATE SET packets = MAX(packets, excluded.packets),
@@ -132,7 +137,7 @@ func keptMMClips(db *sql.DB, since string) (*MediaMeshClips, error) {
 	if err := ensureMMClips(db); err != nil {
 		return nil, err
 	}
-	out := &MediaMeshClips{Clips: []MediaMeshClip{}, Hours: []MediaMeshClipHour{}, Unannounced: []MediaMeshClip{}}
+	out := &MediaMeshClips{Clips: []MediaMeshClip{}, Hours: []MediaMeshClipHour{}, Unannounced: []MediaMeshClip{}, PrivateChannel: []MediaMeshClip{}}
 	rows, err := db.Query(`SELECT kind, clip FROM mm_clips WHERE at >= ?`, since)
 	if err != nil {
 		return nil, err
@@ -147,9 +152,12 @@ func keptMMClips(db *sql.DB, since string) (*MediaMeshClips, error) {
 		if json.Unmarshal([]byte(s), &c) != nil {
 			continue
 		}
-		if kind == "a" {
+		switch kind {
+		case "a":
 			out.Clips = append(out.Clips, c)
-		} else {
+		case "p":
+			out.PrivateChannel = append(out.PrivateChannel, c)
+		default:
 			out.Unannounced = append(out.Unannounced, c)
 		}
 	}
@@ -171,7 +179,8 @@ func keptMMClips(db *sql.DB, since string) (*MediaMeshClips, error) {
 
 // mergeMMClips lays the clips worked out now (fresh) over those kept: the
 // better account of each clip, the larger count for each hour, a clip once
-// announced never also listed as unannounced. Newest first, at most
+// announced never also listed as unannounced, a private-channel burst once
+// however often it was kept (dedupePrivateClips). Newest first, at most
 // mediaClipsMax of each.
 func mergeMMClips(kept, fresh *MediaMeshClips) {
 	pick := func(a, b []MediaMeshClip) []MediaMeshClip {
@@ -207,6 +216,7 @@ func mergeMMClips(kept, fresh *MediaMeshClips) {
 		}
 	}
 	fresh.Unannounced = un
+	fresh.PrivateChannel = dedupePrivateClips(append(append([]MediaMeshClip(nil), kept.PrivateChannel...), fresh.PrivateChannel...))
 	hours := map[string]MediaMeshClipHour{}
 	for _, list := range [][]MediaMeshClipHour{kept.Hours, fresh.Hours} {
 		for _, h := range list {
@@ -271,7 +281,7 @@ func (s *Server) keepMMClipsLoop(stop <-chan struct{}) {
 		}
 		now := time.Now().UTC()
 		out := &MediaMeshClips{From: now.Add(-24 * time.Hour).Format(time.RFC3339), To: now.Format(time.RFC3339),
-			Clips: []MediaMeshClip{}, Hours: []MediaMeshClipHour{}, Unannounced: []MediaMeshClip{}}
+			Clips: []MediaMeshClip{}, Hours: []MediaMeshClipHour{}, Unannounced: []MediaMeshClip{}, PrivateChannel: []MediaMeshClip{}}
 		s.store.mediaMeshClips(out.From, out)
 		if err := keepMMClips(st.db, out); err != nil {
 			log.Printf("[mediamesh] keeping clips: %v", err)

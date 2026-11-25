@@ -104,7 +104,7 @@ type MediaMeshClip struct {
 	At        string   `json:"at"` // announced
 	Heard     int      `json:"heard"`
 	Parity    int      `json:"parity"`
-	Outcome   string   `json:"outcome"` // whole | parity | partial | none | unannounced
+	Outcome   string   `json:"outcome"` // whole | parity | partial | none | unannounced | private
 	Missing   []int    `json:"missing,omitempty"`
 	Rebuilt   []int    `json:"rebuilt,omitempty"`
 	Observer  string   `json:"observer,omitempty"`
@@ -128,6 +128,12 @@ type MediaMeshClip struct {
 	Observers      int  `json:"observers"`
 	// what the receiving apps reported (delivery receipts), if any did
 	Delivery *MediaMeshDelivery `json:"delivery,omitempty"`
+	// A clip sent privately: the data pieces its far end heard, by number,
+	// so a receipt's total can say which were missed (TotalFrom "receipt").
+	HeardIdx  []int  `json:"heardIdx,omitempty"`
+	TotalFrom string `json:"totalFrom,omitempty"`
+	// A clip on a private channel: the channel's one-byte hash (hex).
+	Channel string `json:"channel,omitempty"`
 }
 
 // MediaMeshClipHour is the photo, video and voice traffic of one hour.
@@ -149,6 +155,10 @@ type MediaMeshClips struct {
 	// with their session id, so how fast they crossed shows, but not whether
 	// they arrived whole (Total 0, Outcome "unannounced").
 	Unannounced []MediaMeshClip `json:"unannounced"`
+	// Clips on private channels: everything encrypted, so each is a burst
+	// of pieces on one channel (Outcome "private"); see
+	// mediamesh_private_channel.go.
+	PrivateChannel []MediaMeshClip `json:"privateChannel"`
 }
 
 // analyseMediaClips matches pieces to announcements and judges each clip at
@@ -436,6 +446,10 @@ func unannouncedClip(sid uint32, ps []mediaClipPieceP) (MediaMeshClip, bool) {
 		Observer: farKey, ObsName: far.name, Hops: far.maxHops, Heard: len(far.data), Parity: far.parity,
 		FirstAt: far.first.UTC().Format(time.RFC3339), LastAt: far.last.UTC().Format(time.RFC3339),
 		DurationS: far.last.Sub(far.first).Seconds(), Bytes: far.bytes, Observers: len(obs)}
+	for i := range far.data {
+		c.HeardIdx = append(c.HeardIdx, i)
+	}
+	sort.Ints(c.HeardIdx)
 	if far.path != nil {
 		c.Path = far.path
 	}
@@ -730,7 +744,7 @@ func (s *Server) handleMediaMeshClips(w http.ResponseWriter, r *http.Request) {
 	build := func() interface{} {
 		now := time.Now().UTC()
 		out := &MediaMeshClips{To: now.Format(time.RFC3339), From: now.Add(-time.Duration(days) * 24 * time.Hour).Format(time.RFC3339),
-			Clips: []MediaMeshClip{}, Hours: []MediaMeshClipHour{}, Unannounced: []MediaMeshClip{}}
+			Clips: []MediaMeshClip{}, Hours: []MediaMeshClipHour{}, Unannounced: []MediaMeshClip{}, PrivateChannel: []MediaMeshClip{}}
 		if s.store != nil {
 			s.store.mediaMeshClips(out.From, out)
 		}
@@ -797,6 +811,7 @@ func mediaClipPayload(pt int, d map[string]interface{}) []byte {
 func (s *PacketStore) mediaMeshClips(since string, out *MediaMeshClips) {
 	var anns []mediaClipAnn
 	var pieces []mediaClipPiece
+	var private []privatePiece
 	hours := map[string]*MediaMeshClipHour{}
 	hour := func(t time.Time) *MediaMeshClipHour {
 		k := t.UTC().Truncate(time.Hour).Format(time.RFC3339)
@@ -839,6 +854,16 @@ func (s *PacketStore) mediaMeshClips(since string, out *MediaMeshClips) {
 			continue
 		}
 		hour(parseTimestamp(tx.FirstSeen)).Packets++
+		if ch, unreadable := mediaUnreadableChannel(tx); unreadable {
+			p := privatePiece{channel: ch, at: parseTimestamp(tx.FirstSeen)}
+			for _, o := range tx.Observations {
+				if _, ok := mediaMeshObs[o.ID]; ok {
+					p.obs = append(p.obs, privateObs{observer: o.ObserverID, name: o.ObserverName, path: parsePathJSON(o.PathJSON)})
+				}
+			}
+			private = append(private, p)
+			continue
+		}
 		b := mediaClipPayload(pt, tx.ParsedDecoded())
 		if b == nil {
 			continue
@@ -865,6 +890,10 @@ func (s *PacketStore) mediaMeshClips(since string, out *MediaMeshClips) {
 	out.Unannounced = unannouncedMediaClips(anns, pieces)
 	if len(out.Unannounced) > mediaClipsMax {
 		out.Unannounced = out.Unannounced[:mediaClipsMax]
+	}
+	out.PrivateChannel = privateChannelClips(private)
+	if len(out.PrivateChannel) > mediaClipsMax {
+		out.PrivateChannel = out.PrivateChannel[:mediaClipsMax]
 	}
 	for _, c := range clips {
 		h := hour(parseTimestamp(c.At))

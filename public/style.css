@@ -6650,6 +6650,19 @@ html.mm-embed--sky .mm-embed-open:hover { background: var(--mm-sky-ink); color: 
 /* delivery receipts: whole is the theme's green text; part, the plain muted text */
 .mm-ins-arrived { color: var(--status-green-text); font-weight: var(--fw-medium, 500); }
 .mm-ins-arrived-part { color: var(--text-muted); }
+/* What the observers heard: every clip on radio2, by how much the analyzer can read */
+.mm-ins-cover { display: flex; height: 14px; border-radius: 5px; overflow: hidden; border: 1px solid var(--border); margin: 4px 0 8px; }
+.mm-ins-cover i { display: block; min-width: 3px; flex-basis: 0; }
+.mm-ins-cover-key { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--text-muted); margin-bottom: 14px; }
+.mm-ins-cover-key > span { display: inline-flex; align-items: center; gap: 6px; }
+.mm-ins-sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+.mm-ins-cover .is-heard, .mm-ins-sw.is-heard { background: var(--mediamesh-path-color); }
+.mm-ins-cover .is-unheard, .mm-ins-sw.is-unheard { background: color-mix(in srgb, var(--mediamesh-path-color) 40%, transparent); }
+.mm-ins-cover .is-private, .mm-ins-sw.is-private { background: var(--status-info); }
+.mm-ins-cover .is-channel, .mm-ins-sw.is-channel { background: repeating-linear-gradient(135deg, var(--status-amber) 0 5px, color-mix(in srgb, var(--status-amber) 45%, transparent) 5px 10px); }
+.mm-ins-of { font-size: 15px; font-weight: 500; color: var(--text-muted); }
+.mm-ins-clip { display: inline-flex; flex-direction: column; gap: 2px; }
+.mm-ins-how { font-size: 11px; color: var(--text-muted); }
 .mm-ins-h3-next { margin-top: 22px; }
 
 /* ---- Coverage: the mesh view ---- */

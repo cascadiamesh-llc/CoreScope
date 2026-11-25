@@ -135,32 +135,99 @@
     </div>`;
   }
 
-  function deliveryHtml(clips, nameOf, days, unannounced) {
+  /** Every clip heard on radio2, by how much the analyzer can read of it:
+   * announced on a channel it reads (heard or not), sent privately with
+   * readable pieces (judged when a receipt gives the total), or on a private
+   * channel (only bursts of encrypted pieces). */
+  function coverageSummary(clips, unannounced, privateCh) {
     const s = deliverySummary(clips);
-    const priv = (unannounced || []).length;
+    const priv = unannounced || [], pc = privateCh || [];
+    const judged = priv.filter((c) => c.totalFrom === 'receipt' && c.total > 0);
+    return {
+      announced: (clips || []).length, heard: s.n, unheard: s.unheard,
+      priv: priv.length, judged: judged.length, judgedWhole: judged.filter((c) => !(c.missing || []).length).length,
+      channel: pc.length, channelPieces: pc.reduce((n, c) => n + (c.heard || 0), 0),
+      channels: new Set(pc.map((c) => c.channel)).size,
+    };
+  }
+
+  function coverageBarHtml(v) {
+    const parts = [['is-heard', v.heard, 'announced on a channel the analyzer reads, heard by an observer'],
+      ['is-unheard', v.unheard, 'announced, not heard'], ['is-private', v.priv, 'sent privately (a direct message)'],
+      ['is-channel', v.channel, 'on a private channel']];
+    const total = parts.reduce((n, p) => n + p[1], 0);
+    if (!total) return '';
+    const label = parts.filter((p) => p[1]).map((p) => `${p[1].toLocaleString()} ${p[2]}`).join(', ');
+    const bar = parts.filter((p) => p[1]).map((p) => `<i class="${p[0]}" style="flex-grow:${p[1]}"></i>`).join('');
+    const key = parts.map((p) => `<span><span class="mm-ins-sw ${p[0]}"></span>${esc(p[2].charAt(0).toUpperCase() + p[2].slice(1))}</span>`).join('');
+    return `<div class="mm-ins-cover" role="img" aria-label="${esc('Clips on radio2: ' + label)}">${bar}</div><div class="mm-ins-cover-key">${key}</div>`;
+  }
+
+  /** A clip in the recent table: what it is, and how the analyzer knows. */
+  function recentRowHtml(c, nameOf) {
+    const label = c.kind === 'unknown' ? 'Clip' : clipLabel(c);
+    const clipBtn = c.outcome === 'private' ? esc(label)
+      : `<button type="button" class="mm-fr-open" data-mm-clip="${esc(c.sid)}" title="Open its flight recorder: every piece, when and by which path">${esc(label)}</button>`;
+    let how = '', pieces, far, farCls = `mm-ins-outcome mm-ins-outcome--${esc(c.outcome)}`;
+    if (c.outcome === 'private') {
+      how = `on a private channel${c.channel ? ` (${esc(String(c.channel).toUpperCase())})` : ''}`;
+      pieces = `<span class="text-muted">${(c.heard || 0).toLocaleString()} piece${c.heard === 1 ? '' : 's'} heard</span>`;
+      far = 'unknown';
+      farCls = 'text-muted';
+    } else if (c.outcome === 'unannounced' && c.totalFrom === 'receipt' && c.total > 0) {
+      how = 'sent privately · its size from a receipt';
+      pieces = piecesHtml(c);
+      far = (c.missing || []).length ? `${c.total - c.missing.length} of ${c.total}` : 'all of it';
+      if (!(c.missing || []).length) farCls = 'mm-ins-outcome mm-ins-outcome--whole';
+    } else if (c.outcome === 'unannounced') {
+      how = 'sent privately · no receipt yet';
+      pieces = `<span class="text-muted">${(c.heard || 0).toLocaleString()} different piece${c.heard === 1 ? '' : 's'} heard</span>`;
+      far = 'its size unknown';
+      farCls = 'text-muted';
+    } else {
+      pieces = piecesHtml(c);
+      far = outcomeText(c);
+    }
+    const clipCell = how ? `<span class="mm-ins-clip">${clipBtn}<span class="mm-ins-how">${how}</span></span>` : clipBtn;
+    return `<tr><td class="mm-ins-when">${whenHtml(c.at || c.firstAt)}</td><td>${clipCell}</td><td>${esc(routeLabel(c, nameOf))}</td><td class="mm-ins-num">${c.hops || 0}</td>
+      <td>${pieces}</td><td class="${farCls}">${esc(far)}</td><td class="${arrivalClass(c)}">${arrivalText(c) ? esc(arrivalText(c)) : '<span class="text-muted">—</span>'}</td></tr>`;
+  }
+
+  function deliveryHtml(clips, nameOf, days, unannounced, privateCh) {
+    clips = clips || [];
+    unannounced = unannounced || [];
+    privateCh = privateCh || [];
+    const s = deliverySummary(clips);
+    const v = coverageSummary(clips, unannounced, privateCh);
     const arrived = arrivalSummary(clips, unannounced);
-    const head = arrivalHtml(arrived) + `<h3 class="mm-ins-h3-next">What the observers heard</h3><p class="text-muted mm-ins-sub">Each clip's announcement says how many pieces it has; this is how many of them reached the observer that heard it furthest along (the far end). It isn't whether the clip arrived: observers only hear pieces that pass near them, a MediaMesh repeater misses some while it listens to the main mesh, and the receiving app rebuilds or asks again for anything it missed. Clips announced on channels the analyzer can read, last ${days} days. A clip sent in a direct message or on a private channel has its announcement encrypted, so it isn't counted here; how fast it crossed still shows below.</p>`;
-    const privNote = priv ? `<p class="text-muted">${priv.toLocaleString()} clip${priv === 1 ? '' : 's'} sent privately ${priv === 1 ? 'was' : 'were'} heard in this period.</p>` : '';
-    if (!s.n) return head + '<p class="text-muted">No announced clips heard yet in this period.</p>' + privNote;
+    const head = arrivalHtml(arrived) + `<h3 class="mm-ins-h3-next">What the observers heard</h3><p class="text-muted mm-ins-sub">Every photo, video and voice clip heard on radio2 in the last ${days} days, whatever channel or direct message it went by; how much the analyzer can say about each depends on what it can read. For a clip whose size is known, this is how many of its pieces reached the observer that heard it furthest along (the far end). It isn't whether the clip arrived: observers only hear pieces that pass near them, a MediaMesh repeater misses some while it listens to the main mesh, and the receiving app rebuilds or asks again for anything it missed.</p>`;
+    if (!v.announced && !v.priv && !v.channel) return head + '<p class="text-muted">No clips heard yet in this period.</p>';
     // Counts, not percentages: observers hearing part of a clip is normal, and
     // "0% whole" would read as MediaMesh failing.
     const maxHops = Math.max(0, ...clips.filter((c) => c.outcome !== 'none').map((c) => c.hops || 0));
     const wholeN = s.whole + s.parity;
     const tiles = `<div class="mm-ins-tiles">
-      <div class="mm-ins-tile"><div class="mm-ins-big mm-ins-accent">${s.n.toLocaleString()}</div><div class="mm-ins-label">announced clip${s.n === 1 ? '' : 's'} heard by observers${maxHops ? `, up to ${maxHops} hop${maxHops === 1 ? '' : 's'} from where ${s.n === 1 ? 'it' : 'they'} started` : ''}</div></div>
-      ${priv ? `<div class="mm-ins-tile"><div class="mm-ins-big mm-ins-accent">${priv.toLocaleString()}</div><div class="mm-ins-label">more sent privately (direct messages, private channels)</div></div>` : ''}
-      ${s.unheard ? `<div class="mm-ins-tile"><div class="mm-ins-big">${s.unheard.toLocaleString()}</div><div class="mm-ins-label">announced, not heard by an observer</div></div>` : ''}
-    </div>
-    <p class="text-muted mm-ins-wholeline">Heard whole by an observer: ${wholeN.toLocaleString()} of ${s.n.toLocaleString()}${s.parity ? ` (${s.parity} with parity)` : ''}. The rest passed out of the observers' hearing, which says nothing about whether ${s.n - wholeN === 1 ? 'it' : 'they'} arrived.</p>`;
-    const maxN = Math.max(1, ...s.byHops.map((b) => b.n));
-    const bars = s.byHops.filter((b) => b.n).map((b) => `<div class="mm-ins-bar-row"><span>${b.hops}${b.hops === 5 ? '+' : ''} hop${b.hops === 1 ? '' : 's'}</span>
+      <div class="mm-ins-tile"><div class="mm-ins-big mm-ins-accent">${s.n.toLocaleString()}${s.unheard ? ` <span class="mm-ins-of">of ${v.announced.toLocaleString()}</span>` : ''}</div><div class="mm-ins-label">announced clip${s.n === 1 ? '' : 's'} heard by observers${maxHops ? `, up to ${maxHops} hop${maxHops === 1 ? '' : 's'} from where ${s.n === 1 ? 'it' : 'they'} started` : ''}. The announcement says how many pieces each has, so every one is judged.</div></div>
+      <div class="mm-ins-tile"><div class="mm-ins-big">${v.priv.toLocaleString()} <span class="mm-ins-of">sent privately</span></div><div class="mm-ins-label">Their pieces carry the clip's id, but the announcement is encrypted. Judged when the receiving app sends a receipt, which says how many pieces it has${v.priv ? `: ${v.judged.toLocaleString()} of ${v.priv.toLocaleString()} so far` : ''}.</div></div>
+      <div class="mm-ins-tile"><div class="mm-ins-big">${v.channel.toLocaleString()} <span class="mm-ins-of">on private channels</span></div><div class="mm-ins-label">Pieces and all encrypted, so each burst counts as a clip${v.channel ? ` (${v.channelPieces.toLocaleString()} pieces on ${v.channels} channel${v.channels === 1 ? '' : 's'})` : ''}. When, how many pieces and how far; never what kind or for whom.</div></div>
+    </div>`;
+    const wholeParts = [];
+    if (s.n) wholeParts.push(`${wholeN.toLocaleString()} of ${s.n.toLocaleString()} announced${s.parity ? ` (${s.parity} with parity)` : ''}`);
+    if (v.judged) wholeParts.push(`${v.judgedWhole.toLocaleString()} of ${v.judged.toLocaleString()} sent privately with a receipt`);
+    const notWhole = (s.n - wholeN) + (v.judged - v.judgedWhole);
+    const wholeLine = wholeParts.length ? `<p class="text-muted mm-ins-wholeline">Heard whole by an observer: ${wholeParts.join(' and ')}.${notWhole ? ` The rest passed out of the observers' hearing, which says nothing about whether ${notWhole === 1 ? 'it' : 'they'} arrived.` : ''}</p>` : '';
+    const judgedPriv = unannounced.filter((c) => c.totalFrom === 'receipt' && c.total > 0);
+    const byHops = deliverySummary(clips.concat(judgedPriv.map((c) => Object.assign({}, c, { outcome: 'partial' })))).byHops;
+    const maxN = Math.max(1, ...byHops.map((b) => b.n));
+    const bars = byHops.filter((b) => b.n).map((b) => `<div class="mm-ins-bar-row"><span>${b.hops}${b.hops === 5 ? '+' : ''} hop${b.hops === 1 ? '' : 's'}</span>
       <span class="mm-ins-bar" role="img" aria-label="${b.n} clip${b.n === 1 ? '' : 's'}"><i style="width:${Math.round(b.n / maxN * 100)}%"></i></span><span class="mm-ins-num">${b.n}</span></div>`).join('');
-    const recent = clips.filter((c) => c.outcome !== 'none').slice(0, 8).map((c) => `<tr><td class="mm-ins-when">${whenHtml(c.at)}</td><td><button type="button" class="mm-fr-open" data-mm-clip="${esc(c.sid)}" title="Open its flight recorder: every piece, when and by which path">${esc(clipLabel(c))}</button></td><td>${esc(routeLabel(c, nameOf))}</td><td class="mm-ins-num">${c.hops}</td>
-      <td>${piecesHtml(c)}</td><td class="mm-ins-outcome mm-ins-outcome--${esc(c.outcome)}">${esc(outcomeText(c))}</td><td class="${arrivalClass(c)}">${arrivalText(c) ? esc(arrivalText(c)) : '<span class="text-muted">—</span>'}</td></tr>`).join('');
-    return head + tiles + `<div class="mm-ins-split">
-      <div class="mm-ins-col"><h4>Clips heard, by hops</h4>${bars}</div>
+    const at = (c) => Date.parse(c.at || c.firstAt) || 0;
+    const recent = clips.filter((c) => c.outcome !== 'none').concat(unannounced, privateCh)
+      .sort((a, b) => at(b) - at(a)).slice(0, 10).map((c) => recentRowHtml(c, nameOf)).join('');
+    return head + coverageBarHtml(v) + tiles + wholeLine + `<div class="mm-ins-split">
+      <div class="mm-ins-col"><h4>Clips heard, by hops</h4>${bars || '<p class="text-muted">None yet.</p>'}</div>
       <div class="mm-ins-col mm-ins-wide"><h4>Recent clips</h4><div class="mm-ins-scroll"><table class="analytics-table mm-ins-table"><thead><tr><th scope="col">Sent</th><th scope="col">Clip</th><th scope="col">Route</th><th scope="col" class="mm-ins-num">Hops</th><th scope="col">Pieces heard</th><th scope="col">Far end heard</th><th scope="col">Recipient</th></tr></thead><tbody>${recent}</tbody></table></div>
-      <p class="text-muted mm-ins-key">Pick a clip for its flight recorder. <span class="mm-pieces"><span></span></span> heard · <span class="mm-pieces"><span class="is-rebuilt"></span></span> rebuilt from parity or repair pieces · <span class="mm-pieces"><span class="is-missing"></span></span> not heard by an observer</p></div></div>`;
+      <p class="text-muted mm-ins-key">Pick a clip for its flight recorder. <span class="mm-pieces"><span></span></span> heard · <span class="mm-pieces"><span class="is-rebuilt"></span></span> rebuilt from parity or repair pieces · <span class="mm-pieces"><span class="is-missing"></span></span> not heard by an observer. A clip on a private channel shows only how many pieces were heard.</p></div></div>`;
   }
 
   // ---- Speed ----------------------------------------------------------------
@@ -638,7 +705,8 @@
     const days = Math.max(1, Math.round((Date.parse(data.to) - Date.parse(data.from)) / 86400000)) || DAYS_BACK;
     const put = (sel, html) => { const c = el.querySelector(sel); if (c) c.innerHTML = html; };
     const unannounced = (data && data.unannounced) || [];
-    put('#mmDeliveryCard', deliveryHtml(clips, nameOf, days, unannounced));
+    const privateCh = (data && data.privateChannel) || [];
+    put('#mmDeliveryCard', deliveryHtml(clips, nameOf, days, unannounced, privateCh));
     put('#mmSpeedCard', speedHtml(clips, nameOf, days, unannounced));
     const grid = busyGrid(data.hours, data.from, data.to);
     put('#mmBusyCard', busyHtml(grid, 'packets', days));
@@ -681,7 +749,7 @@
   }
 
   root.MediaMeshInsights = {
-    init, destroy, cardsHtml, namer, routeLabel, clipLabel, whenHtml, deliverySummary, deliveryHtml, arrivalSummary, arrivalText, speedRows, speedSummary, speedHtml,
+    init, destroy, cardsHtml, namer, routeLabel, clipLabel, whenHtml, deliverySummary, coverageSummary, deliveryHtml, arrivalSummary, arrivalText, speedRows, speedSummary, speedHtml,
     busyGrid, busyHtml, backboneGraph, components, resilienceScore, weakSpots, weakHtml, median, mapPng,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -178,6 +178,11 @@ type MediaMeshDelivery struct {
 	Whole      int `json:"whole"`
 	Asked      int `json:"asked"`
 	Rebuilt    int `json:"rebuilt"`
+	// What the receiving apps say the clip is: its pieces (the largest
+	// total any reported) and kind, when one said. For a clip sent
+	// privately the analyzer knows neither otherwise.
+	Total int    `json:"total,omitempty"`
+	Kind  string `json:"kind,omitempty"`
 }
 
 // attachDeliveries gives each clip its receipts (by session id, received
@@ -211,6 +216,10 @@ func attachDeliveries(clips []MediaMeshClip, receipts []storedReceipt) {
 		d := &MediaMeshDelivery{}
 		for _, r := range latest {
 			d.Recipients++
+			d.Total = max(d.Total, r.Total)
+			if r.Kind != "" && r.Kind != "unknown" {
+				d.Kind = r.Kind
+			}
 			if r.Whole {
 				d.Whole++
 				if r.Asked > 0 {
@@ -245,6 +254,38 @@ func (s *Server) addDeliveries(out *MediaMeshClips) {
 	}
 	attachDeliveries(out.Clips, rs)
 	attachDeliveries(out.Unannounced, rs)
+	for i := range out.Unannounced {
+		judgeByReceipt(&out.Unannounced[i])
+	}
+}
+
+// judgeByReceipt gives a clip sent privately what its receipts say it is:
+// its kind, and its total, so what the far end heard can be judged like an
+// announced clip's (Missing: the data pieces it didn't hear). Piece numbers
+// are one byte on the air, so a clip of more than 256 pieces gets its total
+// but no Missing.
+func judgeByReceipt(c *MediaMeshClip) {
+	d := c.Delivery
+	if d == nil || d.Total <= 0 || len(c.HeardIdx) == 0 {
+		return
+	}
+	if d.Kind != "" && (c.Kind == "" || c.Kind == "unknown") {
+		c.Kind = d.Kind
+	}
+	c.Total, c.TotalFrom = d.Total, "receipt"
+	c.Missing = nil
+	if d.Total > 256 {
+		return
+	}
+	heard := map[int]bool{}
+	for _, i := range c.HeardIdx {
+		heard[i] = true
+	}
+	for i := 0; i < d.Total; i++ {
+		if !heard[i] {
+			c.Missing = append(c.Missing, i)
+		}
+	}
 }
 
 func (s *Server) handleReceiptsPost(w http.ResponseWriter, r *http.Request) {

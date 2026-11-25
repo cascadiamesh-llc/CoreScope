@@ -35,14 +35,14 @@ test('delivery: whole, by parity, incomplete, unheard; by hops', () => {
   assert.deepStrictEqual(s.byHops.find((b) => b.hops === 5), { hops: 5, n: 1, ok: 0 });
   assert.deepStrictEqual(s.byHops.find((b) => b.hops === 2), { hops: 2, n: 2, ok: 2 });
   const h = I.deliveryHtml(clips, nameOf, 7);
-  assert.ok(h.includes('Heard whole by an observer: 2 of 3 (1 with parity). The rest passed out of the observers\' hearing'), h);
-  assert.ok(h.includes('>3</div><div class="mm-ins-label">announced clips heard by observers, up to 6 hops') && !/\d+%/.test(h.split('<h4>')[0].split('</p>').slice(1).join('')), 'counts, no percentages');
+  assert.ok(h.includes('Heard whole by an observer: 2 of 3 announced (1 with parity). The rest passed out of the observers\' hearing'), h);
+  assert.ok(h.includes('>3 <span class="mm-ins-of">of 4</span></div><div class="mm-ins-label">announced clips heard by observers, up to 6 hops') && !/\d+%/.test(h.split('<h4>')[0].split('</p>').slice(1).join('')), 'counts, no percentages');
   assert.ok(h.includes('<h4>Clips heard, by hops</h4>'));
   assert.ok(!/arrived incomplete|Did it get through/.test(h), 'what the observers heard, not whether it arrived');
   assert.ok(h.includes('the receiving app rebuilds or asks again'));
   assert.ok(h.includes('First &lt;Hill&gt;') && !h.includes('First <Hill>'), 'escaped');
   assert.ok(h.includes('class="is-missing"') && h.includes('class="is-rebuilt"') && h.includes('3 of 4'));
-  assert.ok(I.deliveryHtml([], nameOf, 7).includes('No announced clips'));
+  assert.ok(I.deliveryHtml([], nameOf, 7).includes('No clips heard yet'));
 });
 
 test('speed: bit/s from bytes over time, by hops, the fastest route needs two clips', () => {
@@ -56,7 +56,7 @@ test('speed: bit/s from bytes over time, by hops, the fastest route needs two cl
   assert.ok(I.speedHtml(clips, nameOf, 7).includes('fastest route this period, 1,500 bit/s while sending over 2 clips'));
 });
 
-test('clips sent privately: timed in the speed card, counted in the delivery card, never judged', () => {
+test('clips sent privately: timed in the speed card, counted in the delivery card, judged only from a receipt', () => {
   const priv = [clip({ outcome: 'unannounced', kind: 'unknown', total: 0, heard: 6, hops: 2, durationS: 20, bytes: 1000, at: '2026-11-20T01:00:00Z' }),
     clip({ outcome: 'unannounced', kind: 'unknown', total: 0, heard: 1, durationS: 5, bytes: 150 })];
   const s = I.speedSummary([], nameOf, priv);
@@ -65,11 +65,29 @@ test('clips sent privately: timed in the speed card, counted in the delivery car
   const h = I.speedHtml([], nameOf, 7, priv);
   assert.ok(h.includes('median speed end to end, 1 clip, 1 sent privately') && h.includes('Sent privately, 1.0 kB'), h);
   const d = I.deliveryHtml([], nameOf, 7, priv);
-  assert.ok(d.includes('No announced clips') && d.includes('2 clips sent privately were heard') && d.includes('direct message'));
+  assert.ok(d.includes('>2 <span class="mm-ins-of">sent privately</span>') && d.includes('0 of 2 so far') && d.includes('direct message') && d.includes('no receipt yet'), d);
+  assert.ok(!d.includes('Heard whole by an observer'), 'nothing judged');
   const both = I.deliveryHtml([clip({ outcome: 'partial', missing: [1, 2] })], nameOf, 7, priv);
-  assert.ok(both.includes('>2</div><div class="mm-ins-label">more sent privately') && both.includes('Heard whole by an observer: 0 of 1.'), both);
+  assert.ok(both.includes('Heard whole by an observer: 0 of 1 announced.'), both);
   assert.strictEqual(I.deliverySummary([]).n, 0, 'not judged');
   assert.ok(I.speedHtml([], nameOf, 7).includes('No clips with more than one piece heard yet'));
+});
+
+test('every clip on radio2: announced, sent privately (judged by a receipt), on private channels', () => {
+  const ann = [clip({}), clip({ outcome: 'none', hops: 0 })];
+  const priv = [clip({ sid: 'aaaa0001', outcome: 'unannounced', kind: 'photo', total: 5, totalFrom: 'receipt', missing: [2, 4], heard: 3, at: '2026-11-18T13:00:00Z', delivery: { recipients: 1, whole: 1, asked: 1, rebuilt: 0, total: 5 } }),
+    clip({ sid: 'aaaa0002', outcome: 'unannounced', kind: 'unknown', total: 0, heard: 15, at: '2026-11-18T11:00:00Z' })];
+  const pc = [clip({ sid: 'p2c1', outcome: 'private', kind: 'unknown', total: 0, heard: 11, channel: '2c', at: '2026-11-18T14:00:00Z' }),
+    clip({ sid: 'p071', outcome: 'private', kind: 'unknown', total: 0, heard: 4, channel: '07', at: '2026-11-18T10:00:00Z' })];
+  const v = I.coverageSummary(ann, priv, pc);
+  assert.deepStrictEqual([v.announced, v.heard, v.unheard, v.priv, v.judged, v.judgedWhole, v.channel, v.channelPieces, v.channels], [2, 1, 1, 2, 1, 0, 2, 15, 2]);
+  const h = I.deliveryHtml(ann, nameOf, 7, priv, pc);
+  assert.ok(h.includes('class="mm-ins-cover" role="img"') && h.includes('1 announced, not heard, 2 sent privately'), 'the bar');
+  assert.ok(h.includes('1 of 2 so far') && h.includes('>2 <span class="mm-ins-of">on private channels') && h.includes('15 pieces on 2 channels'), 'tiles');
+  assert.ok(h.includes('Heard whole by an observer: 1 of 1 announced and 0 of 1 sent privately with a receipt. The rest'), h);
+  assert.ok(h.includes('3 of 5') && h.includes('its size from a receipt') && h.includes('whole, after asking again'), 'a clip judged by its receipt');
+  assert.ok(h.includes('on a private channel (2C)') && h.includes('11 pieces heard') && !h.includes('data-mm-clip="p2c1"'), 'a private-channel clip: counted, no flight recorder');
+  assert.ok(h.indexOf('(2C)') < h.indexOf('its size from a receipt') && h.indexOf('its size from a receipt') < h.indexOf('15 different pieces'), 'newest first, all kinds together');
 });
 
 test('speed: the bytes sent after the first piece, and private clips sized from their piece numbers', () => {
