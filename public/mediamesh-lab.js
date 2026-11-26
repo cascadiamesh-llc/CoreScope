@@ -149,22 +149,75 @@
     return `${where} · ${what}`;
   }
 
-  /** Every added repeater, with its own antenna height and an X. */
-  function addedHtml(plans) {
+  const TUNE_ICON = '<svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>';
+  const CHEVRON = '<svg class="mml-chev" aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
+
+  /** A repeater's antenna and power in a few words: "Yagi 11 dBi toward 40° · 22 dBm". */
+  function tuneSummary(M, rep, tune) {
+    if (!M || !M.tuneFull) return '';
+    const t = M.tuneFull(rep, tune), a = M.antennaOf(t.antenna);
+    return `${a.label} ${t.gainDbi} dBi${a.beamDeg ? ` toward ${Math.round(t.bearingDeg)}°` : ''} · ${t.txDbm} dBm`;
+  }
+
+  /** The button that opens and closes a repeater's antenna and power. */
+  function tuneButton(key, name, open) {
+    const label = open ? `Close the antenna and power of ${name}` : `Antenna and power of ${name}`;
+    return `<button type="button" class="mml-tune-btn" data-mml-tune="${key}" aria-expanded="${open}" aria-label="${esc(label)}" title="${esc(label)}">${TUNE_ICON}${CHEVRON}</button>`;
+  }
+
+  /** A repeater's antenna and power, opened under it: cable, the antenna's
+   * type, gain and (one that points) its bearing, the power, and what goes
+   * into the air. existing: a MediaMesh repeater, whose settings start as
+   * the model's guess. */
+  function tunePanelHtml(M, key, rep, tune, existing) {
+    if (!M || !M.tuneFull) return '';
+    const t = M.tuneFull(rep, tune), a = M.antennaOf(t.antenna);
+    const mw = Math.round(Math.pow(10, t.txDbm / 10));
+    const id = (f) => `mml-${f}-${key}`;
+    return `<div class="mml-tune" data-mml-panel="${key}">
+      ${existing ? '<p class="text-muted mml-tune-note">The analyzer can\'t read a repeater\'s antenna, so these start as the model\'s guess for every repeater. Set them to what\'s really up there to see what it would change.</p>' : ''}
+      <div class="mml-tune-group" role="group" aria-label="Antenna">
+        <span class="mml-tune-label">Antenna</span>
+        <div class="mml-tune-types">${M.ANTENNAS.map((x) => `<button type="button" class="mml-tune-type" data-mml-ant="${x.id}" aria-pressed="${x.id === t.antenna}">${esc(x.label)}</button>`).join('')}</div>
+        <span class="text-muted mml-tune-hint">${esc(a.hint)}</span>
+      </div>
+      <div class="mml-tune-row">
+        <label class="mml-tune-field" for="${id('gain')}">Gain<span><input id="${id('gain')}" type="number" min="0" max="25" step="0.5" value="${t.gainDbi}" data-mml-field="gainDbi"> dBi</span></label>
+        ${a.beamDeg ? `<label class="mml-tune-field" for="${id('bearing')}">Pointing toward (${a.beamDeg}° beam)<span><input id="${id('bearing')}" type="number" min="0" max="359" step="5" value="${Math.round(t.bearingDeg)}" data-mml-field="bearingDeg"> ° from north</span></label>` : ''}
+        <label class="mml-tune-field" for="${id('cable')}">Cable and connectors<span><input id="${id('cable')}" type="number" min="0" max="10" step="0.5" value="${t.cableDb}" data-mml-field="cableDb"> dB</span></label>
+      </div>
+      <label class="mml-tune-field mml-tune-power" for="${id('power')}">Transmit power: <strong>${t.txDbm} dBm (${mw >= 1000 ? `${(mw / 1000).toFixed(1)} W` : `${mw} mW`})</strong>
+        <input id="${id('power')}" type="range" min="10" max="30" step="1" value="${t.txDbm}" data-mml-field="txDbm">
+        <span class="mml-tune-scale text-muted"><span>10 dBm</span><span>22 dBm (SX1262 most)</span><span>30 dBm (with an amp)</span></span>
+      </label>
+      <div class="mml-tune-eirp"><span>Into the air (EIRP)</span><strong>${(Math.round(M.eirpDbm(rep, tune) * 10) / 10).toFixed(1)} dBm</strong></div>
+      ${existing ? `<button type="button" class="tab-btn mml-tune-reset" data-mml-reset="${key}">Back to the model's guess</button>` : ''}
+    </div>`;
+  }
+
+  /** Every added repeater, with its own antenna height, its antenna and
+   * power (opened with its button, one at a time: openKey "p{id}") and an X. */
+  function addedHtml(plans, openKey, M) {
     const head = `<div class="mml-group">Added · ${plans.length}</div>`;
     if (!plans.length) return head + '<p class="text-muted mml-note">None yet.</p>';
-    return head + plans.map((p) => `<div class="mml-added">
+    return head + plans.map((p) => {
+      const key = 'p' + p.id, open = openKey === key;
+      const tuned = M && M.tuneChanged && M.tuneChanged(p, Object.assign({}, p.tune, { heightM: p.heightM })) ? ` · ${tuneSummary(M, p, p.tune)}` : '';
+      return `<div class="mml-item${open ? ' is-open' : ''}" data-mml-item="${key}"><div class="mml-added">
       <span class="mml-mark mml-mark--add" aria-hidden="true"></span>
-      <span class="mml-added-text"><span class="mml-added-name">${esc(p.name)}</span><span class="text-muted mml-added-note">${esc(planNote(p))}</span></span>
+      <span class="mml-added-text"><span class="mml-added-name">${esc(p.name)}</span><span class="text-muted mml-added-note">${esc(planNote(p) + tuned)}</span></span>
       <label class="mml-added-h"><input type="number" min="2" max="300" inputmode="numeric" value="${p.heightM}" data-mml-height="${p.id}" aria-label="Antenna height of ${esc(p.name)}, metres above the ground"> m up</label>
+      ${M ? tuneButton(key, p.name, open) : ''}
       <button type="button" class="mml-x" data-mml-remove="${p.id}" aria-label="Remove ${esc(p.name)}" title="Remove ${esc(p.name)}">${X_ICON}</button>
-    </div>`).join('');
+    </div>${open ? tunePanelHtml(M, key, p, p.tune, false) : ''}</div>`;
+    }).join('');
   }
 
   /** The MediaMesh repeaters: those taken down first, each with Bring
    * back, then those up, each with an X to take it down; `query` filters
    * both by name or place. */
-  function repListHtml(placed, down, query) {
+  function repListHtml(placed, down, query, opts) {
+    const o = opts || {}, M = o.M, tunes = o.tunes || [];
     const q = String(query || '').trim().toLowerCase();
     const hit = (r) => !q || (repName(r) + ' ' + (r.near || '')).toLowerCase().includes(q);
     const near = (r) => (r.near ? ` <span class="text-muted">${esc(String(r.near).split(',')[0])}</span>` : '');
@@ -174,8 +227,21 @@
       <span class="mml-mark mml-mark--down" aria-hidden="true"></span><span class="mml-down-name">${esc(repName(r))}</span>
       <button type="button" class="mml-back" data-mml-up="${i}">${BACK_ICON}Bring back</button></div>`).join('')}` : '';
     const onHtml = `<div class="mml-group">On MediaMesh · ${placed.length - off.length}</div>`
-      + (on.length ? on.map(({ r, i }) => `<div class="mml-up"><span class="mml-mark mml-mark--on" aria-hidden="true"></span><span class="mml-up-name">${esc(repName(r))}${near(r)}</span>
-      <button type="button" class="mml-x" data-mml-down="${i}" aria-label="Take down ${esc(repName(r))}" title="Take down ${esc(repName(r))}">${X_ICON}</button></div>`).join('')
+      + (on.length ? on.map(({ r, i }) => {
+        if (!M || !M.tuneFull) {
+          return `<div class="mml-up"><span class="mml-mark mml-mark--on" aria-hidden="true"></span><span class="mml-up-name">${esc(repName(r))}${near(r)}</span>
+      <button type="button" class="mml-x" data-mml-down="${i}" aria-label="Take down ${esc(repName(r))}" title="Take down ${esc(repName(r))}">${X_ICON}</button></div>`;
+        }
+        const key = 'r' + i, open = o.openKey === key, tune = tunes[i] || null;
+        const changed = (tune && M.tuneChanged(Object.assign({}, r, { heightM: undefined }), tune)) || (r.heightM > 0 && r.heightM !== M.antennaHeight(Object.assign({}, r, { heightM: undefined })));
+        return `<div class="mml-item${open ? ' is-open' : ''}" data-mml-item="${key}"><div class="mml-up">
+      <span class="mml-mark mml-mark--on" aria-hidden="true"></span>
+      <span class="mml-added-text"><span class="mml-up-name">${esc(repName(r))}${near(r)}${changed ? ' <span class="mml-changed">Changed</span>' : ''}</span>${tune && M.tuneChanged(r, tune) ? `<span class="text-muted mml-added-note">${esc(tuneSummary(M, r, tune))}</span>` : ''}</span>
+      <label class="mml-added-h"><input type="number" min="2" max="300" inputmode="numeric" value="${M.antennaHeight(r)}" data-mml-rheight="${i}" aria-label="Antenna height of ${esc(repName(r))}, metres above the ground"> m up</label>
+      ${tuneButton(key, repName(r), open)}
+      <button type="button" class="mml-x" data-mml-down="${i}" aria-label="Take down ${esc(repName(r))}" title="Take down ${esc(repName(r))}">${X_ICON}</button></div>
+      ${open ? tunePanelHtml(M, key, r, tune, true) : ''}</div>`;
+      }).join('')
         : `<p class="text-muted mml-note">${q ? 'None by that name.' : 'All taken down.'}</p>`);
     return offHtml + `<div class="mml-reps">${onHtml}</div>`;
   }
@@ -200,7 +266,8 @@
           <input type="search" class="mml-search" id="mmlFind" placeholder="Find a repeater by name" autocomplete="off">
           <div id="mmlFound" aria-live="polite"></div>
           <div class="mml-added-list" id="mmlAdded"></div>
-          <h2 class="mml-sep">Take down</h2>
+          <h2 class="mml-sep">On MediaMesh</h2>
+          <p class="text-muted mml-note">Change a repeater's height here, open its antenna and power with its button (or by clicking it on the map), or × to take it down.</p>
           <input type="search" class="mml-search" id="mmlSearch" placeholder="Find a MediaMesh repeater" aria-label="Find a MediaMesh repeater">
           <div id="mmlReps"><p class="text-muted">Loading the mesh…</p></div>
           <h2 class="mml-sep">Links</h2>
@@ -255,9 +322,37 @@
     // repeater n + its place in the list.
     let plans = [], planPairs = [], nextId = 1;
     let predicted = null, cov = null, elevAt = null, placing = false, noTerrain = false;
+    // Each repeater's own antenna and power: the MediaMesh ones' by place in
+    // placed (tunes; their height is placed[i].heightM once changed), each
+    // added one's as p.tune. Their rasters as changed (tunedRasters: on
+    // cov's grid; baseRasters: one at another height, before the antenna).
+    const tunes = new Array(n).fill(null), baseRasters = new Array(n).fill(null), tunedRasters = new Array(n).fill(null);
+    let openKey = null, covNowCache = null;
+    const tuneOf = (r) => {
+      if (!r) return null;
+      if (r.tune) return r.tune;
+      const i = placed.indexOf(r);
+      return i >= 0 ? tunes[i] : null;
+    };
 
-    const showReps = () => { $('mmlReps').innerHTML = repListHtml(placed, down, $('mmlSearch').value); };
-    const showAdded = () => { $('mmlAdded').innerHTML = addedHtml(plans); };
+    const showReps = () => { $('mmlReps').innerHTML = repListHtml(placed, down, $('mmlSearch').value, { M, tunes, openKey }); };
+    const showAdded = () => { $('mmlAdded').innerHTML = addedHtml(plans, openKey, M); };
+    // The coverage with every MediaMesh repeater as changed.
+    const covNow = () => {
+      if (!cov) return null;
+      if (!tunedRasters.some(Boolean)) return cov;
+      if (!covNowCache) covNowCache = Object.assign({}, cov, { rasters: cov.rasters.map((r, i) => tunedRasters[i] || r), margins: null, best: null });
+      return covNowCache;
+    };
+    // Opens (or closes) a repeater's antenna and power; one at a time.
+    const openTune = (key, scroll) => {
+      openKey = openKey === key ? null : key;
+      showReps(); showAdded();
+      if (scroll && openKey) {
+        const el = app.querySelector(`[data-mml-item="${openKey}"]`);
+        if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    };
     showReps();
     showAdded();
 
@@ -279,7 +374,7 @@
       planPairs = [];
       if (!elevAt || !M) return;
       plans.forEach((p, i) => {
-        M.planLinks(p, plans.slice(i + 1), elevAt).forEach((l) => planPairs.push([i, i + 1 + l.index]));
+        M.planLinks(p, plans.slice(i + 1), elevAt, tuneOf).forEach((l) => planPairs.push([i, i + 1 + l.index]));
       });
     }
 
@@ -307,20 +402,21 @@
       const piecesAfter = S ? S.pieces(N, adjPairs(adj), upNow).length : 0;
       const spofAfter = S ? S.singlePoints(N, adjPairs(adj), upNow) : [];
       let kmBefore = null, kmAfter = null;
+      const cn = covNow();
       if (cov && M) {
         const all = placed.map(() => true), live = down.map((d) => !d);
-        const a = M.meshCells(cov, placed.map(() => 'often'), all).km2, b = M.meshCells(cov, placed.map((_, i) => (live[i] ? 'often' : 'none')), live).km2;
+        const a = M.meshCells(cov, placed.map(() => 'often'), all).km2, b = M.meshCells(cn, placed.map((_, i) => (live[i] ? 'often' : 'none')), live).km2;
         kmBefore = a[3] + a[4];
         kmAfter = b[3] + b[4];
         const covs = plans.map((p) => p.cov).filter(Boolean);
         if (covs.length) {
-          M.merge(cov, live);
-          kmAfter += M.plansGainKm2(covs, cov);
+          M.merge(cn, live);
+          kmAfter += M.plansGainKm2(covs, cn);
         }
         if (map) {
           if (overlay) map.removeLayer(overlay);
-          const bb = cov.bounds;
-          overlay = M.canvasOverlay(L, M.meshCanvas(cov, M.meshCells(cov, placed.map((_, i) => (live[i] ? 'often' : 'none')), live)), [[bb.south, bb.west], [bb.north, bb.east]], { pane: 'mmlCov', opacity: 1 }).addTo(map);
+          const bb = cn.bounds;
+          overlay = M.canvasOverlay(L, M.meshCanvas(cn, M.meshCells(cn, placed.map((_, i) => (live[i] ? 'often' : 'none')), live)), [[bb.south, bb.west], [bb.north, bb.east]], { pane: 'mmlCov', opacity: 1 }).addTo(map);
         }
       }
       const tile = (label, was, now, good) => `<div class="mml-tile"><div class="mml-label">${label}</div><div class="mml-big">${was} <span class="mml-arrow" aria-label="becomes">→</span> <span class="${good == null ? '' : good ? 'mms-good' : 'mms-bad'}">${now}</span></div></div>`;
@@ -340,11 +436,19 @@
         const planLine = { color: '#16a34a', weight: 3, opacity: 0.9, dashArray: '8 6', interactive: false };
         plans.forEach((p, k) => (p.links || []).forEach((l) => { if (upNow[l.index]) L.polyline([pos(l.index), pos(n + k)], planLine).addTo(layer); }));
         planPairs.forEach(([i, j]) => L.polyline([pos(n + i), pos(n + j)], planLine).addTo(layer));
-        placed.forEach((r, i) => L.circleMarker([r.lat, r.lon], down[i]
-          ? { radius: 8, weight: 3, color: '#ef4444', fillColor: '#ffffff', fillOpacity: 1 }
-          : { radius: 5, weight: 2, color: '#ffffff', fillColor: '#d946ef', fillOpacity: 1 }).bindTooltip(repName(r) + (down[i] ? ' · taken down' : '')).addTo(layer));
-        plans.forEach((p) => L.circleMarker([p.lat, p.lon], { radius: 8, weight: 3, color: '#ffffff', fillColor: '#16a34a', fillOpacity: 1 })
-          .bindTooltip(`${p.as ? `${p.name} on MediaMesh` : p.name}, ${p.heightM} m up`).addTo(layer));
+        // a click opens the repeater's antenna and power in the list
+        placed.forEach((r, i) => {
+          const m = L.circleMarker([r.lat, r.lon], down[i]
+            ? { radius: 8, weight: 3, color: '#ef4444', fillColor: '#ffffff', fillOpacity: 1 }
+            : { radius: openKey === 'r' + i ? 9 : 6, weight: openKey === 'r' + i ? 4 : 2, color: openKey === 'r' + i ? '#fde68a' : '#ffffff', fillColor: '#d946ef', fillOpacity: 1 })
+            .bindTooltip(repName(r) + (down[i] ? ' · taken down' : `, ${M ? M.antennaHeight(r) : 10} m up${tunes[i] && M ? ` · ${tuneSummary(M, r, tunes[i])}` : ''}`)).addTo(layer);
+          if (!down[i] && M && M.tuneFull) m.on('click', () => { openTune('r' + i, true); draw(); });
+        });
+        plans.forEach((p) => {
+          const m = L.circleMarker([p.lat, p.lon], { radius: 8, weight: openKey === 'p' + p.id ? 4 : 3, color: openKey === 'p' + p.id ? '#fde68a' : '#ffffff', fillColor: '#16a34a', fillOpacity: 1 })
+            .bindTooltip(`${p.as ? `${p.name} on MediaMesh` : p.name}, ${p.heightM} m up${M && M.tuneFull ? ` · ${tuneSummary(M, p, p.tune)}` : ''}`).addTo(layer);
+          if (M && M.tuneFull) m.on('click', () => { openTune('p' + p.id, true); draw(); });
+        });
       }
       // clips
       const rows = clips.slice(0, 60).map((c) => ({ c, r: replayClip(c, placed, adj, upNow) }));
@@ -391,29 +495,92 @@
       if (p.overlay && map) { map.removeLayer(p.overlay); p.overlay = null; }
       if (!elevAt || !M) { p.state = noTerrain || !M ? 'no-terrain' : 'waiting'; showAdded(); draw(); return; }
       p.state = 'working';
-      p.links = M.planLinks(p, placed, elevAt);
+      p.links = M.planLinks(p, placed, elevAt, tuneOf);
       pairPlans();
       showAdded(); draw();
       try {
         const t = await M.loadTerrainLevels(M.terrainPlan([p], M.CONFIG.modes.ground));
         const pc = await M.computeCoverage([p], t.elevAt, 'ground', null, null);
         if (mine !== p.token || destroyed || !plans.includes(p)) return;
-        p.cov = pc ? M.adjustCov(pc, 'outdoors') : null;
-        if (map && p.cov) {
-          const b = p.cov.bounds;
-          p.overlay = M.canvasOverlay(L, M.coverageCanvas(p.cov, [22, 163, 74]), [[b.south, b.west], [b.north, b.east]], { pane: 'mmlCov', opacity: 0.8 }).addTo(map);
-        }
+        p.baseCov = pc ? M.adjustCov(pc, 'outdoors') : null;
+        retunePlan(p, true);
       } catch (_) { /* links stand; its coverage isn't shown */ }
       if (mine !== p.token || destroyed || !plans.includes(p)) return;
       p.state = '';
       showAdded(); draw();
     }
 
+    // An added repeater's coverage and links with its antenna and power (its
+    // coverage at its height worked out already: p.baseCov).
+    function retunePlan(p, quiet) {
+      if (p.overlay && map) { map.removeLayer(p.overlay); p.overlay = null; }
+      p.cov = null;
+      if (p.baseCov && M.retuneRaster) {
+        const r = M.retuneRaster(p.baseCov, p.baseCov.rasters[0], p, p.tune);
+        p.cov = M.merge(Object.assign({}, p.baseCov, { rasters: [r], margins: null, best: null }));
+      } else p.cov = p.baseCov || null;
+      if (map && p.cov) {
+        const b = p.cov.bounds;
+        p.overlay = M.canvasOverlay(L, M.coverageCanvas(p.cov, [22, 163, 74]), [[b.south, b.west], [b.north, b.east]], { pane: 'mmlCov', opacity: 0.8 }).addTo(map);
+      }
+      if (elevAt) { p.links = M.planLinks(p, placed, elevAt, tuneOf); pairPlans(); }
+      if (!quiet) { showAdded(); draw(); }
+    }
+
+    // A MediaMesh repeater's coverage with its own height, antenna and power:
+    // at another height worked out again (its own grid, laid onto cov's),
+    // then its antenna and power over that.
+    async function retuneRep(i, heightChanged) {
+      const r = placed[i];
+      const mine = r._token = (r._token || 0) + 1;
+      if (heightChanged) {
+        baseRasters[i] = null;
+        if (cov && r.heightM > 0 && r.heightM !== M.antennaHeight(Object.assign({}, r, { heightM: undefined }))) {
+          $('mmlStatus').textContent = `Working out ${repName(r)} at ${r.heightM} m…`;
+          try {
+            const t = await M.loadTerrainLevels(M.terrainPlan([r], M.CONFIG.modes.ground));
+            const pc = await M.computeCoverage([r], t.elevAt, 'ground', null, null);
+            if (mine !== r._token || destroyed) return;
+            baseRasters[i] = pc ? M.rasterOnto(cov, M.adjustCov(pc, 'outdoors')) : null;
+          } catch (_) { /* its coverage stays at the old height */ }
+          if (mine !== r._token || destroyed) return;
+          $('mmlStatus').textContent = '';
+        }
+      }
+      if (cov) {
+        const base = baseRasters[i] || cov.rasters[i];
+        const t = tunedRasters[i] = M.retuneRaster(cov, base, r, tunes[i]);
+        if (t === cov.rasters[i]) tunedRasters[i] = null;
+      }
+      covNowCache = null;
+      plans.forEach((p) => { if (elevAt) p.links = M.planLinks(p, placed, elevAt, tuneOf); });
+      pairPlans();
+      showReps(); showAdded(); draw();
+    }
+
+    // A change in an open panel (data-mml-panel="p{id}" or "r{i}").
+    function tuneSet(key, patch) {
+      if (key[0] === 'p') {
+        const p = plans.find((x) => 'p' + x.id === key);
+        if (!p) return;
+        p.tune = Object.assign({}, p.tune, patch);
+        retunePlan(p);
+        showAdded();
+      } else {
+        const i = Number(key.slice(1));
+        if (!(i >= 0 && i < n)) return;
+        tunes[i] = Object.assign({}, tunes[i], patch);
+        retuneRep(i, false);
+      }
+    }
+
     function addPlan(lat, lon, as) {
       placing = false;
       $('mmlPlace').setAttribute('aria-pressed', 'false');
       const id = nextId++;
-      const p = { id, name: as ? as.name : `Planned repeater ${plans.filter((x) => !x.as).length + 1}`, as: as || null, lat, lon, heightM: 10, radio: '', links: [], cov: null, state: 'working' };
+      // a repeater whose owner gave its height starts there
+      const known = as && M ? M.knownHeightM(as) : null;
+      const p = { id, name: as ? as.name : `Planned repeater ${plans.filter((x) => !x.as).length + 1}`, as: as || null, lat, lon, heightM: known > 0 ? known : 10, radio: '', tune: null, links: [], cov: null, state: 'working' };
       plans.push(p);
       workOut(p);
     }
@@ -424,6 +591,7 @@
       p.token = (p.token || 0) + 1;
       if (p.overlay && map) map.removeLayer(p.overlay);
       plans = plans.filter((x) => x !== p);
+      if (openKey === 'p' + p.id) openKey = null;
       pairPlans();
       showAdded(); draw();
       if (found.length) $('mmlFound').innerHTML = candidatesHtml(found, $('mmlFind').value.trim(), addedKeys());
@@ -455,6 +623,18 @@
       if (t.matches('[data-mml-height]')) {
         const p = plans.find((x) => x.id === Number(t.dataset.mmlHeight));
         if (p) { p.heightM = Math.max(2, Math.min(300, Number(t.value) || 10)); t.value = p.heightM; workOut(p); }
+      } else if (t.matches('[data-mml-rheight]')) {
+        const i = Number(t.dataset.mmlRheight), r = placed[i];
+        if (r) {
+          const h = Math.max(2, Math.min(300, Number(t.value) || 10));
+          if (h === M.antennaHeight(Object.assign({}, r, { heightM: undefined }))) delete r.heightM; else r.heightM = h;
+          t.value = h;
+          retuneRep(i, true);
+        }
+      } else if (t.matches('[data-mml-field]')) {
+        const panel = t.closest('[data-mml-panel]');
+        const v = Number(t.value);
+        if (panel && Number.isFinite(v)) tuneSet(panel.dataset.mmlPanel, { [t.dataset.mmlField]: v });
       } else if (t.id === 'mmwPreset' || t.id === 'mmwRepair' || t.id === 'mmwRounds' || t.id === 'mmlModel') draw();
     };
     const onInput = (e) => {
@@ -472,6 +652,20 @@
         if (r) addExisting(r);
         return;
       }
+      const tb = t.closest('[data-mml-tune]');
+      if (tb) { openTune(tb.dataset.mmlTune, false); draw(); return; }
+      const ant = t.closest('[data-mml-ant]');
+      if (ant && M && M.antennaOf) {
+        const panel = ant.closest('[data-mml-panel]');
+        if (panel) tuneSet(panel.dataset.mmlPanel, { antenna: ant.dataset.mmlAnt, gainDbi: M.antennaOf(ant.dataset.mmlAnt).gainDbi });
+        return;
+      }
+      const rs = t.closest('[data-mml-reset]');
+      if (rs) {
+        const i = Number(rs.dataset.mmlReset.slice(1));
+        if (placed[i]) { tunes[i] = null; delete placed[i].heightM; retuneRep(i, true); }
+        return;
+      }
       const rm = t.closest('[data-mml-remove]');
       if (rm) { removePlan(Number(rm.dataset.mmlRemove)); return; }
       const dn = t.closest('[data-mml-down]');
@@ -485,6 +679,8 @@
       } else if (t.closest('#mmlReset')) {
         down.fill(false);
         plans.slice().forEach((p) => removePlan(p.id));
+        placed.forEach((r, i) => { if (tunes[i] || r.heightM) { tunes[i] = null; delete r.heightM; baseRasters[i] = null; tunedRasters[i] = null; } });
+        covNowCache = null; openKey = null;
         $('mmlModel').checked = true;
         $('mmlSearch').value = '';
         showReps(); draw();
@@ -522,6 +718,8 @@
         if (destroyed) return;
         cov = res.cov; elevAt = res.elevAt;
         predicted = M.predictedLinks(placed, elevAt).filter((p) => !heard.some(([a, b]) => a === p.a && b === p.b));
+        // changed while the coverage was being worked out
+        placed.forEach((r, i) => { if (tunes[i] || r.heightM > 0) retuneRep(i, r.heightM > 0); });
         $('mmlStatus').textContent = '';
         draw();
       } catch (_) {
@@ -542,6 +740,6 @@
     map = null;
   }
 
-  root.MediaMeshLab = { adjacency, hopsFrom, routes, hopIndex, replayClip, reasonText, candidates, candidatesHtml, planNote, addedHtml, repListHtml, init, destroy };
+  root.MediaMeshLab = { adjacency, hopsFrom, routes, hopIndex, replayClip, reasonText, candidates, candidatesHtml, planNote, addedHtml, repListHtml, tuneSummary, tunePanelHtml, init, destroy };
   if (typeof root.registerPage === 'function') root.registerPage('mediamesh-lab', { init, destroy });
 })(typeof window !== 'undefined' ? window : globalThis);

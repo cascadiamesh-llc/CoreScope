@@ -3,6 +3,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+require(path.join(__dirname, '../../public/mediamesh-coverage.js'));
 require(path.join(__dirname, '../../public/mediamesh-lab.js'));
 const L = globalThis.MediaMeshLab;
 const pub = (f) => fs.readFileSync(path.join(__dirname, '../../public', f), 'utf8');
@@ -72,7 +73,7 @@ test('the page adds several: from the map or found by name, each at its own heig
   const src = pub('mediamesh-lab.js');
   assert.ok(src.includes("'/api/nodes?role=repeater&limit=25&search='"));
   assert.ok(src.includes('Or add one or several of the repeaters already up, not on MediaMesh yet.'));
-  assert.ok(src.indexOf('<h2>Add a repeater</h2>') < src.indexOf('>Take down</h2>'), 'Add a repeater comes first');
+  assert.ok(src.indexOf('<h2>Add a repeater</h2>') < src.indexOf('>On MediaMesh</h2>'), 'Add a repeater comes first');
   assert.ok(src.includes('addPlan(r.lat, r.lon, { name: r.name, public_key: r.public_key })') && src.includes('addPlan(e.latlng.lat, e.latlng.lng, null)'));
   assert.ok(src.includes('plans.push(p)') && src.includes('M.plansGainKm2('), 'a list of them, their area counted together');
 });
@@ -119,6 +120,35 @@ test('wiring: the page, the script, the link from the MediaMesh tab, colours fro
   const css = pub('style.css').match(/\.mml-[^{]*\{[^}]*\}/g) || [];
   assert.ok(css.length > 15);
   for (const r of css) assert.ok(!/(^|[;{\s])(color|background):\s*#/i.test(r), 'a fixed colour: ' + r.slice(0, 60));
+});
+
+test('antenna and power: closed by default, opened under the repeater by its button, one at a time', () => {
+  const M = globalThis.MediaMeshCoverage;
+  const plans = [{ id: 1, name: 'Plan <A>', lat: 47.6, lon: -122.3, heightM: 25, tune: { antenna: 'yagi', gainDbi: 11, bearingDeg: 40 }, links: [] }, { id: 2, name: 'Plan B', lat: 47.6, lon: -122.3, heightM: 10, tune: null, links: [] }];
+  const closed = L.addedHtml(plans, null, M);
+  assert.ok(!closed.includes('data-mml-panel') && closed.includes('data-mml-tune="p1" aria-expanded="false"') && closed.includes('data-mml-height="1"'), 'closed, the height in the row');
+  assert.ok(closed.includes('Yagi 11 dBi toward 40° · 22 dBm') && !closed.includes('Omni 2 dBi'), 'the summary only once changed');
+  const open = L.addedHtml(plans, 'p1', M);
+  assert.strictEqual((open.match(/data-mml-panel=/g) || []).length, 1, 'one open');
+  assert.ok(open.includes('data-mml-panel="p1"') && open.includes('aria-expanded="true"') && open.includes('Pointing toward (50° beam)'));
+  assert.ok(open.includes('data-mml-ant="yagi" aria-pressed="true"') && open.includes('32.0 dBm') && !open.includes('data-mml-reset'), 'EIRP; no reset for an added one');
+  assert.ok(!open.includes('36 dBm'), 'no legal warning');
+  const omni = L.tunePanelHtml(M, 'r0', { lat: 47.6, lon: -122.3 }, null, true);
+  assert.ok(omni.includes('model\'s guess') && omni.includes('data-mml-reset="r0"') && !omni.includes('Pointing toward'), 'an existing one starts as the model\'s guess');
+  assert.ok(omni.includes('value="22" data-mml-field="txDbm"') && omni.includes('22 dBm (158 mW)'));
+});
+
+test('MediaMesh repeaters: their height in the row (the owner\'s where known), antenna and power to open', () => {
+  const M = globalThis.MediaMeshCoverage;
+  const known = M.KNOWN_HEIGHTS[0];
+  const placed = [{ name: 'Known', public_key: known.key + '00', lat: 47.6, lon: -122.3 }, { name: 'Plain', public_key: 'ffff00', lat: 47.6, lon: -122.3 }];
+  const h = L.repListHtml(placed, [false, false], '', { M, tunes: [null, { txDbm: 30 }], openKey: 'r1' });
+  assert.ok(h.includes(`value="${M.knownHeightM(placed[0])}" data-mml-rheight="0"`), 'a known height');
+  assert.ok(h.includes('value="10" data-mml-rheight="1"'));
+  assert.ok(h.includes('data-mml-panel="r1"') && !h.includes('data-mml-panel="r0"') && h.includes('mml-changed'));
+  const src = pub('mediamesh-lab.js');
+  assert.ok(src.includes('M.knownHeightM(as)'), 'an added repeater starts at its owner\'s height');
+  assert.ok(src.includes("m.on('click', () => { openTune('r' + i, true)"), 'a click on the map opens it');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

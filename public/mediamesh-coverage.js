@@ -1873,19 +1873,165 @@
   /**
    * The counted repeaters a planned one would link to, repeater to repeater
    * (both ways the same path), best first: [{ rep, index, distM, marginDb }]
-   * with something to spare, within the repeater view's radius.
+   * with something to spare, within the repeater view's radius. tuneOf(rep):
+   * a repeater's own antenna and power (MediaMeshLab), or null for the
+   * model's; the planned one's too.
    */
-  function planLinks(planned, reps, elevAt) {
+  function planLinks(planned, reps, elevAt, tuneOf) {
     const radiusM = CONFIG.modes.repeater.radiusKm * 1000;
     const out = [];
+    const mine = tuneOf ? tuneOf(planned) : null;
     reps.forEach((r, index) => {
       const distM = distanceM(planned.lat, planned.lon, r.lat, r.lon);
       if (!(distM > 1) || distM > radiusM) return;
       // the far end at its own antenna height, as predictedLinks does
       const p = pathProfile(planned, r.lat, r.lon, elevAt, 'repeater', radioFor(r), { rxHeightM: antennaHeight(r) });
-      if (p && p.marginDb >= 0) out.push({ rep: r, index, distM, marginDb: p.marginDb });
+      if (!p) return;
+      const theirs = tuneOf ? tuneOf(r) : null;
+      const marginDb = p.marginDb + ((mine || theirs)
+        ? linkTuneDb(mine, bearingDeg(planned.lat, planned.lon, r.lat, r.lon), theirs, bearingDeg(r.lat, r.lon, planned.lat, planned.lon)) : 0);
+      if (marginDb >= 0) out.push({ rep: r, index, distM, marginDb });
     });
     return out.sort((a, b) => b.marginDb - a.marginDb);
+  }
+
+  // ---- A repeater's own antenna and power (MediaMeshLab) ----------------------
+  // The model gives every repeater CONFIG's power, antenna and cable; the Lab
+  // lets each have its own (a "tune": { heightM, txDbm, gainDbi, cableDb,
+  // antenna, bearingDeg }). Power, gain and cable move a repeater's whole
+  // coverage by as many dB; an antenna that points one way loses off its beam.
+
+  /** The antennas offered: a typical gain, and for those that point one way
+   * the beam's width between its -3 dB edges. */
+  const ANTENNAS = [
+    { id: 'omni', label: 'Omni', gainDbi: 2, beamDeg: 0, hint: 'A whip or rubber duck: about 2–3 dBi.' },
+    { id: 'collinear', label: 'Collinear', gainDbi: 6, beamDeg: 0, hint: 'A fibreglass omni: 5–9 dBi, flatter, so less reaches straight down.' },
+    { id: 'yagi', label: 'Yagi', gainDbi: 11, beamDeg: 50, hint: 'Points one way: 9–14 dBi, about a 50° beam.' },
+    { id: 'panel', label: 'Panel', gainDbi: 9, beamDeg: 65, hint: 'A flat panel: 8–10 dBi, about a 65° beam.' },
+    { id: 'sector', label: 'Sector', gainDbi: 13, beamDeg: 90, hint: 'A sector: 12–15 dBi, about a 90° beam.' },
+  ];
+  const FRONT_TO_BACK_DB = 20;
+  const antennaOf = (id) => ANTENNAS.find((a) => a.id === id) || ANTENNAS[0];
+
+  /** A repeater's antenna and power as the model draws it. */
+  function tuneDefaults(rep) {
+    const c = CONFIG;
+    return { heightM: antennaHeight(rep), txDbm: c.txDbm, gainDbi: c.txGainDbi, cableDb: c.cableDb, antenna: 'omni', bearingDeg: 0 };
+  }
+
+  /** tune with the model's settings filled in where it has none. */
+  function tuneFull(rep, tune) {
+    const d = tuneDefaults(rep), t = tune || {}, num = (v, def) => (v !== '' && v != null && Number.isFinite(Number(v)) ? Number(v) : def);
+    return {
+      heightM: num(t.heightM, d.heightM), txDbm: num(t.txDbm, d.txDbm), gainDbi: num(t.gainDbi, d.gainDbi), cableDb: num(t.cableDb, d.cableDb),
+      antenna: antennaOf(t.antenna).id, bearingDeg: ((num(t.bearingDeg, 0) % 360) + 360) % 360,
+    };
+  }
+
+  /** Whether tune differs from the model's settings for rep. */
+  function tuneChanged(rep, tune) {
+    const a = tuneFull(rep, tune), d = tuneDefaults(rep);
+    return a.heightM !== d.heightM || a.txDbm !== d.txDbm || a.gainDbi !== d.gainDbi || a.cableDb !== d.cableDb || a.antenna !== d.antenna;
+  }
+
+  /** Power + antenna gain - cable: what goes into the air. */
+  function eirpDbm(rep, tune) {
+    const t = tuneFull(rep, tune);
+    return t.txDbm + t.gainDbi - t.cableDb;
+  }
+
+  /** dB more (or less) to spend than the model's settings, along the beam. */
+  function tuneDeltaDb(rep, tune) {
+    if (!tune) return 0;
+    const c = CONFIG, t = tuneFull(rep, tune);
+    return (t.txDbm - c.txDbm) + (t.gainDbi - c.txGainDbi) - (t.cableDb - c.cableDb);
+  }
+
+  /** Off a pointed antenna's axis: 0 dB on it, -3 dB at the beam's edges,
+   * down to the front-to-back ratio behind (a parabola in dB, as 3GPP TR
+   * 36.814 draws a sector). 0 for an omni. */
+  function patternDb(tune, azDeg) {
+    const a = antennaOf(tune && tune.antenna);
+    if (!a.beamDeg) return 0;
+    const off = Math.abs(((((azDeg - (Number(tune.bearingDeg) || 0)) % 360) + 540) % 360) - 180);
+    return -Math.min(12 * (off / a.beamDeg) * (off / a.beamDeg), FRONT_TO_BACK_DB);
+  }
+
+  /** Compass bearing from one place to another, degrees from north. */
+  function bearingDeg(lat1, lon1, lat2, lon2) {
+    const dy = (lat2 - lat1) * M_PER_DEG_LAT, dx = (lon2 - lon1) * M_PER_DEG_LAT * Math.cos(((lat1 + lat2) / 2) * Math.PI / 180);
+    const a = Math.atan2(dx, dy) * 180 / Math.PI;
+    return a < 0 ? a + 360 : a;
+  }
+
+  /** What two repeaters' own antennas and power do to the link between them
+   * (dB, against the model's): each end's antenna gain toward the other,
+   * less its cable, both ways; the weaker sender's power. */
+  function linkTuneDb(ta, azAB, tb, azBA) {
+    const c = CONFIG, end = (t, az) => {
+      if (!t) return 0;
+      const f = tuneFull(null, t);
+      return (f.gainDbi - c.txGainDbi) - (f.cableDb - c.cableDb) + patternDb(f, az);
+    };
+    const pa = ta ? tuneFull(null, ta).txDbm : c.txDbm, pb = tb ? tuneFull(null, tb).txDbm : c.txDbm;
+    return end(ta, azAB) + end(tb, azBA) + Math.min(pa, pb) - c.txDbm;
+  }
+
+  /**
+   * One repeater's raster (from cov.rasters, the repeater at rep's place)
+   * with its own power, antenna and cable: every cell as many dB up or down,
+   * and off a pointed antenna's beam, less. A new raster on cov's grid; the
+   * same one when nothing changes.
+   */
+  function retuneRaster(cov, raster, rep, tune) {
+    if (!raster || !raster.data || !tune) return raster;
+    const delta = tuneDeltaDb(rep, tune), t = tuneFull(rep, tune), beam = antennaOf(t.antenna).beamDeg;
+    if (!beam && Math.abs(delta) < 0.05) return raster;
+    const b = cov.bounds, cl = (b.north - b.south) / cov.height, cw = (b.east - b.west) / cov.width;
+    const kx = M_PER_DEG_LAT * Math.cos(rep.lat * Math.PI / 180);
+    const src = raster.data, data = new Int16Array(src.length);
+    for (let y = 0, k = 0; y < raster.h; y++) {
+      const dy = (b.north - (raster.row0 + y + 0.5) * cl - rep.lat) * M_PER_DEG_LAT;
+      for (let x = 0; x < raster.w; x++, k++) {
+        const v = src[k];
+        if (v === NO_DATA_I16) { data[k] = v; continue; }
+        let add = delta;
+        if (beam) {
+          const dx = (b.west + (raster.col0 + x + 0.5) * cw - rep.lon) * kx;
+          let az = Math.atan2(dx, dy) * 180 / Math.PI;
+          if (az < 0) az += 360;
+          add += patternDb(t, az);
+        }
+        const nv = v + Math.round(add * 10);
+        data[k] = nv > 32767 ? 32767 : (nv < -32767 ? -32767 : nv);
+      }
+    }
+    return Object.assign({}, raster, { data });
+  }
+
+  /** One repeater's own coverage (a cov of one, as computeCoverage gives it)
+   * laid onto another cov's grid (same cell size): its raster there. */
+  function rasterOnto(cov, single) {
+    const s = single && single.rasters && single.rasters[0];
+    if (!s || !s.data) return null;
+    const sb = single.bounds, sl = (sb.north - sb.south) / single.height, sw = (sb.east - sb.west) / single.width;
+    const b = cov.bounds, cl = (b.north - b.south) / cov.height, cw = (b.east - b.west) / cov.width;
+    const north = sb.north - s.row0 * sl, south = sb.north - (s.row0 + s.h) * sl;
+    const west = sb.west + s.col0 * sw, east = sb.west + (s.col0 + s.w) * sw;
+    const col0 = Math.max(0, Math.floor((west - b.west) / cw)), col1 = Math.min(cov.width - 1, Math.ceil((east - b.west) / cw) - 1);
+    const row0 = Math.max(0, Math.floor((b.north - north) / cl)), row1 = Math.min(cov.height - 1, Math.ceil((b.north - south) / cl) - 1);
+    const w = Math.max(0, col1 - col0 + 1), h = Math.max(0, row1 - row0 + 1);
+    const data = new Int16Array(w * h).fill(NO_DATA_I16);
+    for (let y = 0, k = 0; y < h; y++) {
+      const lat = b.north - (row0 + y + 0.5) * cl;
+      const sr = Math.floor((sb.north - lat) / sl) - s.row0;
+      for (let x = 0; x < w; x++, k++) {
+        if (sr < 0 || sr >= s.h) continue;
+        const sc = Math.floor((b.west + (col0 + x + 0.5) * cw - sb.west) / sw) - s.col0;
+        if (sc >= 0 && sc < s.w) data[k] = s.data[sr * s.w + sc];
+      }
+    }
+    return { col0, row0, w, h, data };
   }
 
   // ---- Backbone ----------------------------------------------------------------
@@ -3397,6 +3543,7 @@
     clutterLossDb, setField, setFieldOn, isFieldOn, getField, fieldDbFor, placeLossDb, fitField, fieldSolve, measuredOf, fieldText, fieldBand, adjustCov, FIELD_RGB, loadFieldPoints, fieldPoints, hexCorners, hexBand, session,
     backboneWeight, backboneTip, areaHistory, footprint, coverageImage, legendGradient,
     growthSteps, presentAt, antennaHeight, knownHeightM, KNOWN_HEIGHTS, coverageCanvas, canvasOverlay, whatIfBase, whatIfDefaults, whatIfJob, whatIfCoverage, whatIfCanvas, cellAreaKm2, coveredKm2, unionKm2, repAreasKm2, repOnlyKm2, predictedLinks, meshEvidence, meshCells, meshRows, meshCanvas, meshPalette, groundCoverage, learnFromField, applyLearned, confidenceCells, confidenceCanvas, learnedTop, learnedHtml, LEARN, meshStatsHtml, meshTableHtml, MESH_OFTEN, planGain, plansGainKm2, planLinks, planHtml, PLAN_RGB,
+    ANTENNAS, antennaOf, tuneDefaults, tuneFull, tuneChanged, eirpDbm, tuneDeltaDb, patternDb, bearingDeg, linkTuneDb, retuneRaster, rasterOnto,
     repNotes, repArea, repGroups, repSummaryHtml, repPanelHtml, repAction, assumptionsHtml, linkRows, linksTableHtml, init,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

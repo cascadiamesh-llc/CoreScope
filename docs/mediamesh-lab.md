@@ -9,15 +9,31 @@ mesh.
   picked joins at its own position, under its name, to show what bringing
   it onto MediaMesh would do. Repeaters that haven't sent a position are
   listed but can't be picked. Each added repeater has its own antenna
-  height (10 m to start; the analyzer doesn't know a repeater's) and an X
-  to remove it. Their links are worked out repeater to repeater over the
+  height (its owner's where the analyzer has it, `KNOWN_HEIGHTS`; 10 m
+  otherwise) and an X to remove it. Their links are worked out repeater to repeater over the
   terrain (`planLinks`), to the MediaMesh repeaters at their own heights
   and to each other, and each one's coverage for people on the ground is
   drawn in green; the land they add is counted once however many of them
   reach it (`plansGainKm2`). `#/mediamesh-lab?add={public key}` opens with
   that repeater added, `?lat=…&lon=…` with one placed there.
-- **Take down** any MediaMesh repeater with the X by its name. Those taken
-  down move above the list, crossed out, with Bring back.
+- **On MediaMesh**: each MediaMesh repeater with its height (the owner's
+  where known, else 10 m) to change, and the X by its name to take it down.
+  Those taken down move above the list, crossed out, with Bring back.
+- **Antenna and power**, for any repeater, added or on MediaMesh: its
+  button (or a click on it on the map) opens them under it, and again
+  closes them; one is open at a time, all closed to start. The antenna's
+  type (omni, collinear, yagi, panel, sector: picking one sets its typical
+  gain), its gain, which way one that points is pointed (degrees from
+  north), the cable and connector loss, and the power (10 to 30 dBm), with
+  what goes into the air (EIRP). A MediaMesh repeater starts at the model's
+  guess (22 dBm, 2 dBi, 1 dB, the analyzer can't read the real ones), shows
+  **Changed** once changed, and has **Back to the model's guess**.
+  Power, gain and cable move the repeater's coverage by as many dB; a
+  pointed antenna loses off its beam (-3 dB at the beam's edges, down to
+  -20 dB behind: `patternDb`). A new height works its coverage out again
+  over the terrain. An added repeater's links count both ends' antennas and
+  power (`planLinks`); the links the model predicts between MediaMesh
+  repeaters stay as worked out at the start.
 - **Links**: the links heard this week always count; those only the model
   predicts can be counted or left out.
 

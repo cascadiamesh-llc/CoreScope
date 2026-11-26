@@ -1090,6 +1090,63 @@ function cellAt(cov, lat, lon) {
     assert.strictEqual(await M.fieldPoints({ fieldPoints: info }), info);
   });
 
+  await test('a repeater\'s own antenna and power: the pattern, the dB, the bearing', () => {
+    const yagi = { antenna: 'yagi', gainDbi: 11, bearingDeg: 90 };
+    assert.strictEqual(Math.abs(M.patternDb(yagi, 90)), 0, 'on the beam');
+    assert.ok(Math.abs(M.patternDb(yagi, 115) + 3) < 1e-9, '-3 dB at the beam\'s edge');
+    assert.strictEqual(M.patternDb(yagi, 270), -20, 'behind: the front-to-back ratio');
+    assert.strictEqual(M.patternDb({ antenna: 'omni' }, 270), 0);
+    assert.strictEqual(M.tuneDeltaDb({ lat: 0, lon: 0 }, { txDbm: 30, gainDbi: 11, cableDb: 2 }), 16);
+    assert.strictEqual(M.tuneDeltaDb({ lat: 0, lon: 0 }, null), 0);
+    assert.strictEqual(M.eirpDbm({ lat: 0, lon: 0 }, { antenna: 'yagi', gainDbi: 11 }), 32);
+    assert.strictEqual(Math.round(M.bearingDeg(0, 0, 1, 0)), 0);
+    assert.strictEqual(Math.round(M.bearingDeg(0, 0, 0, 1)), 90);
+    assert.strictEqual(M.antennaOf('nope').id, 'omni');
+    assert.ok(!M.tuneChanged({ lat: 0, lon: 0 }, null) && M.tuneChanged({ lat: 0, lon: 0 }, { txDbm: 30 }));
+    assert.strictEqual(M.tuneFull({ lat: 0, lon: 0, heightM: 25 }, { bearingDeg: -30 }).bearingDeg, 330);
+    assert.strictEqual(M.tuneFull({ lat: 0, lon: 0, heightM: 25 }, {}).heightM, 25, 'the height it has');
+    assert.strictEqual(M.linkTuneDb(null, 0, null, 0), 0);
+    assert.strictEqual(M.linkTuneDb({ antenna: 'yagi', gainDbi: 11, bearingDeg: 90 }, 90, null, 270), 9, 'a yagi pointed at the other end');
+    assert.strictEqual(M.linkTuneDb({ txDbm: 30 }, 0, null, 0), 0, 'the weaker sender\'s power');
+  });
+
+  await test('retuning a raster: power and gain move every cell, a pointed antenna loses off its beam', () => {
+    const cov = { bounds: { north: 0.003, south: -0.003, west: -0.003, east: 0.003 }, width: 3, height: 3 };
+    const raster = { col0: 0, row0: 0, w: 3, h: 3, data: new Int16Array(9) };
+    raster.data[0] = -32768;
+    const rep = { lat: 0, lon: 0 };
+    assert.strictEqual(M.retuneRaster(cov, raster, rep, null), raster, 'unchanged');
+    assert.strictEqual(M.retuneRaster(cov, raster, rep, { txDbm: 22 }), raster, 'the model\'s own settings');
+    const up = M.retuneRaster(cov, raster, rep, { txDbm: 28 });
+    assert.strictEqual(up.data[0], -32768, 'no data stays no data');
+    assert.strictEqual(up.data[4], 60, '+6 dB, in tenths');
+    const y = M.retuneRaster(cov, raster, rep, { antenna: 'yagi', gainDbi: 11, bearingDeg: 90 });
+    assert.strictEqual(y.data[5], 90, 'east, on the beam: +9 dB');
+    assert.strictEqual(y.data[3], -110, 'west, behind: +9 - 20 dB');
+    assert.strictEqual(raster.data[5], 0, 'the original untouched');
+  });
+
+  await test('one repeater\'s coverage laid onto the whole grid', () => {
+    const cov = { bounds: { north: 0.003, south: -0.003, west: -0.003, east: 0.003 }, width: 3, height: 3 };
+    const single = { bounds: { north: 0.003, south: -0.003, west: -0.001, east: 0.003 }, width: 2, height: 3,
+      rasters: [{ col0: 0, row0: 0, w: 2, h: 3, data: Int16Array.from([1, 2, 3, 4, 5, 6]) }] };
+    const r = M.rasterOnto(cov, single);
+    assert.deepStrictEqual([r.col0, r.row0, r.w, r.h], [1, 0, 2, 3]);
+    assert.deepStrictEqual(Array.from(r.data), [1, 2, 3, 4, 5, 6]);
+    assert.strictEqual(M.rasterOnto(cov, null), null);
+  });
+
+  await test('planned links count each end\'s own antenna and power', () => {
+    const flat = () => 20;
+    const a = { lat: 47.6, lon: -122.33, heightM: 10 }, b = { lat: 47.6, lon: -122.29, heightM: 10, public_key: 'zz' };
+    const plain = M.planLinks(a, [b], flat);
+    const tuned = M.planLinks(a, [b], flat, (r) => (r === a ? { antenna: 'yagi', gainDbi: 11, bearingDeg: 90 } : null));
+    assert.ok(plain.length && tuned.length, 'a short flat link stands');
+    assert.ok(Math.abs(tuned[0].marginDb - plain[0].marginDb - 9) < 0.5, `+9 dB along the yagi: ${plain[0].marginDb} -> ${tuned[0].marginDb}`);
+    const away = M.planLinks(a, [b], flat, (r) => (r === a ? { antenna: 'yagi', gainDbi: 11, bearingDeg: 270 } : null));
+    assert.ok(!away.length || away[0].marginDb < plain[0].marginDb - 10, 'pointed away it loses');
+  });
+
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);
 })();
