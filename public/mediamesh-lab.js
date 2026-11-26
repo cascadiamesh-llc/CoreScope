@@ -187,8 +187,8 @@
         <label class="mml-tune-field" for="${id('cable')}">Cable and connectors<span><input id="${id('cable')}" type="number" min="0" max="10" step="0.5" value="${t.cableDb}" data-mml-field="cableDb"> dB</span></label>
       </div>
       <label class="mml-tune-field mml-tune-power" for="${id('power')}">Transmit power: <strong>${t.txDbm} dBm (${mw >= 1000 ? `${(mw / 1000).toFixed(1)} W` : `${mw} mW`})</strong>
-        <input id="${id('power')}" type="range" min="10" max="30" step="1" value="${t.txDbm}" data-mml-field="txDbm">
-        <span class="mml-tune-scale text-muted"><span>10 dBm</span><span>22 dBm (SX1262 most)</span><span>30 dBm (with an amp)</span></span>
+        <input id="${id('power')}" type="range" min="10" max="37" step="1" value="${t.txDbm}" data-mml-field="txDbm">
+        <span class="mml-tune-scale text-muted"><span>10 dBm</span><span>22 dBm (SX1262 most)</span><span>37 dBm (5 W)</span></span>
       </label>
       <div class="mml-tune-eirp"><span>Into the air (EIRP)</span><strong>${(Math.round(M.eirpDbm(rep, tune) * 10) / 10).toFixed(1)} dBm</strong></div>
       ${existing ? `<button type="button" class="tab-btn mml-tune-reset" data-mml-reset="${key}">Back to the model's guess</button>` : ''}

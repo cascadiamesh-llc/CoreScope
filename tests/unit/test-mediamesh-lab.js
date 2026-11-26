@@ -136,6 +136,7 @@ test('antenna and power: closed by default, opened under the repeater by its but
   const omni = L.tunePanelHtml(M, 'r0', { lat: 47.6, lon: -122.3 }, null, true);
   assert.ok(omni.includes('model\'s guess') && omni.includes('data-mml-reset="r0"') && !omni.includes('Pointing toward'), 'an existing one starts as the model\'s guess');
   assert.ok(omni.includes('value="22" data-mml-field="txDbm"') && omni.includes('22 dBm (158 mW)'));
+  assert.ok(omni.includes('max="37"') && omni.includes('37 dBm (5 W)'), 'up to 5 W');
 });
 
 test('MediaMesh repeaters: their height in the row (the owner\'s where known), antenna and power to open', () => {

@@ -24,7 +24,7 @@ mesh.
   closes them; one is open at a time, all closed to start. The antenna's
   type (omni, collinear, yagi, panel, sector: picking one sets its typical
   gain), its gain, which way one that points is pointed (degrees from
-  north), the cable and connector loss, and the power (10 to 30 dBm), with
+  north), the cable and connector loss, and the power (10 dBm to 37 dBm, 5 W), with
   what goes into the air (EIRP). A MediaMesh repeater starts at the model's
   guess (22 dBm, 2 dBi, 1 dB, the analyzer can't read the real ones), shows
   **Changed** once changed, and has **Back to the model's guess**.
