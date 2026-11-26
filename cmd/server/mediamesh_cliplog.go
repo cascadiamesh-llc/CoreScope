@@ -87,6 +87,15 @@ func (s *Server) handleMediaMeshClipLog(w http.ResponseWriter, r *http.Request) 
 	// its pieces may have left memory: the kept log, if it's fuller
 	if st, _ := s.coveragePoints(); st != nil {
 		if kept := keptClipLog(st.db, raw); kept != nil && (out == nil || clipLogHeard(kept) > clipLogHeard(out)) {
+			// named again: a kept log's names may be from before hops were
+			// named from MediaMesh repeaters only
+			if s.store != nil && kept.Hops != nil {
+				hs := map[string]bool{}
+				for h := range kept.Hops {
+					hs[strings.ToLower(h)] = true
+				}
+				kept.Hops = s.store.clipLogHops(hs)
+			}
 			out = kept
 		}
 	}
@@ -319,18 +328,14 @@ func (s *PacketStore) mediaMeshClipLog(sid uint32, since string) *MediaMeshClipL
 // the analyzer knows.
 func (s *PacketStore) clipLogHops(hopSet map[string]bool) map[string]MediaMeshClipHop {
 	out := map[string]MediaMeshClipHop{}
-	_, pm := s.getCachedNodesAndPM()
+	named := s.mediaMeshHopNamer(time.Now())
 	for h := range hopSet {
 		hop := MediaMeshClipHop{}
-		if pm != nil {
-			cands := pm.relayCandidates(h)
-			if n := pm.resolve(h); n != nil {
-				hop.PublicKey, hop.Name = n.PublicKey, n.Name
-				if n.HasGPS {
-					lat, lon := n.Lat, n.Lon
-					hop.Lat, hop.Lon = &lat, &lon
-				}
-				hop.Ambiguous = len(cands) > 1
+		if n, amb, ok := named(h); ok {
+			hop.PublicKey, hop.Name, hop.Ambiguous = n.PublicKey, n.Name, amb
+			if n.HasGPS {
+				lat, lon := n.Lat, n.Lon
+				hop.Lat, hop.Lon = &lat, &lon
 			}
 		}
 		out[h] = hop

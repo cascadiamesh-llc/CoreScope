@@ -76,6 +76,12 @@ when the far end could rebuild the clip, and a list of what was just heard. Quie
 (over 6 s with nothing heard) are skipped while playing. Hops without a known place are
 drawn straight across.
 
+A path holds only the first byte or two of each repeater's key, which many main-mesh
+repeaters share. A piece on radio2 only went through repeaters that run MediaMesh, so each hop
+is named and placed from those alone (`mediaMeshHopNamer`, also used for the airtime per
+repeater card); a hop that matches none of them stays its hash. Kept logs are named again
+when they're read.
+
 It's drawn from the clip's flight recorder, `/api/analytics/mediamesh/clips/{sid}`. A clip on
 a private channel has no session id; its key is `p`, its channel's one-byte hash (`xx` when
 unknown) and the unix second its first piece was heard, in hex (`privateChannel[].sid`), and

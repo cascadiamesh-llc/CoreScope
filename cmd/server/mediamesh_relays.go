@@ -395,13 +395,12 @@ func (s *Server) handleMediaMeshRelays(w http.ResponseWriter, r *http.Request) {
 					hours[k] = h
 				}
 			}
-			if _, pm := s.store.getCachedNodesAndPM(); pm != nil {
-				name = func(h string) string {
-					if n := pm.resolve(strings.ToLower(h)); n != nil {
-						return n.Name
-					}
-					return ""
+			named := s.store.mediaMeshHopNamer(now)
+			name = func(h string) string {
+				if n, _, ok := named(h); ok {
+					return n.Name
 				}
+				return ""
 			}
 		}
 		return summarizeMMRelays(hours, from, now, name)
