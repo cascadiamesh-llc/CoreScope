@@ -225,9 +225,21 @@ test('recent clips: the last 24 hours, newest first, in a list that scrolls', ()
   const many = Array.from({ length: 30 }, (_, i) => clip({ sid: 's' + i, at: new Date(NOW - i * 1800000).toISOString() }));
   const h = I.deliveryHtml(many, nameOf, 7, [], [], NOW);
   assert.strictEqual((h.match(/data-mm-clip="s\d+"/g) || []).length, 30, 'every clip of the day, not the first few');
-  assert.ok(h.includes('class="mm-ins-scroll mm-ins-recent" tabindex="0" role="region"') && h.includes('last 24 hours, 30'), 'scrolls, and says the window');
-  const none = I.deliveryHtml([clip({ at: '2026-11-10T10:00:00Z' })], nameOf, 7, [], [], NOW);
-  assert.ok(none.includes('No clips in the last 24 hours.') && none.includes(' hidden>'), none);
+  assert.ok(h.includes('class="mm-ins-scroll mm-ins-recent" tabindex="0" role="region"') && h.includes('last 24 hours, 30<'), 'scrolls, and says the window');
+  assert.ok(!h.includes('mm-ins-earlier'), 'a full day needs no earlier ones');
+  // a quiet day: topped up to 20 with the newest before it, below an "Earlier" line
+  const quiet = Array.from({ length: 30 }, (_, i) => clip({ sid: 'q' + i, at: new Date(NOW - (i < 4 ? i * 3600000 : 30 * 3600000 + i * 3600000)).toISOString() }));
+  const r = I.recentRows(quiet, NOW);
+  assert.strictEqual(r.day, 4);
+  assert.deepStrictEqual(r.rows.map((c) => c.sid), Array.from({ length: 20 }, (_, i) => 'q' + i));
+  const qh = I.deliveryHtml(quiet, nameOf, 7, [], [], NOW);
+  assert.strictEqual((qh.match(/data-mm-clip="q\d+"/g) || []).length, 20);
+  assert.ok(qh.includes('last 24 hours, 4 · 16 earlier') && (qh.match(/mm-ins-earlier/g) || []).length === 1, 'says so, one line');
+  assert.ok(qh.indexOf('data-mm-clip="q3"') < qh.indexOf('mm-ins-earlier') && qh.indexOf('mm-ins-earlier') < qh.indexOf('data-mm-clip="q4"'), 'the line where the day ends');
+  const none = I.deliveryHtml([clip({ at: '2026-11-17T10:00:00Z' })], nameOf, 7, [], [], NOW);
+  assert.ok(none.includes('No clips in the last 24 hours.') && none.includes('1 earlier') && !none.includes(' hidden>'), none);
+  const empty = I.deliveryHtml([], nameOf, 7, [], [], NOW) + I.speedHtml([], nameOf, 7, [], NOW);
+  assert.ok(!empty.includes('mm-ins-earlier'));
   assert.ok(I.speedHtml(many, nameOf, 7, [], NOW).includes('last 24 hours, 30'));
 });
 

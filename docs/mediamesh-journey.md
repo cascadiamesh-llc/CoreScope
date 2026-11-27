@@ -67,6 +67,13 @@ still on the main mesh when a clip begins), less as spread evenly (collisions). 
 every clip, photos, voice, and clips sent in a busy hour (the busiest quarter of hours by
 packets). Needs 5 clips.
 
+## Recent clips
+
+**Recent clips**, under both cards, lists every clip sent in the last 24 hours, newest first, in
+a box that scrolls. On a quieter day it's topped up to 20 with the newest before then, below an
+"Earlier than 24 hours ago" line, and the heading says how many of each (`last 24 hours, 4 · 16
+earlier`).
+
 ## Replay a clip's path
 
 The map button beside each route in **Recent clips** opens the replay under the clip's row:

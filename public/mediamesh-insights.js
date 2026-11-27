@@ -67,8 +67,28 @@
       .sort((a, b) => clipTime(b) - clipTime(a));
   }
 
-  function recentHead(n) {
-    return `<h4>Recent clips <span class="text-muted mm-ins-recent-n">last ${RECENT_H} hours${n ? `, ${n.toLocaleString()}` : ''}</span></h4>`;
+  // On a quiet day the list still has this many, the newest before the window
+  // below an "Earlier" line, so it's never down to a few rows.
+  const RECENT_MIN = 20;
+
+  /** The rows for Recent clips: the last RECENT_H hours, topped up with the
+   * newest before them to RECENT_MIN; `day` of them are in the window. */
+  function recentRows(list, now) {
+    const t = now == null ? Date.now() : now;
+    const day = recentClips(list, t);
+    if (day.length >= RECENT_MIN) return { rows: day, day: day.length };
+    const before = list.filter((c) => { const a = clipTime(c); return a > 0 && a <= t - RECENT_H * 3600000; })
+      .sort((a, b) => clipTime(b) - clipTime(a));
+    return { rows: day.concat(before.slice(0, RECENT_MIN - day.length)), day: day.length };
+  }
+
+  function recentHead(day, earlier) {
+    return `<h4>Recent clips <span class="text-muted mm-ins-recent-n">last ${RECENT_H} hours, ${day.toLocaleString()}${earlier ? ` · ${earlier.toLocaleString()} earlier` : ''}</span></h4>`;
+  }
+
+  /** The rows' HTML, with an "Earlier" line where the window ends. */
+  function recentBody(r, rowHtml, cols) {
+    return r.rows.map((c, i) => (i === r.day ? `<tr class="mm-ins-earlier"><td colspan="${cols}">Earlier than ${RECENT_H} hours ago</td></tr>` : '') + rowHtml(c)).join('');
   }
 
   const recentNone = `<p class="text-muted">No clips in the last ${RECENT_H} hours.</p>`;
@@ -245,11 +265,11 @@
     const maxN = Math.max(1, ...byHops.map((b) => b.n));
     const bars = byHops.filter((b) => b.n).map((b) => `<div class="mm-ins-bar-row"><span>${b.hops}${b.hops === 5 ? '+' : ''} hop${b.hops === 1 ? '' : 's'}</span>
       <span class="mm-ins-bar" role="img" aria-label="${b.n} clip${b.n === 1 ? '' : 's'}"><i style="width:${Math.round(b.n / maxN * 100)}%"></i></span><span class="mm-ins-num">${b.n}</span></div>`).join('');
-    const recentList = recentClips(clips.filter((c) => c.outcome !== 'none').concat(unannounced, privateCh), now);
-    const recent = recentList.map((c) => recentRowHtml(c, nameOf)).join('');
+    const recentR = recentRows(clips.filter((c) => c.outcome !== 'none').concat(unannounced, privateCh), now);
+    const recent = recentBody(recentR, (c) => recentRowHtml(c, nameOf), 7);
     return head + coverageBarHtml(v) + tiles + wholeLine + `<div class="mm-ins-split">
       <div class="mm-ins-col"><h4>Clips heard, by hops</h4>${bars || '<p class="text-muted">None yet.</p>'}</div>
-      <div class="mm-ins-col mm-ins-wide">${recentHead(recentList.length)}${recentList.length ? '' : recentNone}<div class="mm-ins-scroll mm-ins-recent" tabindex="0" role="region" aria-label="Recent clips, last ${RECENT_H} hours"${recentList.length ? '' : ' hidden'}><table class="analytics-table mm-ins-table"><thead><tr><th scope="col">Sent</th><th scope="col">Clip</th><th scope="col">Route</th><th scope="col" class="mm-ins-num">Hops</th><th scope="col">Pieces heard</th><th scope="col">Far end heard</th><th scope="col">Recipient</th></tr></thead><tbody>${recent}</tbody></table></div>
+      <div class="mm-ins-col mm-ins-wide">${recentHead(recentR.day, recentR.rows.length - recentR.day)}${recentR.day ? '' : recentNone}<div class="mm-ins-scroll mm-ins-recent" tabindex="0" role="region" aria-label="Recent clips"${recentR.rows.length ? '' : ' hidden'}><table class="analytics-table mm-ins-table"><thead><tr><th scope="col">Sent</th><th scope="col">Clip</th><th scope="col">Route</th><th scope="col" class="mm-ins-num">Hops</th><th scope="col">Pieces heard</th><th scope="col">Far end heard</th><th scope="col">Recipient</th></tr></thead><tbody>${recent}</tbody></table></div>
       <p class="text-muted mm-ins-key">Pick a clip for its flight recorder, or <span class="mm-key-map">${MAP_ICON}</span> beside its route to replay its path on a map. <span class="mm-pieces"><span></span></span> heard · <span class="mm-pieces"><span class="is-rebuilt"></span></span> rebuilt from parity or repair pieces · <span class="mm-pieces"><span class="is-missing"></span></span> not heard by an observer. A clip on a private channel shows only how many pieces were heard.</p></div></div>`;
   }
 
@@ -337,12 +357,12 @@
     const bars = s.byHops.filter((b) => b.n).map((b) => `<div class="mm-ins-bar-row${b.few ? ' mm-ins-bar-row--few' : ''}"${b.few ? ' title="Too few clips to go on yet"' : ''}><span>${b.hops}${b.hops === 5 ? '+' : ''} hop${b.hops === 1 ? '' : 's'}</span>
       <span class="mm-ins-bar"><i style="width:${Math.min(100, Math.round(((b.kbps || 0) / maxK) * 100))}%"></i></span><span class="mm-ins-num">${fmtB(b.kbps)}</span><span class="text-muted mm-ins-n">${b.n} clip${b.n === 1 ? '' : 's'}</span></div>`).join('')
       + (s.byHops.some((b) => b.n && b.few) ? `<p class="text-muted mm-ins-note">Faded: fewer than ${FEW_CLIPS} clips, too few to go on.</p>` : '');
-    const recentList = recentClips(s.rows, now);
-    const rows = recentList.map((c) => `<tr><td class="mm-ins-when">${whenHtml(c.at)}</td><td>${esc(routeLabel(c, nameOf))}</td><td class="mm-ins-num">${c.hops}</td><td>${esc(clipLabel(c))}, ${c.bytesEstimated ? '<span title="Worked out from the numbers of the first and last pieces heard">about ' : ''}${(c.bytes / 1000).toFixed(1)} kB${c.bytesEstimated ? '</span>' : ''}</td>
-      <td class="mm-ins-num">${Math.round(c.durationS)} s${c.paused >= 1 ? `<span class="text-muted mm-ins-paused" title="Paused for this long in all: gaps of over 15 s with far fewer pieces than usual"> (${Math.round(c.paused)} s paused)</span>` : ''}${c.doubtful ? '<span class="mm-ins-waited">too uncertain to time</span>' : c.waited ? '<span class="mm-ins-waited">waited on the far end</span>' : ''}</td><td class="mm-ins-num">${c.doubtful || c.waited ? `<span class="text-muted" title="${c.doubtful ? 'Left out of every speed: too few pieces heard, too quick, or faster than radio2 can carry' : 'Left out of the end-to-end median: most of this was waiting on the far end'}">${fmtB(c.kbps)}</span>` : `<strong>${fmtB(c.kbps)}</strong>`}</td><td class="mm-ins-num">${c.doubtful ? `<span class="text-muted">${fmtB(c.sendKbps)}</span>` : fmtB(c.sendKbps)}</td></tr>`).join('');
+    const recentR = recentRows(s.rows, now);
+    const rows = recentBody(recentR, (c) => `<tr><td class="mm-ins-when">${whenHtml(c.at)}</td><td>${esc(routeLabel(c, nameOf))}</td><td class="mm-ins-num">${c.hops}</td><td>${esc(clipLabel(c))}, ${c.bytesEstimated ? '<span title="Worked out from the numbers of the first and last pieces heard">about ' : ''}${(c.bytes / 1000).toFixed(1)} kB${c.bytesEstimated ? '</span>' : ''}</td>
+      <td class="mm-ins-num">${Math.round(c.durationS)} s${c.paused >= 1 ? `<span class="text-muted mm-ins-paused" title="Paused for this long in all: gaps of over 15 s with far fewer pieces than usual"> (${Math.round(c.paused)} s paused)</span>` : ''}${c.doubtful ? '<span class="mm-ins-waited">too uncertain to time</span>' : c.waited ? '<span class="mm-ins-waited">waited on the far end</span>' : ''}</td><td class="mm-ins-num">${c.doubtful || c.waited ? `<span class="text-muted" title="${c.doubtful ? 'Left out of every speed: too few pieces heard, too quick, or faster than radio2 can carry' : 'Left out of the end-to-end median: most of this was waiting on the far end'}">${fmtB(c.kbps)}</span>` : `<strong>${fmtB(c.kbps)}</strong>`}</td><td class="mm-ins-num">${c.doubtful ? `<span class="text-muted">${fmtB(c.sendKbps)}</span>` : fmtB(c.sendKbps)}</td></tr>`, 7);
     return head + tiles + `<div class="mm-ins-split">
       <div class="mm-ins-col"><h4>bit/s by hops (median while sending)</h4>${bars}</div>
-      <div class="mm-ins-col mm-ins-wide">${recentHead(recentList.length)}${recentList.length ? '' : recentNone}<div class="mm-ins-scroll mm-ins-recent" tabindex="0" role="region" aria-label="Recent clips, last ${RECENT_H} hours"${recentList.length ? '' : ' hidden'}><table class="analytics-table mm-ins-table"><thead><tr><th scope="col">Sent</th><th scope="col">Route</th><th scope="col" class="mm-ins-num">Hops</th><th scope="col">Clip</th><th scope="col" class="mm-ins-num">Took</th><th scope="col" class="mm-ins-num">bit/s</th><th scope="col" class="mm-ins-num" title="Leaving out pauses of over 15 s">While sending</th></tr></thead><tbody>${rows}</tbody></table></div></div></div>`;
+      <div class="mm-ins-col mm-ins-wide">${recentHead(recentR.day, recentR.rows.length - recentR.day)}${recentR.day ? '' : recentNone}<div class="mm-ins-scroll mm-ins-recent" tabindex="0" role="region" aria-label="Recent clips"${recentR.rows.length ? '' : ' hidden'}><table class="analytics-table mm-ins-table"><thead><tr><th scope="col">Sent</th><th scope="col">Route</th><th scope="col" class="mm-ins-num">Hops</th><th scope="col">Clip</th><th scope="col" class="mm-ins-num">Took</th><th scope="col" class="mm-ins-num">bit/s</th><th scope="col" class="mm-ins-num" title="Leaving out pauses of over 15 s">While sending</th></tr></thead><tbody>${rows}</tbody></table></div></div></div>`;
   }
 
   // ---- When it's busy -------------------------------------------------------
@@ -806,7 +826,7 @@
   }
 
   root.MediaMeshInsights = {
-    init, destroy, cardsHtml, namer, routeLabel, clipLabel, whenHtml, recentClips, deliverySummary, coverageSummary, deliveryHtml, arrivalSummary, arrivalText, speedRows, speedSummary, speedHtml,
+    init, destroy, cardsHtml, namer, routeLabel, clipLabel, whenHtml, recentClips, recentRows, deliverySummary, coverageSummary, deliveryHtml, arrivalSummary, arrivalText, speedRows, speedSummary, speedHtml,
     busyGrid, busyHtml, backboneGraph, components, resilienceScore, weakSpots, weakHtml, median, mapPng,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
