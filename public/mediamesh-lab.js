@@ -206,7 +206,7 @@
       return `<div class="mml-item${open ? ' is-open' : ''}" data-mml-item="${key}"><div class="mml-added">
       <span class="mml-mark mml-mark--add" aria-hidden="true"></span>
       <span class="mml-added-text"><span class="mml-added-name">${esc(p.name)}</span><span class="text-muted mml-added-note">${esc(planNote(p) + tuned)}</span></span>
-      <label class="mml-added-h"><input type="number" min="2" max="300" inputmode="numeric" value="${p.heightM}" data-mml-height="${p.id}" aria-label="Antenna height of ${esc(p.name)}, metres above the ground"> m up</label>
+      <label class="mml-added-h"><input type="number" min="2" inputmode="numeric" value="${p.heightM}" data-mml-height="${p.id}" aria-label="Antenna height of ${esc(p.name)}, metres above the ground"> m up</label>
       ${M ? tuneButton(key, p.name, open) : ''}
       <button type="button" class="mml-x" data-mml-remove="${p.id}" aria-label="Remove ${esc(p.name)}" title="Remove ${esc(p.name)}">${X_ICON}</button>
     </div>${open ? tunePanelHtml(M, key, p, p.tune, false) : ''}</div>`;
@@ -237,7 +237,7 @@
         return `<div class="mml-item${open ? ' is-open' : ''}" data-mml-item="${key}"><div class="mml-up">
       <span class="mml-mark mml-mark--on" aria-hidden="true"></span>
       <span class="mml-added-text"><span class="mml-up-name">${esc(repName(r))}${near(r)}${changed ? ' <span class="mml-changed">Changed</span>' : ''}</span>${tune && M.tuneChanged(r, tune) ? `<span class="text-muted mml-added-note">${esc(tuneSummary(M, r, tune))}</span>` : ''}</span>
-      <label class="mml-added-h"><input type="number" min="2" max="300" inputmode="numeric" value="${M.antennaHeight(r)}" data-mml-rheight="${i}" aria-label="Antenna height of ${esc(repName(r))}, metres above the ground"> m up</label>
+      <label class="mml-added-h"><input type="number" min="2" inputmode="numeric" value="${M.antennaHeight(r)}" data-mml-rheight="${i}" aria-label="Antenna height of ${esc(repName(r))}, metres above the ground"> m up</label>
       ${tuneButton(key, repName(r), open)}
       <button type="button" class="mml-x" data-mml-down="${i}" aria-label="Take down ${esc(repName(r))}" title="Take down ${esc(repName(r))}">${X_ICON}</button></div>
       ${open ? tunePanelHtml(M, key, r, tune, true) : ''}</div>`;
@@ -618,15 +618,16 @@
       if (found.length) $('mmlFound').innerHTML = candidatesHtml(found, $('mmlFind').value.trim(), addedKeys());
     };
 
+    const labHeight = (v) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? Math.max(2, n) : 10; };
     const onChange = (e) => {
       const t = e.target;
       if (t.matches('[data-mml-height]')) {
         const p = plans.find((x) => x.id === Number(t.dataset.mmlHeight));
-        if (p) { p.heightM = Math.max(2, Math.min(300, Number(t.value) || 10)); t.value = p.heightM; workOut(p); }
+        if (p) { p.heightM = labHeight(t.value); t.value = p.heightM; workOut(p); }
       } else if (t.matches('[data-mml-rheight]')) {
         const i = Number(t.dataset.mmlRheight), r = placed[i];
         if (r) {
-          const h = Math.max(2, Math.min(300, Number(t.value) || 10));
+          const h = labHeight(t.value);
           if (h === M.antennaHeight(Object.assign({}, r, { heightM: undefined }))) delete r.heightM; else r.heightM = h;
           t.value = h;
           retuneRep(i, true);

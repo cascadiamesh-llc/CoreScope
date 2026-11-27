@@ -670,6 +670,7 @@ function cellAt(cov, lat, lon) {
     // a higher antenna gets further
     assert.strictEqual(M.antennaHeight({}), 10);
     assert.strictEqual(M.antennaHeight({ heightM: 30 }), 30);
+    assert.strictEqual(M.antennaHeight({ heightM: 650 }), 650);   // no 300 m cap
     // heights the owners gave, by key; the repeater's own still wins
     assert.strictEqual(M.antennaHeight({ public_key: '1FFBD69AA03FAADC' }), 67.7);
     assert.strictEqual(M.antennaHeight({ public_key: '1ea5e1952c93' }), 41.1);

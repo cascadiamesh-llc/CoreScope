@@ -223,9 +223,9 @@
   /** A repeater's antenna height above the ground: its own (a planned one's),
    * the one its owner gave, or the default. */
   function antennaHeight(rep) {
-    if (rep && rep.heightM > 0 && rep.heightM <= 300) return rep.heightM;
+    if (rep && rep.heightM > 0 && Number.isFinite(rep.heightM)) return rep.heightM;
     const known = knownHeightM(rep);
-    return known > 0 && known <= 300 ? known : CONFIG.txHeightM;
+    return known > 0 && Number.isFinite(known) ? known : CONFIG.txHeightM;
   }
 
   /** Free-space path loss in dB for a distance in km. */
@@ -2128,7 +2128,7 @@
   function whatIfJob(base, settings, copy) {
     const d = whatIfDefaults(base.rep);
     const job = Object.assign({}, base.job, {
-      txHeightM: Math.max(1, Math.min(300, Number(settings.heightM) || d.heightM)),
+      txHeightM: Number.isFinite(Number(settings.heightM)) && Number(settings.heightM) > 0 ? Math.max(1, Number(settings.heightM)) : d.heightM,
       budgetDb: base.job.budgetDb + ((Number(settings.txDbm) || d.txDbm) - d.txDbm) + ((Number.isFinite(Number(settings.gainDbi)) ? Number(settings.gainDbi) : d.gainDbi) - d.gainDbi),
     });
     if (copy) { job.elev = base.job.elev.slice(); job.peak = base.job.peak.slice(); }
